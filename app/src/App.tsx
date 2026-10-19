@@ -438,7 +438,7 @@ export default function App() {
               <Canvas graph={graph} result={result} step={step} theme={theme} />
             </ReactFlowProvider>
             <div className="canvas-instruction">
-              双击组合模块深入查看 <span>·</span> 拖动圆点连接 Tensor
+              左键框选 <span>·</span> 中键平移 <span>·</span> 双击组合模块展开
             </div>
           </div>
           <section className="flow-strip">
