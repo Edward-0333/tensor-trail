@@ -1,0 +1,187 @@
+.mobile-tabs {
+  display: none;
+}
+.flow-left .input-id {
+  left: auto;
+  right: 0;
+}
+.flow-left .output-id {
+  right: auto;
+  left: 0;
+}
+.attention-detail {
+  margin-top: 22px;
+  border-top: 1px solid var(--border);
+  padding-top: 18px;
+}
+.attention-detail > div:not(.section-label) {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 5px;
+  margin-top: 11px;
+  font-size: 9px;
+  color: #9a91ac;
+}
+.attention-detail code {
+  font-size: 10px;
+  color: #8d7e9e;
+}
+.attention-detail p {
+  font-size: 9px;
+  line-height: 1.9;
+  color: #9fa8b5;
+  margin-top: 13px;
+}
+@media (max-width: 850px) {
+  .app-shell {
+    min-width: 0;
+    min-height: 580px;
+  }
+  .topbar {
+    height: 64px;
+    padding: 0 14px;
+    gap: 10px;
+  }
+  .brand-mark {
+    width: 32px;
+    height: 32px;
+  }
+  .brand {
+    gap: 8px;
+  }
+  .header-actions {
+    gap: 4px;
+  }
+  .history-buttons {
+    padding-left: 0;
+    border: 0;
+  }
+  .text-button,
+  .primary-button {
+    padding: 7px 8px;
+    font-size: 10px;
+  }
+  .workspace {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+  }
+  .library,
+  .inspector,
+  .center-stage {
+    display: none;
+    width: 100%;
+    border: 0;
+  }
+  .mobile-pane-canvas .center-stage,
+  .mobile-pane-library .library,
+  .mobile-pane-inspector .inspector {
+    display: flex;
+  }
+  .mobile-tabs {
+    display: flex;
+    flex-shrink: 0;
+    height: 39px;
+    border-bottom: 1px solid var(--border);
+    background: white;
+    padding: 0 14px;
+    gap: 24px;
+  }
+  .mobile-tabs button {
+    border: 0;
+    border-bottom: 2px solid transparent;
+    background: none;
+    font-size: 11px;
+    color: #94a3af;
+    padding: 0 4px;
+  }
+  .mobile-tabs button.active {
+    border-bottom-color: #548e80;
+    color: #416f63;
+  }
+  .library-module-icon {
+    display: grid;
+  }
+  .module-items {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+  .library-module {
+    padding: 12px;
+  }
+  .library-module strong {
+    font-size: 12px;
+  }
+  .library-module small {
+    font-size: 9px;
+  }
+  .library-scroll {
+    padding: 0 17px 18px;
+  }
+  .panel-heading {
+    padding: 0 18px;
+  }
+  .search-field {
+    margin: 0 18px;
+  }
+  .inspector-scroll {
+    padding: 0 22px 24px;
+  }
+  .param-field {
+    margin: 15px 0;
+  }
+  .param-field > span {
+    font-size: 12px;
+  }
+  .param-field input,
+  .param-field select {
+    width: 180px;
+    padding: 8px;
+    font-size: 12px;
+  }
+  .param-field input[type='text'] {
+    width: 230px;
+  }
+  .canvas-toolbar > select {
+    max-width: 150px;
+  }
+  .canvas-caption {
+    left: 22px;
+    top: 23px;
+  }
+  .canvas-caption > strong {
+    font-size: 18px;
+  }
+  .statusbar {
+    padding: 0 12px;
+    font-size: 8px;
+  }
+  .statusbar > span {
+    display: none;
+  }
+  .flow-strip {
+    height: 158px;
+    min-height: 158px;
+    padding: 13px 18px;
+  }
+  .play-button {
+    font-size: 10px;
+  }
+  .flow-step {
+    min-width: 145px;
+  }
+  .flow-step strong {
+    font-size: 10px;
+  }
+  .tensor-axes {
+    max-width: 440px;
+  }
+  .variant-save {
+    padding-bottom: 20px;
+  }
+  .react-flow__minimap {
+    width: 85px;
+    height: 58px;
+  }
+}
