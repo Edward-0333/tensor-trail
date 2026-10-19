@@ -14,6 +14,7 @@ Tensor Trail 是本地运行的神经网络学习工作台。定义输入 Tensor
 - Tensor 轴含义、命名输入输出端口、实时约束检查与逐步高亮。
 - 图编辑、撤销重做、JSON 导入导出、浏览器自动保存，以及宽屏和窄屏布局。
 - 参考 TensorBloom 的深色工作台、可记忆的明暗主题、侧栏折叠、分类节点色标与当前层级概览；按 `/` 快速搜索模块。
+- AI 构建：简化 JSON 配方、模块目录和 JSON Schema、构建/校验/批量修改 API、CLI，以及带版本冲突检查的画布应用入口。
 
 内置混合网络展示：
 
@@ -52,11 +53,14 @@ npm run build
 npm run preview -- --port 5178
 ```
 
-v0.1 已通过 40 项自动测试、TypeScript 检查及生产构建，浏览器交互验证记录见[第一版验收](docs/第一版验收.md)。
+当前已通过 63 项自动测试、CLI 端到端检查、TypeScript 检查及生产构建，浏览器交互验证见[第一版验收](docs/第一版验收.md)。
 
 ```text
 app/src/core/      图协议、TensorSpec、递归形状推导、序列化
 app/src/modules/   算子注册、形状规则、Transformer 组合子图
+app/src/agent/     Recipe/Patch、模块目录、Schema、构建与校验 API
+app/scripts/       AI 命令行及端到端检查
+app/examples/      AI 可读取的架构配方与修改示例
 app/src/editor/    编辑会话、画布、参数面板、历史与保存
 app/src/views/     节点与 Tensor 视图、模块专属可视化
 app/tests/         形状契约与编辑事务测试
@@ -68,6 +72,20 @@ docs/             设计、使用指南和验证记录
 - [详细架构方案](docs/架构方案.md)
 - [使用与扩展指南](docs/使用与扩展.md)
 - [应用运行说明](app/README.md)
+- [AI 操作指南](docs/AI操作指南.md)
+
+## 让 AI 搭建模型
+
+AI 生成 Recipe JSON 后，可在页面顶部“AI 构建”中粘贴，检查形状并应用到画布；也可在 app/ 中运行：
+
+```sh
+npm run build:agent
+node scripts/agent.mjs describe
+node scripts/agent.mjs build examples/cnn-transformer.recipe.json --out model.json
+node scripts/agent.mjs patch model.json examples/swiglu.patch.json --out next.json
+```
+
+生成的项目可用网页“导入”打开。页面 API 为 `window.tensorTrail`，提供读取、构建、校验、批量修改及携带 revision 的应用操作。CLI 只生成文件，不自动修改打开的网页。当前未接入内置大模型、MCP 或 HTTP REST 服务，接入步骤及可交给 AI 的工作指令见 [AI 操作指南](docs/AI操作指南.md)。
 
 ## 当前范围与后续方向
 

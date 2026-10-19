@@ -1,0 +1,7 @@
+{
+  "patchVersion": 1,
+  "operations": [
+    { "op": "set_params", "id": "encoder", "params": { "norm": "RMSNorm", "ffn": "SwiGLU" } },
+    { "op": "rename_node", "id": "encoder", "label": "RMSNorm + SwiGLU Transformer" }
+  ]
+}

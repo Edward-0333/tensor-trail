@@ -1,0 +1,249 @@
+.agent-dialog {
+  width: min(1060px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  padding: 0;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 24px 90px #0008;
+  overflow: auto;
+}
+.agent-dialog::backdrop {
+  background: #07070bc4;
+  backdrop-filter: blur(4px);
+}
+.agent-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 22px 24px;
+  border-bottom: 1px solid var(--border);
+}
+.agent-title {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  color: var(--accent);
+}
+.agent-title h2 {
+  font-size: 17px;
+  color: var(--text);
+  margin-bottom: 5px;
+}
+.agent-title p,
+.agent-source > p,
+.agent-preview > p {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.7;
+}
+.agent-toolbar {
+  display: flex;
+  gap: 8px;
+  padding: 14px 24px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.agent-modes {
+  display: flex;
+  margin-right: auto;
+  background: var(--field);
+  padding: 3px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+}
+.agent-modes button {
+  padding: 7px 13px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+}
+.agent-modes button.active {
+  background: var(--surface-raised);
+  color: var(--text);
+}
+.agent-body {
+  display: grid;
+  grid-template-columns: 1.1fr 1fr;
+  border-block: 1px solid var(--border);
+}
+.agent-source {
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.agent-source label,
+.agent-eyebrow {
+  font-size: 11px;
+  color: var(--text-secondary);
+  letter-spacing: 0.3px;
+}
+.agent-source textarea {
+  resize: vertical;
+  width: 100%;
+  height: clamp(210px, 42vh, 440px);
+  min-height: 180px;
+  font:
+    12px/1.7 'Cascadia Code',
+    Consolas,
+    monospace;
+  color: var(--text);
+  background: var(--field);
+  padding: 14px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  tab-size: 2;
+}
+.agent-source textarea:focus {
+  outline: 1px solid var(--accent);
+}
+.agent-preview {
+  padding: 20px 24px;
+  border-left: 1px solid var(--border);
+  background: var(--canvas);
+  max-height: 540px;
+  overflow: auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.agent-preview h3 {
+  font-size: 16px;
+  margin: 16px 0 8px;
+}
+.agent-empty {
+  padding: 40px 8px;
+  color: var(--muted);
+  line-height: 1.9;
+}
+.agent-empty > svg {
+  color: var(--accent);
+}
+.agent-empty h3 {
+  color: var(--text-secondary);
+}
+.agent-empty > code {
+  display: block;
+  margin-top: 22px;
+  color: var(--accent);
+}
+.agent-error {
+  color: var(--danger);
+}
+.agent-warning {
+  color: var(--warning);
+}
+.agent-success {
+  color: var(--success);
+}
+.agent-outputs {
+  margin: 14px 0;
+}
+.agent-outputs > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid var(--accent-border);
+  background: var(--accent-bg);
+  border-radius: 6px;
+  padding: 12px;
+}
+.agent-outputs code {
+  color: var(--accent);
+}
+.agent-diagnostics > div {
+  border-bottom: 1px solid var(--border);
+  padding: 10px 0;
+  font-size: 11px;
+  line-height: 1.7;
+}
+.agent-preview details {
+  margin-top: 15px;
+  font-size: 11px;
+}
+.agent-preview summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+.agent-trace {
+  display: flex;
+  flex-direction: column;
+  padding: 9px 0;
+  gap: 4px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.agent-trace > span {
+  color: var(--muted);
+}
+.agent-footer {
+  display: flex;
+  gap: 8px;
+  padding: 17px 24px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.agent-footer > div {
+  margin-right: auto;
+  color: var(--muted);
+  font-size: 11px;
+}
+.agent-ack {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+@media (max-width: 700px) {
+  .agent-dialog {
+    width: calc(100vw - 16px);
+    max-height: calc(100dvh - 16px);
+  }
+  .agent-heading,
+  .agent-toolbar,
+  .agent-source,
+  .agent-preview,
+  .agent-footer {
+    padding: 14px;
+  }
+  .agent-body {
+    grid-template-columns: 1fr;
+  }
+  .agent-preview {
+    border-left: 0;
+    border-top: 1px solid var(--border);
+    max-height: 270px;
+  }
+  .agent-source textarea {
+    height: 230px;
+  }
+  .agent-empty {
+    padding: 8px;
+  }
+  .agent-empty > svg,
+  .agent-empty > code,
+  .agent-empty > p:last-child {
+    display: none;
+  }
+  .agent-toolbar .text-button {
+    font-size: 10px;
+    padding: 6px;
+  }
+  .agent-modes {
+    width: 100%;
+  }
+  .agent-modes button {
+    flex: 1;
+  }
+  .agent-footer > div {
+    width: 100%;
+  }
+  .agent-footer {
+    position: sticky;
+    bottom: 0;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+  }
+}

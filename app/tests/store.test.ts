@@ -10,6 +10,7 @@ vi.stubGlobal('localStorage', {
   setItem: (key: string, value: string) => memory.set(key, value),
 });
 const { useEditor } = await import('../src/editor/store');
+const { canvasApi } = await import('../src/editor/agentBridge');
 
 beforeEach(() => {
   memory.clear();
@@ -25,6 +26,28 @@ beforeEach(() => {
 });
 
 describe('编辑与持久化事务', () => {
+  it('AI 应用保留变体、一次撤销，并自动保存到本机', () => {
+    useEditor.getState().saveVariant('保留的变体');
+    const before = canvasApi.getModel();
+    const prepared = canvasApi.patchModel(before.project, {
+      operations: [
+        { op: 'rename_project', name: 'AI 修改项目' },
+        { op: 'set_params', id: 'transformer', params: { norm: 'RMSNorm' } },
+      ],
+    });
+    const history = useEditor.getState().past.length;
+    expect(
+      canvasApi.applyModel({ project: prepared.project, expectedRevision: before.revision }).ok,
+    ).toBe(true);
+    expect(useEditor.getState().past).toHaveLength(history + 1);
+    expect(useEditor.getState().project.variants).toEqual(before.project.variants);
+    expect(parseProject(memory.get('tensor-trail.project.v1')!, registry).name).toBe('AI 修改项目');
+    useEditor.getState().undo();
+    expect(useEditor.getState().project).toEqual(before.project);
+    expect(
+      canvasApi.applyModel({ project: prepared.project, expectedRevision: before.revision }).ok,
+    ).toBe(false);
+  });
   it('内部语义编辑标记父模块并支持完整撤销重做', () => {
     useEditor.getState().navigate(['transformer']);
     useEditor.getState().setParam('norm1', 'features', 32);

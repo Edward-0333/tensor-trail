@@ -6,10 +6,13 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && npm run build:agent",
+    "build:agent": "vite build --config vite.agent.config.ts",
+    "agent": "node scripts/agent.mjs",
     "preview": "vite preview --host 127.0.0.1",
     "test": "vitest run",
-    "format": "prettier --write src tests vite.config.ts tsconfig.json package.json index.html"
+    "test:cli": "npm run build:agent && node scripts/test-cli.mjs",
+    "format": "prettier --write src tests scripts examples vite*.config.ts tsconfig.json package.json index.html"
   },
   "dependencies": {
     "@xyflow/react": "^12.10.0",

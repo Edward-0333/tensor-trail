@@ -30,12 +30,22 @@ npm run preview -- --port 5178
 npm run format
 ```
 
-`build` 会执行 TypeScript 检查；`preview` 用于查看构建产物。不要直接双击 dist/index.html，浏览器模块需要本地服务。
+`build` 执行 TypeScript 检查，并生成网页与独立 Agent SDK；`preview` 查看网页产物。不要直接双击 dist/index.html，浏览器模块需要本地服务。
+
+AI 操作见 [AI 操作指南](../docs/AI操作指南.md)。页面顶部“AI 构建”支持粘贴 JSON，校验后应用；命令行可以生成可导入项目：
+
+```sh
+npm run build:agent
+node scripts/agent.mjs build examples/cnn-transformer.recipe.json --out model.json
+npm run test:cli
+```
 
 目录说明：
 
 - `src/core/`：图协议、递归推导、端口校验、保存格式。
 - `src/modules/`：基本算子、Transformer/Attention/FFN 子图、示例。
+- `src/agent/`：Recipe/Patch、模块目录和 Schema、构建与校验 API。
+- `scripts/agent.mjs`：命令行；`examples/`：可运行的配方和修改示例。
 - `src/editor/`：编辑会话、撤销重做、画布和属性面板。
 - `src/views/`：通用 Tensor 视图、节点卡片、可注册的模块详情视图。
 - `tests/`：数学形状契约、图行为与持久化事务测试。

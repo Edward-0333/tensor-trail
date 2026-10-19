@@ -10,8 +10,8 @@ export class ModuleRegistry {
   get(type: string) {
     return this.definitions.get(type);
   }
-  list() {
-    return [...this.definitions.values()].filter((d) => d.category !== '内部');
+  list(includeInternal = false) {
+    return [...this.definitions.values()].filter((d) => includeInternal || d.category !== '内部');
   }
   create(type: string, params: Params = {}, id: string = uid()): ModelNode {
     const def = this.get(type);

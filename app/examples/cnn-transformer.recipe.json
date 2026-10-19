@@ -1,0 +1,33 @@
+{
+  "recipeVersion": 1,
+  "name": "CNN → Transformer → LSTM",
+  "nodes": [
+    { "id": "input", "type": "Input", "params": { "shape": "8, 100, 64" } },
+    { "id": "to_channels", "type": "Permute", "params": { "dims": "0, 2, 1" } },
+    {
+      "id": "cnn",
+      "type": "Conv1d",
+      "params": { "in_channels": 64, "out_channels": 128, "kernel_size": 3, "padding": 1 }
+    },
+    { "id": "to_sequence", "type": "Permute", "params": { "dims": "0, 2, 1" } },
+    {
+      "id": "encoder",
+      "type": "Transformer",
+      "params": { "d_model": 128, "heads": 8, "d_ff": 256 }
+    },
+    {
+      "id": "lstm",
+      "type": "LSTM",
+      "params": { "input_size": 128, "hidden_size": 32, "bidirectional": true }
+    },
+    { "id": "output", "type": "Output" }
+  ],
+  "connections": [
+    ["input.out", "to_channels.in"],
+    ["to_channels.out", "cnn.in"],
+    ["cnn.out", "to_sequence.in"],
+    ["to_sequence.out", "encoder.in"],
+    ["encoder.out", "lstm.in"],
+    ["lstm.out", "output.in"]
+  ]
+}

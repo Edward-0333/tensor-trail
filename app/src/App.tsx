@@ -31,6 +31,7 @@ import { example } from './modules/examples';
 import { useEditor } from './editor/store';
 import { Canvas } from './editor/Canvas';
 import { Inspector } from './editor/Inspector';
+import { AgentPanel } from './editor/AgentPanel';
 import { tone } from './views/ModuleNode';
 
 function exportProject() {
@@ -47,6 +48,7 @@ function exportProject() {
 
 export default function App() {
   const state = useEditor();
+  const [agentOpen, setAgentOpen] = useState(false);
   const [search, setSearch] = useState(''),
     [step, setStep] = useState(-1),
     [playing, setPlaying] = useState(false),
@@ -114,6 +116,7 @@ export default function App() {
   }, [step, order]);
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (document.querySelector('dialog[open]')) return;
       if (
         e.key === '/' &&
         !(e.target as HTMLElement).closest('input,textarea,select,[contenteditable="true"]')
@@ -237,6 +240,9 @@ export default function App() {
               <Redo2 size={17} />
             </button>
           </div>
+          <button className="soft-button" onClick={() => setAgentOpen(true)}>
+            AI 构建
+          </button>
           <button className="text-button" onClick={() => fileRef.current?.click()}>
             <ArrowUpFromLine size={15} />
             导入
@@ -523,6 +529,7 @@ export default function App() {
         </section>
         <Inspector graph={graph} result={result} />
       </main>
+      {agentOpen && <AgentPanel onClose={() => setAgentOpen(false)} />}
       <footer className="statusbar">
         <div className="status-message" role="status">
           <span className="status-indicator" />
