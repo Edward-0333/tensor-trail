@@ -2,12 +2,12 @@
   display: none;
 }
 .flow-left .input-id {
-  left: auto;
   right: 0;
+  left: auto;
 }
 .flow-left .output-id {
-  right: auto;
   left: 0;
+  right: auto;
 }
 .attention-detail {
   margin-top: 22px;
@@ -17,55 +17,153 @@
 .attention-detail > div:not(.section-label) {
   display: flex;
   justify-content: space-between;
-  align-items: center;
-  gap: 5px;
-  margin-top: 11px;
-  font-size: 9px;
-  color: #9a91ac;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 12px;
 }
 .attention-detail code {
-  font-size: 10px;
-  color: #8d7e9e;
+  font-size: 11px;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
 }
 .attention-detail p {
-  font-size: 9px;
-  line-height: 1.9;
-  color: #9fa8b5;
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.8;
   margin-top: 13px;
 }
-@media (max-width: 850px) {
-  .app-shell {
-    min-width: 0;
-    min-height: 580px;
-  }
-  .topbar {
-    height: 64px;
-    padding: 0 14px;
-    gap: 10px;
-  }
-  .brand-mark {
-    width: 32px;
-    height: 32px;
+@media (min-width: 1600px) {
+  .workspace {
+    --left-width: 260px;
+    --right-width: 330px;
   }
   .brand {
-    gap: 8px;
+    min-width: 225px;
+  }
+  .inspector-scroll {
+    padding: 0 22px 24px;
+  }
+}
+@media (max-width: 1200px) {
+  .workspace {
+    --left-width: 215px;
+    --right-width: 285px;
+  }
+  .brand {
+    min-width: auto;
+  }
+  .topbar {
+    gap: 16px;
+  }
+  .save-state {
+    display: none;
+  }
+  .project-heading input {
+    width: 180px;
   }
   .header-actions {
-    gap: 4px;
+    gap: 6px;
   }
-  .history-buttons {
-    padding-left: 0;
+  .inspector-scroll {
+    padding: 0 15px 20px;
+  }
+  .canvas-instruction {
+    display: none;
+  }
+  .flow-strip-heading > div:first-child {
+    gap: 10px;
+  }
+  .validation-pill {
+    font-size: 9px;
+  }
+}
+@media (max-width: 1000px) and (min-width: 851px) {
+  .workspace {
+    --left-width: 195px;
+    --right-width: 265px;
+  }
+  .brand strong {
+    font-size: 13px;
+  }
+  .project-heading input {
+    width: 135px;
+  }
+  .version,
+  .library-module-icon {
+    display: none;
+  }
+  .flow-strip-heading {
+    height: auto;
+    min-height: 67px;
+    flex-wrap: wrap;
+    padding: 6px 10px;
+    gap: 3px;
+  }
+  .flow-strip-heading > div:first-child {
+    height: 25px;
+  }
+  .flow-tab::after {
+    display: none;
+  }
+  .play-controls {
+    margin-left: auto;
+  }
+  .flow-strip {
+    height: 185px;
+    min-height: 185px;
+  }
+}
+@media (min-width: 851px) {
+  .library-hidden .workspace {
+    --left-width: 0px;
+  }
+  .inspector-hidden .workspace {
+    --right-width: 0px;
+  }
+  .library-hidden .library,
+  .inspector-hidden .inspector {
+    visibility: hidden;
+    overflow: hidden;
     border: 0;
   }
-  .text-button,
-  .primary-button {
-    padding: 7px 8px;
+}
+@media (max-width: 850px) {
+  .topbar {
+    height: 55px;
+    padding: 0 12px;
+    gap: 10px;
+  }
+  .brand {
+    gap: 7px;
+  }
+  .brand strong {
+    font-size: 14px;
+  }
+  .brand-mark {
+    width: 27px;
+    height: 27px;
+  }
+  .project-heading,
+  .view-actions {
+    display: none;
+  }
+  .header-actions {
+    margin-left: auto;
+    gap: 5px;
+  }
+  .history-buttons {
+    border: 0;
+    padding-left: 0;
+    gap: 0;
+  }
+  .primary-button,
+  .text-button {
+    padding: 7px 9px;
     font-size: 10px;
   }
   .workspace {
     display: flex;
-    flex: 1;
-    min-height: 0;
   }
   .library,
   .inspector,
@@ -81,40 +179,35 @@
   }
   .mobile-tabs {
     display: flex;
+    height: 41px;
     flex-shrink: 0;
-    height: 39px;
+    padding: 0 16px;
+    gap: 25px;
+    background: var(--surface);
     border-bottom: 1px solid var(--border);
-    background: white;
-    padding: 0 14px;
-    gap: 24px;
   }
   .mobile-tabs button {
     border: 0;
-    border-bottom: 2px solid transparent;
-    background: none;
+    background: transparent;
+    color: var(--muted);
+    padding: 0 2px;
     font-size: 11px;
-    color: #94a3af;
-    padding: 0 4px;
   }
   .mobile-tabs button.active {
-    border-bottom-color: #548e80;
-    color: #416f63;
-  }
-  .library-module-icon {
-    display: grid;
+    color: var(--accent);
+    border-bottom: 2px solid var(--accent);
   }
   .module-items {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding-left: 0;
+    gap: 8px;
   }
   .library-module {
-    padding: 12px;
+    padding: 11px;
   }
   .library-module strong {
     font-size: 12px;
-  }
-  .library-module small {
-    font-size: 9px;
   }
   .library-scroll {
     padding: 0 17px 18px;
@@ -136,52 +229,97 @@
   }
   .param-field input,
   .param-field select {
-    width: 180px;
+    width: 160px;
     padding: 8px;
     font-size: 12px;
   }
   .param-field input[type='text'] {
-    width: 230px;
+    width: 190px;
   }
-  .canvas-toolbar > select {
-    max-width: 150px;
+  .canvas-toolbar {
+    padding: 0 10px;
   }
   .canvas-caption {
-    left: 22px;
-    top: 23px;
+    top: 20px;
+    left: 20px;
   }
-  .canvas-caption > strong {
-    font-size: 18px;
+  .flow-step {
+    min-width: 170px;
+  }
+  .flow-strip-heading {
+    padding: 0 10px;
+  }
+  .flow-strip-heading > div:first-child {
+    gap: 10px;
+  }
+  .validation-pill {
+    font-size: 9px;
   }
   .statusbar {
     padding: 0 12px;
-    font-size: 8px;
+    font-size: 9px;
   }
   .statusbar > span {
     display: none;
   }
-  .flow-strip {
-    height: 158px;
-    min-height: 158px;
-    padding: 13px 18px;
-  }
-  .play-button {
-    font-size: 10px;
-  }
-  .flow-step {
-    min-width: 145px;
-  }
-  .flow-step strong {
-    font-size: 10px;
-  }
   .tensor-axes {
     max-width: 440px;
   }
-  .variant-save {
-    padding-bottom: 20px;
+}
+@media (max-width: 480px) {
+  .topbar {
+    padding: 0 9px;
+    gap: 5px;
   }
-  .react-flow__minimap {
-    width: 85px;
-    height: 58px;
+  .brand strong {
+    font-size: 12px;
+  }
+  .brand-mark {
+    width: 25px;
+    height: 25px;
+  }
+  .brand-mark svg {
+    width: 17px;
+  }
+  .header-actions {
+    gap: 2px;
+  }
+  .history-buttons .icon-button {
+    width: 25px;
+  }
+  .primary-button,
+  .text-button {
+    padding: 6px;
+    gap: 3px;
+  }
+  .primary-button svg,
+  .text-button svg {
+    width: 12px;
+  }
+  .flow-strip-heading {
+    gap: 5px;
+  }
+  .flow-strip-heading > div:first-child {
+    gap: 5px;
+  }
+  .flow-tab {
+    font-size: 10px;
+    gap: 4px;
+  }
+  .flow-tab svg {
+    display: none;
+  }
+  .play-button {
+    font-size: 9px;
+    padding: 5px;
+  }
+  .play-controls {
+    gap: 0;
+  }
+  .play-controls .icon-button {
+    width: 25px;
+  }
+  .module-items {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

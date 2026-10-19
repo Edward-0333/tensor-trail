@@ -4,7 +4,7 @@
 
 Tensor Trail 是本地运行的神经网络学习工作台。定义输入 Tensor，手动连接 Transformer、CNN、RNN 和维度操作；修改参数后，即时查看每个节点及连线的形状，定位不兼容的维度。
 
-![Tensor Trail 工作台](docs/assets/v0.1-desktop.jpg)
+![Tensor Trail 深色工作台](docs/assets/ui-desktop.jpg)
 
 ## v0.1 功能
 
@@ -13,6 +13,7 @@ Tensor Trail 是本地运行的神经网络学习工作台。定义输入 Tensor
 - Pre-Norm / Post-Norm、LayerNorm / RMSNorm、Standard FFN / SwiGLU；可编辑内部算子并保存为独立变体。
 - Tensor 轴含义、命名输入输出端口、实时约束检查与逐步高亮。
 - 图编辑、撤销重做、JSON 导入导出、浏览器自动保存，以及宽屏和窄屏布局。
+- 参考 TensorBloom 的深色工作台、可记忆的明暗主题、侧栏折叠、分类节点色标与当前层级概览；按 `/` 快速搜索模块。
 
 内置混合网络展示：
 

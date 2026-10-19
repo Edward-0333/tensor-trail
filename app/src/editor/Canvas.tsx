@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import {
   Background,
   BackgroundVariant,
@@ -8,13 +8,15 @@ import {
   ReactFlow,
   useNodesState,
   useEdgesState,
+  useNodesInitialized,
+  useReactFlow,
   type Edge,
 } from '@xyflow/react';
 import type { Graph, GraphResult } from '../core/types';
 import { shapeText } from '../core/types';
 import { ports } from '../core/graph';
 import { registry } from '../modules';
-import { ModuleNode, type TrailNode } from '../views/ModuleNode';
+import { categoryColor, ModuleNode, type TrailNode } from '../views/ModuleNode';
 import { useEditor } from './store';
 
 const nodeTypes = { module: ModuleNode };
@@ -35,13 +37,27 @@ export function Canvas({
   graph,
   result,
   step,
+  theme,
 }: {
   graph: Graph;
   result?: GraphResult;
   step: number;
+  theme: 'dark' | 'light';
 }) {
   const selected = useEditor((s) => s.selected),
     path = useEditor((s) => s.path);
+  const initialized = useNodesInitialized();
+  const { fitView } = useReactFlow();
+  const fitted = useRef(false);
+  useEffect(() => {
+    if (!initialized || fitted.current) return;
+    // Wait for measured cards before fitting a newly opened graph.
+    const frame = requestAnimationFrame(() => {
+      void fitView({ padding: 0.18, maxZoom: 1.1 });
+      fitted.current = true;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [initialized, fitView]);
   const derived = useMemo(
     () =>
       graph.nodes.map((model) => ({
@@ -81,11 +97,15 @@ export function Canvas({
           : '待推导',
         animated: step >= 0 && result?.order[step] === edge.source,
         style: {
-          stroke: result?.nodes[edge.source]?.status === 'error' ? '#df7781' : '#a5b5c5',
+          stroke: result?.nodes[edge.source]?.status === 'error' ? 'var(--danger)' : 'var(--edge)',
           strokeWidth: 1.5,
         },
-        labelStyle: { fill: '#586b80', fontSize: 10, fontFamily: 'Consolas, monospace' },
-        labelBgStyle: { fill: '#f8fafc', fillOpacity: 0.95 },
+        labelStyle: {
+          fill: 'var(--text-secondary)',
+          fontSize: 10,
+          fontFamily: 'Consolas, monospace',
+        },
+        labelBgStyle: { fill: 'var(--canvas)', fillOpacity: 0.96 },
         labelBgPadding: [5, 3] as [number, number],
       })),
     [graph, result, step],
@@ -94,6 +114,7 @@ export function Canvas({
   useEffect(() => setEdges(derivedEdges), [derivedEdges, setEdges]);
   return (
     <ReactFlow<TrailNode>
+      colorMode={theme}
       nodes={nodes}
       edges={edges}
       nodeTypes={nodeTypes}
@@ -119,20 +140,24 @@ export function Canvas({
             targetPort: connection.targetHandle,
           });
       }}
-      fitView
-      fitViewOptions={{ padding: 0.18, maxZoom: 1.1 }}
       minZoom={0.15}
       maxZoom={2}
       deleteKeyCode={['Backspace', 'Delete']}
       defaultEdgeOptions={{
         interactionWidth: 24,
-        markerEnd: { type: MarkerType.ArrowClosed, color: '#a5b5c5', width: 16, height: 16 },
+        markerEnd: { type: MarkerType.ArrowClosed, color: 'var(--edge)', width: 16, height: 16 },
       }}
       elevateEdgesOnSelect
     >
-      <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="#d6dee7" />
+      <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="var(--grid)" />
       <Controls showInteractive={false} />
-      <MiniMap nodeColor="#b8cad8" maskColor="rgba(245,248,251,.7)" pannable zoomable />
+      <MiniMap
+        style={{ width: 124, height: 84 }}
+        nodeColor={(node) => categoryColor(String(node.data.category))}
+        maskColor="var(--minimap-mask)"
+        pannable
+        zoomable
+      />
     </ReactFlow>
   );
 }

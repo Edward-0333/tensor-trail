@@ -20,14 +20,22 @@ export type TrailNode = Node<
 >;
 export const tone = (category: string) =>
   category === 'Transformer' || category === '注意力算子'
-    ? 'purple'
+    ? 'orange'
     : category === '卷积'
-      ? 'amber'
+      ? 'purple'
       : category === '循环网络'
-        ? 'blue'
+        ? 'cyan'
         : category === '输入输出' || category === '内部'
           ? 'teal'
-          : 'slate';
+          : category === '归一化'
+            ? 'green'
+            : category === '维度操作'
+              ? 'sky'
+              : category === '分支运算'
+                ? 'pink'
+                : 'blue';
+
+export const categoryColor = (category: string) => `var(--category-${tone(category)})`;
 
 export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
   const { model, result, inputs, outputs } = data;

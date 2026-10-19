@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { ArrowUpRight, BookOpen, BookmarkPlus, SlidersHorizontal, Trash2 } from 'lucide-react';
+import { ArrowUpRight, MousePointer2, BookmarkPlus, SlidersHorizontal, Trash2 } from 'lucide-react';
 import type { Field, Graph, GraphResult, ModelNode } from '../core/types';
 import { graphAt, ports } from '../core/graph';
 import { registry } from '../modules';
 import { TensorView } from '../views/TensorView';
 import { ModuleDetail } from '../views/details';
+import { tone } from '../views/ModuleNode';
 import { useEditor } from './store';
 
 function ParamField({
@@ -97,8 +98,10 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
     <aside className="inspector">
       <div className="panel-heading">
         <SlidersHorizontal size={16} />
-        <h2>模块检查器</h2>
-        <span className="tiny-badge">INSPECT</span>
+        <h2>
+          属性 <small>PROPERTIES</small>
+        </h2>
+        <span className="tiny-badge">{node ? '模块' : '总览'}</span>
       </div>
       <div className="inspector-scroll">
         {node && def ? (
@@ -174,15 +177,54 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
             <ModuleDetail node={node} result={result?.nodes[node.id]} />
           </>
         ) : (
-          <div className="inspector-empty">
-            <div className="empty-symbol">
-              <BookOpen size={25} />
+          <div className="model-summary">
+            <div className="section-label">当前层级概览</div>
+            <dl className="summary-metrics">
+              <div>
+                <dt>模块</dt>
+                <dd>{graph.nodes.length}</dd>
+              </div>
+              <div>
+                <dt>连接</dt>
+                <dd>{graph.edges.length}</dd>
+              </div>
+              <div>
+                <dt>可展开的组合</dt>
+                <dd>{graph.nodes.filter((n) => n.subgraph).length}</dd>
+              </div>
+              <div>
+                <dt>已推导输出的模块</dt>
+                <dd>
+                  {
+                    Object.values(result?.nodes ?? {}).filter(
+                      (r) => Object.keys(r.outputs).length > 0,
+                    ).length
+                  }
+                </dd>
+              </div>
+            </dl>
+            <div className="section-label">模块分布</div>
+            <div className="category-breakdown">
+              {[...new Set(graph.nodes.map((n) => registry.get(n.type)?.category ?? '其他'))].map(
+                (category) => (
+                  <div className={`tone-${tone(category)}`} key={category}>
+                    <span className="category-dot" />
+                    <span>{category}</span>
+                    <code>
+                      {
+                        graph.nodes.filter(
+                          (n) => (registry.get(n.type)?.category ?? '其他') === category,
+                        ).length
+                      }
+                    </code>
+                  </div>
+                ),
+              )}
             </div>
-            <h3>从一个模块开始观察</h3>
-            <p>点击画布上的模块，查看参数、输入输出和每一维的含义。</p>
             <div className="tip-card">
-              <strong>进入更细的一层</strong>
-              <p>双击 Transformer 或 Attention，沿着同一份模型深入内部。</p>
+              <MousePointer2 size={18} />
+              <strong>选择模块，观察 Tensor</strong>
+              <p>单击查看参数和形状。双击 Transformer 或 Attention，继续探索内部结构。</p>
             </div>
           </div>
         )}

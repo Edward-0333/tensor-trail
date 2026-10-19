@@ -8,6 +8,11 @@ import {
   CircleCheck,
   CircleAlert,
   Network,
+  Moon,
+  Sun,
+  PanelLeft,
+  PanelRight,
+  Route,
   Pause,
   Play,
   Redo2,
@@ -45,7 +50,25 @@ export default function App() {
   const [search, setSearch] = useState(''),
     [step, setStep] = useState(-1),
     [playing, setPlaying] = useState(false),
-    [mobilePane, setMobilePane] = useState('canvas');
+    [mobilePane, setMobilePane] = useState('canvas'),
+    [libraryVisible, setLibraryVisible] = useState(true),
+    [inspectorVisible, setInspectorVisible] = useState(true),
+    [theme, setTheme] = useState<'dark' | 'light'>(() => {
+      try {
+        return localStorage.getItem('tensor-trail-theme') === 'light' ? 'light' : 'dark';
+      } catch {
+        return 'dark';
+      }
+    });
+  const searchRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try {
+      localStorage.setItem('tensor-trail-theme', theme);
+    } catch {
+      /* Theme still works without storage. */
+    }
+  }, [theme]);
   const fileRef = useRef<HTMLInputElement>(null),
     pathKey = state.path.join('/');
   const rootResult = useMemo(
@@ -91,6 +114,16 @@ export default function App() {
   }, [step, order]);
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (
+        e.key === '/' &&
+        !(e.target as HTMLElement).closest('input,textarea,select,[contenteditable="true"]')
+      ) {
+        e.preventDefault();
+        setLibraryVisible(true);
+        setMobilePane('library');
+        requestAnimationFrame(() => searchRef.current?.focus());
+        return;
+      }
       if (!(e.ctrlKey || e.metaKey)) return;
       if (e.key.toLowerCase() === 's') {
         e.preventDefault();
@@ -107,11 +140,11 @@ export default function App() {
     return () => window.removeEventListener('keydown', handler);
   }, []);
   const categories = [
-    'Transformer',
     '输入输出',
     '基础层',
     '卷积',
     '循环网络',
+    'Transformer',
     '维度操作',
     '分支运算',
     '归一化',
@@ -130,17 +163,16 @@ export default function App() {
       id,
   }));
   return (
-    <div className={`app-shell mobile-pane-${mobilePane}`}>
+    <div
+      className={`app-shell mobile-pane-${mobilePane} ${libraryVisible ? '' : 'library-hidden'} ${inspectorVisible ? '' : 'inspector-hidden'}`}
+    >
       <header className="topbar">
         <div className="brand">
           <div className="brand-mark">
-            <Network size={25} />
+            <Network size={20} />
           </div>
           <div>
-            <strong>
-              Tensor Trail<span>实验室</span>
-            </strong>
-            <small>看见每一次形状变化</small>
+            <strong>Tensor Trail</strong>
           </div>
         </div>
         <div className="project-heading">
@@ -151,9 +183,37 @@ export default function App() {
             defaultValue={state.project.name}
             onBlur={(e) => state.renameProject(e.target.value)}
           />
-          <span className="version">v0.1</span>
+          <span className="version">MIT</span>
         </div>
         <div className="header-actions">
+          <div className="view-actions">
+            <button
+              className="icon-button"
+              aria-label="切换模块库"
+              title="显示 / 隐藏模块库"
+              aria-pressed={libraryVisible}
+              onClick={() => setLibraryVisible((v) => !v)}
+            >
+              <PanelLeft size={17} />
+            </button>
+            <button
+              className="icon-button"
+              aria-label="切换属性面板"
+              title="显示 / 隐藏属性面板"
+              aria-pressed={inspectorVisible}
+              onClick={() => setInspectorVisible((v) => !v)}
+            >
+              <PanelRight size={17} />
+            </button>
+          </div>
+          <button
+            className="icon-button"
+            aria-label={theme === 'dark' ? '切换浅色主题' : '切换深色主题'}
+            title={theme === 'dark' ? '切换浅色主题' : '切换深色主题'}
+            onClick={() => setTheme((v) => (v === 'dark' ? 'light' : 'dark'))}
+          >
+            {theme === 'dark' ? <Sun size={17} /> : <Moon size={17} />}
+          </button>
           <span className="save-state">
             <span /> {state.saveState}
           </span>
@@ -226,12 +286,15 @@ export default function App() {
         <aside className="library">
           <div className="panel-heading">
             <Boxes size={17} />
-            <h2>模块库</h2>
+            <h2>
+              模块库 <small>LAYERS</small>
+            </h2>
             <span className="count-badge">{registry.list().length}</span>
           </div>
           <label className="search-field">
             <Search size={15} />
             <input
+              ref={searchRef}
               aria-label="搜索模块"
               placeholder="搜索模块或操作…"
               value={search}
@@ -246,11 +309,12 @@ export default function App() {
               if (!modules.length) return null;
               return (
                 <details
-                  className="module-group"
+                  className={`module-group tone-${tone(category)}`}
                   key={category}
-                  open={!!search || ['Transformer', '输入输出', '基础层'].includes(category)}
+                  open={!!search || ['Transformer', '输入输出'].includes(category)}
                 >
                   <summary>
+                    <span className="category-dot" />
                     <span>{category}</span>
                     <small>{modules.length}</small>
                   </summary>
@@ -285,6 +349,9 @@ export default function App() {
                 </details>
               );
             })}
+            {!library.length && (
+              <p className="search-empty">没有匹配的模块，试试 Conv1d、LSTM 或 Attention。</p>
+            )}
             <section className="my-variants">
               <div className="section-label">
                 我的变体 <span>{state.project.variants.length}</span>
@@ -356,13 +423,13 @@ export default function App() {
           <div className="canvas-region">
             <div className="canvas-caption">
               <span>COMPUTATION GRAPH</span>
-              <strong>{breadcrumbs.at(-1)?.label ?? '让数据流变得清晰'}</strong>
+              <strong>{breadcrumbs.at(-1)?.label ?? '模型总览'}</strong>
               <small>
                 {graph.nodes.length} 个模块 · {graph.edges.length} 条连接
               </small>
             </div>
             <ReactFlowProvider key={`${pathKey}:${graph.nodes.map((n) => n.id).join(',')}`}>
-              <Canvas graph={graph} result={result} step={step} />
+              <Canvas graph={graph} result={result} step={step} theme={theme} />
             </ReactFlowProvider>
             <div className="canvas-instruction">
               双击组合模块深入查看 <span>·</span> 拖动圆点连接 Tensor
@@ -371,7 +438,10 @@ export default function App() {
           <section className="flow-strip">
             <div className="flow-strip-heading">
               <div>
-                <span className="section-label">数据流观察</span>
+                <span className="flow-tab">
+                  <Route size={14} />
+                  数据流观察
+                </span>
                 <span className={`validation-pill ${failures ? 'bad' : warnings ? 'warn' : ''}`}>
                   {failures ? <CircleAlert size={12} /> : <CircleCheck size={12} />}{' '}
                   {failures ? `${failures} 处待检查` : warnings ? '包含待验证约束' : '形状检查通过'}
