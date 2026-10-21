@@ -4,7 +4,7 @@
 
 Tensor Trail 是本地运行的神经网络学习工作台。定义输入 Tensor，手动连接 Transformer、CNN、RNN 和维度操作；修改参数后，即时查看每个节点及连线的形状，定位不兼容的维度。
 
-![Tensor Trail 深色工作台](docs/assets/ui-desktop.jpg)
+![Tensor Trail 架构工作台](docs/assets/ui-current.png)
 
 ## v0.1 功能
 
@@ -12,6 +12,8 @@ Tensor Trail 是本地运行的神经网络学习工作台。定义输入 Tensor
 - Transformer → Self-Attention / FFN → Q/K/V、拆头、矩阵乘法等多层子图展开。
 - Pre-Norm / Post-Norm、LayerNorm / RMSNorm、Standard FFN / SwiGLU；可编辑内部算子并保存为独立变体。
 - Tensor 轴含义、命名输入输出端口、实时约束检查与逐步高亮。
+- 从模块库拖到画布添加模块；模块卡片显示代表性图形，Tensor 节点精简为维度显示。
+- 输入与输出端口可独立设置在上、下、左、右；双击连线添加控制点并拖动调整路径，支持恢复自动布线。
 - 图编辑、撤销重做、JSON 导入导出、浏览器自动保存，以及宽屏和窄屏布局。
 - 参考 TensorBloom 的深色工作台、可记忆的明暗主题、侧栏折叠、分类节点色标与当前层级概览；按 `/` 快速搜索模块。
 - AI 构建：简化 JSON 配方、模块目录和 JSON Schema、构建/校验/批量修改 API、CLI，以及带版本冲突检查的画布应用入口。
@@ -49,11 +51,12 @@ npm run dev -- --port 5178
 
 ```sh
 npm test
+npm run test:cli
 npm run build
 npm run preview -- --port 5178
 ```
 
-当前已通过 63 项自动测试、CLI 端到端检查、TypeScript 检查及生产构建，浏览器交互验证见[第一版验收](docs/第一版验收.md)。
+当前已通过 90 项自动测试、CLI 端到端检查、TypeScript 检查及生产构建，浏览器交互验证见[第一版验收](docs/第一版验收.md)。
 
 ```text
 app/src/core/      图协议、TensorSpec、递归形状推导、序列化

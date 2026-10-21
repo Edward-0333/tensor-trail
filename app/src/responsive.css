@@ -1,14 +1,6 @@
 .mobile-tabs {
   display: none;
 }
-.flow-left .input-id {
-  right: 0;
-  left: auto;
-}
-.flow-left .output-id {
-  left: 0;
-  right: auto;
-}
 .attention-detail {
   margin-top: 22px;
   border-top: 1px solid var(--border);
@@ -89,8 +81,7 @@
   .project-heading input {
     width: 135px;
   }
-  .version,
-  .library-module-icon {
+  .version {
     display: none;
   }
   .flow-strip-heading {

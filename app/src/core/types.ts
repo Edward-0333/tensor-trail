@@ -5,6 +5,11 @@ export interface TensorSpec {
   dtype: string;
 }
 export type Params = Record<string, string | number | boolean>;
+export type PortSide = 'left' | 'right' | 'top' | 'bottom';
+export interface PortLayout {
+  input?: PortSide;
+  output?: PortSide;
+}
 export interface Port {
   id: string;
   label: string;
@@ -25,6 +30,7 @@ export interface ModelNode {
   label: string;
   params: Params;
   position: { x: number; y: number };
+  portLayout?: PortLayout;
   subgraph?: Graph;
   customized?: boolean;
 }
@@ -34,6 +40,7 @@ export interface ModelEdge {
   sourcePort: string;
   target: string;
   targetPort: string;
+  waypoints?: { x: number; y: number }[];
 }
 export interface Graph {
   nodes: ModelNode[];

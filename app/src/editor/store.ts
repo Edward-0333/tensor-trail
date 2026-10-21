@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Graph, ModelEdge, Params, Project } from '../core/types';
+import type { Graph, ModelEdge, Params, PortLayout, PortSide, Project } from '../core/types';
 import { clone, uid } from '../core/types';
 import { graphAt, graphIssues, markAncestors, ports } from '../core/graph';
 import { inferGraph, resultAt } from '../core/engine';
@@ -25,6 +25,7 @@ function restore(): { project: Project; notice: string } {
 const initial = restore();
 interface EditorState {
   project: Project;
+  canvasVersion: number;
   path: string[];
   selected: string | null;
   past: Project[];
@@ -36,12 +37,14 @@ interface EditorState {
   toast: (message: string) => void;
   edit: (fn: (graph: Graph, project: Project) => void, semantic?: boolean) => boolean;
   setParam: (id: string, key: string, value: Params[string]) => void;
+  setPortSide: (id: string, kind: keyof PortLayout, side: PortSide | 'auto') => void;
   renameNode: (id: string, name: string) => void;
   renameProject: (name: string) => void;
-  add: (type: string, variantId?: string) => void;
+  add: (type: string, variantId?: string, position?: { x: number; y: number }) => void;
   connect: (edge: Omit<ModelEdge, 'id'>) => void;
   removeNodes: (ids: string[]) => void;
   removeEdges: (ids: string[]) => void;
+  setEdgeWaypoints: (id: string, points?: ModelEdge['waypoints']) => void;
   move: (id: string, position: { x: number; y: number }) => void;
   replace: (id: string, type: string) => void;
   saveVariant: (name: string) => void;
@@ -53,6 +56,7 @@ interface EditorState {
 
 export const useEditor = create<EditorState>((set, get) => ({
   ...initial,
+  canvasVersion: 0,
   path: [],
   selected: 'transformer',
   past: [],
@@ -97,17 +101,29 @@ export const useEditor = create<EditorState>((set, get) => ({
         g.nodes.find((n) => n.id === id)!.label = name.trim().slice(0, 200);
       }, false);
   },
+  setPortSide: (id, kind, side) =>
+    get().edit((graph) => {
+      const node = graph.nodes.find((n) => n.id === id);
+      if (!node) throw new Error('模块已不存在。');
+      const layout = { ...node.portLayout };
+      if (side === 'auto') delete layout[kind];
+      else layout[kind] = side;
+      if (Object.keys(layout).length) node.portLayout = layout;
+      else delete node.portLayout;
+    }, false),
   renameProject: (name) => {
     if (name.trim())
       get().edit((_, p) => {
         p.name = name.trim().slice(0, 200);
       }, false);
   },
-  add: (type, variantId) => {
+  add: (type, variantId, position) => {
     let added = '';
     const committed = get().edit((graph, project) => {
-      const source = graph.nodes.find((n) => n.id === get().selected);
+      // A drop places an independent module; clicks keep the automatic connection behavior.
+      const source = position ? undefined : graph.nodes.find((n) => n.id === get().selected);
       const variant = project.variants.find((v) => v.id === variantId);
+      if (variantId !== undefined && !variant) throw new Error('这个变体已不存在，请重新选择。');
       const node = variant
         ? registry.fromVariant(variant.name, variant.graph)
         : registry.create(type);
@@ -126,16 +142,24 @@ export const useEditor = create<EditorState>((set, get) => ({
         const def = registry.get(type);
         if (def?.build) node.subgraph = def.build(node.params);
       }
-      node.position = source
-        ? { x: source.position.x + 290, y: source.position.y + 190 }
-        : { x: (graph.nodes.length % 4) * 290, y: Math.floor(graph.nodes.length / 4) * 220 };
+      node.position = position
+        ? { ...position }
+        : source
+          ? { x: source.position.x + 290, y: source.position.y + 190 }
+          : { x: (graph.nodes.length % 4) * 290, y: Math.floor(graph.nodes.length / 4) * 220 };
       graph.nodes.push(node);
       const targetPort = ports(node, registry).inputs[0]?.id;
       if (source && sourcePort && targetPort)
         graph.edges.push({ id: uid(), source: source.id, sourcePort, target: node.id, targetPort });
       added = node.id;
     });
-    if (committed && added) set({ selected: added, notice: '已添加模块；可拖动端口调整连接。' });
+    if (committed && added)
+      set({
+        selected: added,
+        notice: position
+          ? '已在落点添加模块，拖动端口即可连线。'
+          : '已添加模块；可拖动端口调整连接。',
+      });
   },
   connect: (edge) =>
     get().edit((graph) => {
@@ -160,6 +184,13 @@ export const useEditor = create<EditorState>((set, get) => ({
     get().edit((graph) => {
       graph.edges = graph.edges.filter((e) => !ids.includes(e.id));
     }),
+  setEdgeWaypoints: (id, points) =>
+    get().edit((graph) => {
+      const edge = graph.edges.find((e) => e.id === id);
+      if (!edge) throw new Error('连线已不存在。');
+      if (points?.length) edge.waypoints = clone(points);
+      else delete edge.waypoints;
+    }, false),
   move: (id, position) =>
     get().edit((graph) => {
       const node = graph.nodes.find((n) => n.id === id);
@@ -182,6 +213,7 @@ export const useEditor = create<EditorState>((set, get) => ({
       for (const key of Object.keys(fresh.params))
         if (key in old.params) fresh.params[key] = old.params[key];
       fresh.position = old.position;
+      if (old.portLayout) fresh.portLayout = clone(old.portLayout);
       if (old.label !== registry.get(old.type)?.label) fresh.label = old.label;
       graph.nodes[index] = fresh;
     }),
@@ -215,6 +247,7 @@ export const useEditor = create<EditorState>((set, get) => ({
     if (past.length)
       set({
         project: past.at(-1)!,
+        canvasVersion: get().canvasVersion + 1,
         past: past.slice(0, -1),
         future: [project, ...future],
         path: [],
@@ -227,6 +260,7 @@ export const useEditor = create<EditorState>((set, get) => ({
     if (future.length)
       set({
         project: future[0],
+        canvasVersion: get().canvasVersion + 1,
         past: [...past, project],
         future: future.slice(1),
         path: [],
@@ -238,6 +272,7 @@ export const useEditor = create<EditorState>((set, get) => ({
     const { past, project: previous } = get();
     set({
       project: clone(project),
+      canvasVersion: get().canvasVersion + 1,
       path: [],
       selected: null,
       past: [...past.slice(-39), previous],

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Background,
   BackgroundVariant,
@@ -11,7 +11,6 @@ import {
   useEdgesState,
   useNodesInitialized,
   useReactFlow,
-  type Edge,
 } from '@xyflow/react';
 import type { Graph, GraphResult } from '../core/types';
 import { shapeText } from '../core/types';
@@ -19,8 +18,11 @@ import { ports } from '../core/graph';
 import { registry } from '../modules';
 import { categoryColor, ModuleNode, type TrailNode } from '../views/ModuleNode';
 import { useEditor } from './store';
+import { MODULE_DRAG_TYPE, readModuleDrag } from './moduleDrag';
+import { EditableEdge, type TrailEdge } from '../views/EditableEdge';
 
 const nodeTypes = { module: ModuleNode };
+const edgeTypes = { editable: EditableEdge };
 function flowsLeft(graph: Graph, id: string): boolean {
   const current = graph.nodes.find((n) => n.id === id)!;
   const next = graph.edges
@@ -48,7 +50,17 @@ export function Canvas({
   const selected = useEditor((s) => s.selected),
     path = useEditor((s) => s.path);
   const initialized = useNodesInitialized();
-  const { fitView } = useReactFlow();
+  const { fitView, screenToFlowPosition } = useReactFlow();
+  const [dropActive, setDropActive] = useState(false);
+  useEffect(() => {
+    const clearDrop = () => setDropActive(false);
+    window.addEventListener('dragend', clearDrop);
+    window.addEventListener('drop', clearDrop);
+    return () => {
+      window.removeEventListener('dragend', clearDrop);
+      window.removeEventListener('drop', clearDrop);
+    };
+  }, []);
   const fitted = useRef(false);
   useEffect(() => {
     if (!initialized || fitted.current) return;
@@ -95,7 +107,7 @@ export function Canvas({
       return current.map((node) => ({ ...node, selected: node.id === selected }));
     });
   }, [selected, setNodes]);
-  const derivedEdges: Edge[] = useMemo(
+  const derivedEdges: TrailEdge[] = useMemo(
     () =>
       graph.edges.map((edge) => ({
         id: edge.id,
@@ -103,7 +115,11 @@ export function Canvas({
         target: edge.target,
         sourceHandle: edge.sourcePort,
         targetHandle: edge.targetPort,
-        type: 'smoothstep',
+        type: 'editable',
+        data: {
+          waypoints: edge.waypoints,
+          changeRoute: (points) => useEditor.getState().setEdgeWaypoints(edge.id, points),
+        },
         label: result?.nodes[edge.source]?.outputs[edge.sourcePort]
           ? shapeText(result.nodes[edge.source].outputs[edge.sourcePort])
           : '待推导',
@@ -122,16 +138,47 @@ export function Canvas({
       })),
     [graph, result, step],
   );
-  const [edges, setEdges, onEdgesChange] = useEdgesState(derivedEdges);
-  useEffect(() => setEdges(derivedEdges), [derivedEdges, setEdges]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<TrailEdge>(derivedEdges);
+  useEffect(
+    () =>
+      setEdges((current) => {
+        const selection = new Set(current.filter((edge) => edge.selected).map((edge) => edge.id));
+        return derivedEdges.map((edge) => ({ ...edge, selected: selection.has(edge.id) }));
+      }),
+    [derivedEdges, setEdges],
+  );
   return (
-    <ReactFlow<TrailNode>
+    <ReactFlow<TrailNode, TrailEdge>
+      className={dropActive ? 'module-drop-active' : undefined}
       colorMode={theme}
       nodes={nodes}
       edges={edges}
       nodeTypes={nodeTypes}
+      edgeTypes={edgeTypes}
+      onDragOver={(event) => {
+        if (!event.dataTransfer.types.includes(MODULE_DRAG_TYPE)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'copy';
+        setDropActive(true);
+      }}
+      onDragLeave={(event) => {
+        if (
+          !(event.relatedTarget instanceof Node) ||
+          !event.currentTarget.contains(event.relatedTarget)
+        )
+          setDropActive(false);
+      }}
+      onDrop={(event) => {
+        setDropActive(false);
+        const module = readModuleDrag(event.dataTransfer);
+        if (!module) return;
+        event.preventDefault();
+        const position = screenToFlowPosition({ x: event.clientX, y: event.clientY });
+        useEditor.getState().add(module.type, module.variantId, position);
+      }}
       onNodesChange={onNodesChange}
       onNodeClick={(_, node) => useEditor.getState().select(node.id)}
+      onEdgeClick={() => useEditor.getState().select(null)}
       onPaneClick={() => useEditor.getState().select(null)}
       onSelectionStart={() => useEditor.getState().select(null)}
       onNodeDoubleClick={(_, node) => node.data.open()}
@@ -173,6 +220,7 @@ export function Canvas({
       }}
       elevateEdgesOnSelect
     >
+      {dropActive && <div className="canvas-drop-hint">松开以添加模块</div>}
       <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="var(--grid)" />
       <Controls showInteractive={false} />
       <MiniMap

@@ -1,8 +1,10 @@
 import { useEffect } from 'react';
-import { Handle, Position, useUpdateNodeInternals, type Node, type NodeProps } from '@xyflow/react';
-import { Box, ChevronRight, AlertCircle, ArrowUpRight } from 'lucide-react';
+import { useUpdateNodeInternals, type Node, type NodeProps } from '@xyflow/react';
+import { ChevronRight, AlertCircle, ArrowUpRight } from 'lucide-react';
 import type { ModelNode, NodeResult, Port } from '../core/types';
 import { shapeText } from '../core/types';
+import { ModuleGlyph } from './ModuleGlyph';
+import { PortHandles } from './PortHandles';
 
 export type TrailNode = Node<
   {
@@ -37,71 +39,74 @@ export const tone = (category: string) =>
 
 export const categoryColor = (category: string) => `var(--category-${tone(category)})`;
 
+export const isTensorNode = (type: string) => ['Input', 'Output', 'Inlet', 'Outlet'].includes(type);
+
 export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
   const { model, result, inputs, outputs } = data;
+  const inputSide = model.portLayout?.input ?? (data.reverse ? 'right' : 'left');
+  const outputSide = model.portLayout?.output ?? (data.reverse ? 'left' : 'right');
   const updateNodeInternals = useUpdateNodeInternals();
   useEffect(() => {
     updateNodeInternals(model.id);
-  }, [model.id, data.reverse, inputs.length, outputs.length, updateNodeInternals]);
+  }, [model.id, inputSide, outputSide, inputs.length, outputs.length, updateNodeInternals]);
   const bad = result?.status === 'error' || result?.status === 'blocked';
+  if (isTensorNode(model.type)) {
+    const spec = result?.outputs.out ?? result?.inputs.in;
+    const shape = spec ? shapeText(spec) : bad ? '待修正' : '等待输入';
+    return (
+      <div
+        className={`tensor-node ${data.reverse ? 'flow-left' : ''} ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
+        data-testid={`node-${model.id}`}
+      >
+        <div className="tensor-node-label" title={model.label}>
+          {model.label}
+        </div>
+        <div className="tensor-node-shape">
+          <PortHandles
+            inputs={inputs}
+            outputs={outputs}
+            inputSide={inputSide}
+            outputSide={outputSide}
+            labels={false}
+          />
+          <code title={spec ? `${shape} · ${spec.axes.join(', ')}` : shape}>{shape}</code>
+        </div>
+      </div>
+    );
+  }
+
   const rows = Math.max(inputs.length, outputs.length, 1);
+  const bodyHeight = Math.max(rows * 27 + 12, 72);
+  const hasTop =
+    (inputs.length > 0 && inputSide === 'top') || (outputs.length > 0 && outputSide === 'top');
+  const hasBottom =
+    (inputs.length > 0 && inputSide === 'bottom') ||
+    (outputs.length > 0 && outputSide === 'bottom');
   return (
     <div
-      className={`module-node tone-${tone(data.category)} ${data.reverse ? 'flow-left' : ''} ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
+      className={`module-node tone-${tone(data.category)} ${hasTop ? 'has-top-ports' : ''} ${hasBottom ? 'has-bottom-ports' : ''} ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
       data-testid={`node-${model.id}`}
     >
       <div className="node-heading">
-        <div className="node-symbol">
-          <Box size={15} />
-        </div>
-        <div>
-          <span className="node-kind">{model.type}</span>
-          <strong title={model.label}>{model.label}</strong>
+        <div className="node-title">
+          <strong className="node-kind" title={`${model.label} · ${model.type}`}>
+            {model.label}
+          </strong>
         </div>
         {model.subgraph && <ArrowUpRight className="node-expand-icon" size={15} />}
       </div>
-      <div className="node-ports" style={{ minHeight: rows * 27 + 12 }}>
-        {Array.from({ length: rows }, (_, i) => {
-          const ip = inputs[i],
-            op = outputs[i];
-          const spec = op
-            ? result?.outputs[op.id]
-            : i === 0
-              ? (result?.outputs.out ?? result?.inputs.in)
-              : undefined;
-          return (
-            <div className="node-port-row" key={i}>
-              {ip && (
-                <>
-                  <Handle
-                    id={ip.id}
-                    type="target"
-                    position={data.reverse ? Position.Right : Position.Left}
-                    style={{ top: 13.5, ...(data.reverse ? { right: -9 } : { left: -9 }) }}
-                    aria-label={`输入 ${ip.id}`}
-                  />
-                  <span className="port-id input-id">{ip.id}</span>
-                </>
-              )}
-              <code title={shapeText(spec)}>
-                {spec ? shapeText(spec) : bad ? '待修正' : i === 0 ? '等待输入' : '·'}
-              </code>
-              {op && (
-                <>
-                  <span className="port-id output-id">{op.id}</span>
-                  <Handle
-                    id={op.id}
-                    type="source"
-                    position={data.reverse ? Position.Left : Position.Right}
-                    style={{ top: 13.5, ...(data.reverse ? { left: -9 } : { right: -9 }) }}
-                    aria-label={`输出 ${op.id}`}
-                  />
-                </>
-              )}
-            </div>
-          );
-        })}
+      <div className="node-ports" style={{ minHeight: bodyHeight }}>
+        <div className="node-operation">
+          <ModuleGlyph type={model.type} />
+        </div>
       </div>
+      <PortHandles
+        inputs={inputs}
+        outputs={outputs}
+        inputSide={inputSide}
+        outputSide={outputSide}
+        horizontalArea={{ top: 3 + (hasTop ? 60 : 47), height: bodyHeight }}
+      />
       <div className="node-footer">
         {bad ? (
           <span className="node-error">

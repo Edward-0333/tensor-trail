@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ArrowUpRight, MousePointer2, BookmarkPlus, SlidersHorizontal, Trash2 } from 'lucide-react';
-import type { Field, Graph, GraphResult, ModelNode } from '../core/types';
+import type { Field, Graph, GraphResult, ModelNode, PortSide } from '../core/types';
 import { graphAt, ports } from '../core/graph';
 import { registry } from '../modules';
 import { TensorView } from '../views/TensorView';
@@ -139,6 +139,30 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
                 </button>
               )}
             </div>
+            <section className="port-layout-settings">
+              <div className="section-label">端口布局</div>
+              {(['input', 'output'] as const).map((kind) => (
+                <label className="param-field" key={kind}>
+                  <span>{kind === 'input' ? '输入位置' : '输出位置'}</span>
+                  <select
+                    aria-label={kind === 'input' ? '输入端口位置' : '输出端口位置'}
+                    value={node.portLayout?.[kind] ?? 'auto'}
+                    disabled={
+                      !ports(node, registry)[kind === 'input' ? 'inputs' : 'outputs'].length
+                    }
+                    onChange={(event) =>
+                      state.setPortSide(node.id, kind, event.target.value as PortSide | 'auto')
+                    }
+                  >
+                    <option value="auto">自动</option>
+                    <option value="left">左侧</option>
+                    <option value="right">右侧</option>
+                    <option value="top">上方</option>
+                    <option value="bottom">下方</option>
+                  </select>
+                </label>
+              ))}
+            </section>
             {node.customized && node.subgraph && (
               <div className="info-note">
                 此模块已自定义。进入内部修改各算子，父层参数保留为来源记录。

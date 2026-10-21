@@ -40,6 +40,8 @@ node scripts/agent.mjs build examples/cnn-transformer.recipe.json --out model.js
 npm run test:cli
 ```
 
+从左侧模块库拖动名称到画布添加模块；单击不会添加。选中模块后，可在右侧属性页分别设置输入、输出端口的方向。双击连线添加控制点，拖动控制点调整路径；双击控制点删除，或恢复自动布线。所有布局操作支持撤销、保存与恢复。
+
 目录说明：
 
 - `src/core/`：图协议、递归推导、端口校验、保存格式。

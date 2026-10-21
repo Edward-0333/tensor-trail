@@ -4,7 +4,6 @@ import {
   ArrowUpFromLine,
   Boxes,
   ChevronRight,
-  CirclePlus,
   CircleCheck,
   CircleAlert,
   Network,
@@ -32,7 +31,8 @@ import { useEditor } from './editor/store';
 import { Canvas } from './editor/Canvas';
 import { Inspector } from './editor/Inspector';
 import { AgentPanel } from './editor/AgentPanel';
-import { tone } from './views/ModuleNode';
+import { startModuleDrag } from './editor/moduleDrag';
+import { isTensorNode, tone } from './views/ModuleNode';
 
 function exportProject() {
   const state = useEditor.getState(),
@@ -308,7 +308,7 @@ export default function App() {
             />
             <kbd>/</kbd>
           </label>
-          <p className="library-hint">点击添加 · 连接到选中模块</p>
+          <p className="library-hint">拖动模块到画布添加</p>
           <div className="library-scroll">
             {categories.map((category) => {
               const modules = library.filter((d) => d.category === category);
@@ -324,32 +324,20 @@ export default function App() {
                     <span>{category}</span>
                     <small>{modules.length}</small>
                   </summary>
-                  <div className="module-items">
+                  <div className="module-items" role="list">
                     {modules.map((def) => (
-                      <button
+                      <div
                         key={def.type}
                         className={`library-module tone-${tone(category)}`}
-                        aria-label={`添加 ${def.label}`}
-                        title={def.description}
-                        onClick={() => state.add(def.type)}
+                        role="listitem"
+                        tabIndex={0}
+                        aria-label={`${def.label}，拖入画布添加`}
+                        title={def.label}
+                        draggable
+                        onDragStart={(event) => startModuleDrag(event, { type: def.type })}
                       >
-                        <span className="library-module-icon">
-                          <Boxes size={15} />
-                        </span>
-                        <span>
-                          <strong>{def.label}</strong>
-                          <small>
-                            {def.composite
-                              ? '可展开的组合模块'
-                              : def.type === 'Input'
-                                ? '指定初始形状'
-                                : def.type === 'Output'
-                                  ? '查看最终输出'
-                                  : def.description.slice(0, 17)}
-                          </small>
-                        </span>
-                        <CirclePlus size={14} />
-                      </button>
+                        <strong>{def.label}</strong>
+                      </div>
                     ))}
                   </div>
                 </details>
@@ -363,17 +351,24 @@ export default function App() {
                 我的变体 <span>{state.project.variants.length}</span>
               </div>
               {state.project.variants.length ? (
-                state.project.variants.map((variant) => (
-                  <button
-                    className="variant-card"
-                    key={variant.id}
-                    onClick={() => state.add('Block', variant.id)}
-                  >
-                    <Boxes size={15} />
-                    <span>{variant.name}</span>
-                    <CirclePlus size={14} />
-                  </button>
-                ))
+                <div role="list">
+                  {state.project.variants.map((variant) => (
+                    <div
+                      className="variant-card"
+                      key={variant.id}
+                      role="listitem"
+                      tabIndex={0}
+                      aria-label={`${variant.name}，拖入画布添加`}
+                      title={variant.name}
+                      draggable
+                      onDragStart={(event) =>
+                        startModuleDrag(event, { type: 'Block', variantId: variant.id })
+                      }
+                    >
+                      <span>{variant.name}</span>
+                    </div>
+                  ))}
+                </div>
               ) : (
                 <div className="variant-placeholder">
                   调整一个 Transformer，
@@ -434,7 +429,7 @@ export default function App() {
                 {graph.nodes.length} 个模块 · {graph.edges.length} 条连接
               </small>
             </div>
-            <ReactFlowProvider key={`${pathKey}:${graph.nodes.map((n) => n.id).join(',')}`}>
+            <ReactFlowProvider key={`${pathKey}:${state.canvasVersion}`}>
               <Canvas graph={graph} result={result} step={step} theme={theme} />
             </ReactFlowProvider>
             <div className="canvas-instruction">
@@ -503,7 +498,7 @@ export default function App() {
                   return (
                     <button
                       key={id}
-                      className={`flow-step ${i === step ? 'active' : ''} ${r?.status === 'error' ? 'error' : ''}`}
+                      className={`flow-step ${isTensorNode(node.type) ? 'tensor-step' : ''} ${i === step ? 'active' : ''} ${r?.status === 'error' ? 'error' : ''}`}
                       onClick={() => {
                         setStep(i);
                         setPlaying(false);

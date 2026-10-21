@@ -69,6 +69,17 @@ export function parseProject(text: string, registry: Registry): Project {
         node.customized === undefined || typeof node.customized === 'boolean',
         'customized 必须为布尔值。',
       );
+      const layout = node.portLayout;
+      requireThat(
+        layout === undefined ||
+          (record(layout) &&
+            ['input', 'output'].every(
+              (key) =>
+                layout[key] === undefined ||
+                ['left', 'right', 'top', 'bottom'].includes(String(layout[key])),
+            )),
+        '端口位置无效，请选择左、右、上或下。',
+      );
       if (def.composite) {
         requireThat(node.subgraph, '组合模块缺少子图。');
         inspect(node.subgraph, depth + 1);
@@ -92,6 +103,15 @@ export function parseProject(text: string, registry: Registry): Project {
           identifier(edge.sourcePort) &&
           identifier(edge.targetPort),
         '连接数据无效。',
+      );
+      requireThat(
+        edge.waypoints === undefined ||
+          (Array.isArray(edge.waypoints) &&
+            edge.waypoints.length <= 100 &&
+            edge.waypoints.every(
+              (point) => record(point) && Number.isFinite(point.x) && Number.isFinite(point.y),
+            )),
+        '连线控制点无效；每条连线最多支持 100 个有限坐标点。',
       );
     }
     const issues = graphIssues(candidate as unknown as Graph, registry);
