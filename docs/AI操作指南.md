@@ -1,7 +1,7 @@
 ---
 title: "Tensor Trail AI 操作指南"
 created: 2026-10-19
-last_updated: 2026-10-19
+last_updated: 2026-11-02
 authors:
   human: "用户"
   ai: "Codex"
@@ -65,6 +65,22 @@ node scripts/agent.mjs patch model.json examples/swiglu.patch.json --out swiglu-
 - 自动生成位置和组合模块内部子图，输出完整项目仍为 schemaVersion: 1。顶层至少一个 Input 和 Output；必需输入必须连接，禁止环路、悬空端点和同一输入端口多条边。
 - Input.shape 是逗号分隔文本。默认 axes 适用于三维 [batch, sequence, feature]；其他维度明确指定 axes，或设 `axes: ""` 自动命名。符号尺寸如 `B, T, 64` 可能产生尚不能确认的约束警告。
 - Transformer 默认 [B,T,D]，Conv1d 为 [B,C,L]，通常用 Permute 转换。完整示例见 app/examples/cnn-transformer.recipe.json。
+
+### Q/K/V 三输入注意力
+
+`MultiheadAttention` 提供 `q`、`k`、`v` 三个输入和 `out` 输出。参数为 `d_model`（Q 与输出特征宽度，默认 64）、`heads`（默认 8）、`kdim`、`vdim`（默认 0 表示跟随 d_model）、`causal`（默认 false）。Q/K/V 是投影前输入，模块内部包含各自的线性投影。
+
+Q `[B,Tq,d_model]`、K `[B,Tk,kdim]`、V `[B,Tk,vdim]`，输出 `[B,Tq,d_model]`；三路 batch 和浮点 dtype 必须一致，K/V 序列长度必须相同。Q 长度可独立变化。连接相同来源可做自注意力，连接不同来源可做交叉注意力。`causal` 标记按序列索引屏蔽未来位置，未实现外部 mask 或 KV Cache 位置偏移。
+
+示例 `app/examples/cross-attention.recipe.json` 展示不同序列长度与 K/V 特征宽度：
+
+```sh
+node scripts/agent.mjs describe MultiheadAttention
+node scripts/agent.mjs build examples/cross-attention.recipe.json --out cross-attention.json
+node scripts/agent.mjs validate cross-attention.json
+```
+
+配方中的连接为 `query.out → attention.q`、`key.out → attention.k`、`value.out → attention.v`、`attention.out → output.in`。展开诊断路径 `attention/q_heads`、`attention/k_heads`、`attention/v_heads` 和 `attention/scores` 可观察多头与矩形注意力分数形状。缺失任一路输入或尺寸不兼容会阻断输出。
 
 ## API 与返回结果
 

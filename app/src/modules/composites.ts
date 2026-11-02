@@ -39,6 +39,54 @@ const validateAttention = (inputs: Record<string, TensorSpec>, p: Params) => {
   return validateSequence(inputs, p);
 };
 
+function buildAttention(registry: ModuleRegistry, p: Params, separateInputs = false): Graph {
+  const { graph, node, edge } = builder(registry),
+    d = Number(p.d_model),
+    heads = Number(p.heads);
+  if (!separateInputs) node('input', 'Inlet', {}, 0, 200, '输入 X');
+  for (const [i, key] of ['q', 'k', 'v'].entries()) {
+    if (separateInputs)
+      node(`${key}_input`, 'Inlet', { port: key }, 0, i * 200, `${key.toUpperCase()} 输入`);
+    const width = separateInputs && key !== 'q' ? Number(p[key === 'k' ? 'kdim' : 'vdim']) || d : d;
+    node(
+      key,
+      'Linear',
+      { in_features: width, out_features: d },
+      250,
+      i * 200,
+      `${key.toUpperCase()} 投影`,
+    );
+    node(`${key}_heads`, 'SplitHeads', { heads }, 500, i * 200, `${key.toUpperCase()} 拆头`);
+    edge(separateInputs ? `${key}_input` : 'input', key);
+    edge(key, `${key}_heads`);
+  }
+  node('transpose_k', 'Permute', { dims: '0, 1, 3, 2' }, 750, 200, 'K 转置');
+  edge('k_heads', 'transpose_k');
+  node('scores', 'MatMul', {}, 1000, 0, 'Q × Kᵀ');
+  edge('q_heads', 'scores', 'a');
+  edge('transpose_k', 'scores', 'b');
+  node('scale', 'Scale', { head_dim: d / heads }, 1000, 200, '缩放分数');
+  edge('scores', 'scale');
+  let previous = 'scale';
+  if (p.causal) {
+    node('mask', 'CausalMask', {}, 1000, 400);
+    edge(previous, 'mask');
+    previous = 'mask';
+  }
+  node('weights', 'Softmax', { dim: -1 }, 750, 600, '注意力权重');
+  edge(previous, 'weights');
+  node('context', 'MatMul', {}, 500, 600, '权重 × V');
+  edge('weights', 'context', 'a');
+  edge('v_heads', 'context', 'b');
+  node('merge', 'MergeHeads', {}, 250, 600);
+  edge('context', 'merge');
+  node('projection', 'Linear', { in_features: d, out_features: d }, 0, 600, '输出投影');
+  edge('merge', 'projection');
+  node('output', 'Outlet', {}, 0, 800, '注意力输出');
+  edge('projection', 'output');
+  return graph;
+}
+
 export function installComposites(registry: ModuleRegistry) {
   registry.register({
     type: 'Block',
@@ -64,50 +112,64 @@ export function installComposites(registry: ModuleRegistry) {
     inputs: input,
     outputs: output,
     validate: validateAttention,
-    build: (p) => {
-      const { graph, node, edge } = builder(registry),
-        d = Number(p.d_model),
-        heads = Number(p.heads);
-      node('input', 'Inlet', {}, 0, 200, '输入 X');
-      for (const [i, key] of ['q', 'k', 'v'].entries()) {
-        node(
-          key,
-          'Linear',
-          { in_features: d, out_features: d },
-          250,
-          i * 200,
-          `${key.toUpperCase()} 投影`,
-        );
-        node(`${key}_heads`, 'SplitHeads', { heads }, 500, i * 200, `${key.toUpperCase()} 拆头`);
-        edge('input', key);
-        edge(key, `${key}_heads`);
+    build: (p) => buildAttention(registry, p),
+  });
+  registry.register({
+    type: 'MultiheadAttention',
+    label: 'Q/K/V Attention',
+    category: 'Transformer',
+    description: 'Q/K/V 三输入多头注意力，支持不同序列长度与 K/V 特征宽度，可展开投影和矩阵乘法。',
+    composite: true,
+    fields: [
+      num('d_model', 'Q / 输出特征', 64),
+      num('heads', '注意力头数', 8),
+      {
+        ...num('kdim', 'K 输入特征（0 跟随 Q）', 0, 0),
+        help: 'K 的输入特征宽度；0 表示与 d_model 相同。',
+      },
+      {
+        ...num('vdim', 'V 输入特征（0 跟随 Q）', 0, 0),
+        help: 'V 的输入特征宽度；0 表示与 d_model 相同。',
+      },
+      bool('causal', '因果遮挡', false),
+    ],
+    inputs: [
+      { id: 'q', label: 'Q' },
+      { id: 'k', label: 'K' },
+      { id: 'v', label: 'V' },
+    ],
+    outputs: output,
+    validate: (inputs, p) => {
+      requireThat(
+        Number(p.d_model) % Number(p.heads) === 0,
+        `特征维度 ${p.d_model} 无法被 ${p.heads} 个注意力头整除。`,
+      );
+      const { q, k, v } = inputs;
+      for (const x of [q, k, v]) {
+        rank(x, 3);
+        floating(x);
       }
-      node('transpose_k', 'Permute', { dims: '0, 1, 3, 2' }, 750, 200, 'K 转置');
-      edge('k_heads', 'transpose_k');
-      node('scores', 'MatMul', {}, 1000, 0, 'Q × Kᵀ');
-      edge('q_heads', 'scores', 'a');
-      edge('transpose_k', 'scores', 'b');
-      node('scale', 'Scale', { head_dim: d / heads }, 1000, 200, '缩放分数');
-      edge('scores', 'scale');
-      let previous = 'scale';
-      if (p.causal) {
-        node('mask', 'CausalMask', {}, 1000, 400);
-        edge(previous, 'mask');
-        previous = 'mask';
-      }
-      node('weights', 'Softmax', { dim: -1 }, 750, 600, '注意力权重');
-      edge(previous, 'weights');
-      node('context', 'MatMul', {}, 500, 600, '权重 × V');
-      edge('weights', 'context', 'a');
-      edge('v_heads', 'context', 'b');
-      node('merge', 'MergeHeads', {}, 250, 600);
-      edge('context', 'merge');
-      node('projection', 'Linear', { in_features: d, out_features: d }, 0, 600, '输出投影');
-      edge('merge', 'projection');
-      node('output', 'Outlet', {}, 0, 800, '注意力输出');
-      edge('projection', 'output');
-      return graph;
+      requireThat(q.dtype === k.dtype && q.dtype === v.dtype, 'Q/K/V 的 dtype 必须一致。');
+      const warnings: string[] = [];
+      same(q.shape[0], k.shape[0], 'Q 与 K 的 batch 必须相同', warnings);
+      same(q.shape[0], v.shape[0], 'Q 与 V 的 batch 必须相同', warnings);
+      same(k.shape[1], v.shape[1], 'K 与 V 的序列长度必须相同', warnings);
+      same(q.shape[2], Number(p.d_model), 'Q 输入特征需要匹配 d_model', warnings);
+      same(
+        k.shape[2],
+        Number(p.kdim) || Number(p.d_model),
+        'K 输入特征需要匹配 kdim（0 表示 d_model）',
+        warnings,
+      );
+      same(
+        v.shape[2],
+        Number(p.vdim) || Number(p.d_model),
+        'V 输入特征需要匹配 vdim（0 表示 d_model）',
+        warnings,
+      );
+      return warnings;
     },
+    build: (p) => buildAttention(registry, p, true),
   });
   registry.register({
     type: 'FFN',

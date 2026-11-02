@@ -54,6 +54,28 @@ function diagram(type: string): { label: string; content: ReactNode } {
       return { label: '全连接映射', content: <DenseLayers layers={[3, 3]} /> };
     case 'FFN':
       return { label: '升维与降维的前馈网络', content: <DenseLayers layers={[2, 4, 2]} /> };
+    case 'MultiheadAttention':
+      return {
+        label: 'Q、K、V 三路输入的多头注意力',
+        content: (
+          <>
+            <g fill="currentColor" stroke="none" fontSize="10" fontFamily="Consolas, monospace">
+              <text x="6" y="12">
+                Q
+              </text>
+              <text x="6" y="27">
+                K
+              </text>
+              <text x="6" y="42">
+                V
+              </text>
+            </g>
+            <path d="M19 9H31L42 19M19 24H42M19 39H31L42 29M64 24H87M83 20L87 24L83 28" />
+            <rect x="42" y="13" width="22" height="22" rx="4" />
+            <path d="M48 19L58 29M48 29L58 19M48 24H58" />
+          </>
+        ),
+      };
     case 'SelfAttention':
       return {
         label: '各位置之间的注意力关联',

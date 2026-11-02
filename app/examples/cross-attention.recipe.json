@@ -1,0 +1,21 @@
+{
+  "recipeVersion": 1,
+  "name": "Q/K/V 交叉注意力",
+  "nodes": [
+    { "id": "query", "type": "Input", "label": "查询序列 Q", "params": { "shape": "2, 3, 64" } },
+    { "id": "key", "type": "Input", "label": "键序列 K", "params": { "shape": "2, 5, 32" } },
+    { "id": "value", "type": "Input", "label": "值序列 V", "params": { "shape": "2, 5, 48" } },
+    {
+      "id": "attention",
+      "type": "MultiheadAttention",
+      "params": { "d_model": 64, "heads": 8, "kdim": 32, "vdim": 48 }
+    },
+    { "id": "output", "type": "Output" }
+  ],
+  "connections": [
+    ["query.out", "attention.q"],
+    ["key.out", "attention.k"],
+    ["value.out", "attention.v"],
+    ["attention.out", "output.in"]
+  ]
+}

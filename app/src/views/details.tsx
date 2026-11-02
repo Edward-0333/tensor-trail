@@ -34,6 +34,7 @@ function AttentionShapes({ node, result }: DetailProps) {
 }
 registerDetailView('Transformer', AttentionShapes);
 registerDetailView('SelfAttention', AttentionShapes);
+registerDetailView('MultiheadAttention', AttentionShapes);
 export function ModuleDetail(props: DetailProps) {
   const View = details.get(props.node.type);
   return View ? <View {...props} /> : null;

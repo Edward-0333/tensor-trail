@@ -8,7 +8,8 @@ Tensor Trail 是本地运行的神经网络学习工作台。定义输入 Tensor
 
 ## v0.1 功能
 
-- 29 个可添加模块，覆盖线性层、卷积、RNN/GRU/LSTM、维度操作与分支合并。
+- 30 个可添加模块，覆盖线性层、卷积、RNN/GRU/LSTM、维度操作与分支合并。
+- Q/K/V 三输入多头注意力，支持交叉注意力、不同序列长度和 K/V 特征宽度，可展开观察投影、拆头和分数矩阵。
 - Transformer → Self-Attention / FFN → Q/K/V、拆头、矩阵乘法等多层子图展开。
 - Pre-Norm / Post-Norm、LayerNorm / RMSNorm、Standard FFN / SwiGLU；可编辑内部算子并保存为独立变体。
 - Tensor 轴含义、命名输入输出端口、实时约束检查与逐步高亮。
@@ -56,7 +57,7 @@ npm run build
 npm run preview -- --port 5178
 ```
 
-当前已通过 90 项自动测试、CLI 端到端检查、TypeScript 检查及生产构建，浏览器交互验证见[第一版验收](docs/第一版验收.md)。
+当前已通过 108 项自动测试、CLI 端到端检查、TypeScript 检查及生产构建，浏览器交互验证见[第一版验收](docs/第一版验收.md)。
 
 ```text
 app/src/core/      图协议、TensorSpec、递归形状推导、序列化
