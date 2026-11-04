@@ -1,4 +1,5 @@
 import { registry } from '../modules';
+import { isContainerInput } from '../modules/containers';
 import {
   clone,
   type Graph,
@@ -209,12 +210,19 @@ function inspect(project: Project): ModelResponse {
   };
   walk(project.graph, inferGraph(project.graph, registry), []);
   for (const type of ['Input', 'Output'])
-    if (!project.graph.nodes.some((n) => n.type === type)) {
+    if (
+      !project.graph.nodes.some(
+        (n) => n.type === type || (type === 'Input' && isContainerInput(n.type)),
+      )
+    ) {
       response.diagnostics.push({
         code: `MISSING_${type.toUpperCase()}`,
         severity: 'error',
         path: [],
-        message: `顶层模型至少需要一个 ${type} 节点。`,
+        message:
+          type === 'Input'
+            ? '顶层模型至少需要一个输入节点（Input 或 ForwardInput）。'
+            : `顶层模型至少需要一个 ${type} 节点。`,
       });
     }
   response.ok = !response.diagnostics.some((d) => d.severity === 'error');

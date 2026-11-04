@@ -1,5 +1,6 @@
 import type { Graph, ModelNode, ModuleDefinition, Params } from '../core/types';
 import { clone, uid } from '../core/types';
+import { canonicalModuleType } from '../core/inputTypes';
 
 export class ModuleRegistry {
   private definitions = new Map<string, ModuleDefinition>();
@@ -8,12 +9,13 @@ export class ModuleRegistry {
     this.definitions.set(def.type, def);
   }
   get(type: string) {
-    return this.definitions.get(type);
+    return this.definitions.get(canonicalModuleType(type));
   }
   list(includeInternal = false) {
     return [...this.definitions.values()].filter((d) => includeInternal || d.category !== '内部');
   }
   create(type: string, params: Params = {}, id: string = uid()): ModelNode {
+    type = canonicalModuleType(type);
     const def = this.get(type);
     if (!def) throw new Error(`未知模块 ${type}`);
     const values = { ...Object.fromEntries(def.fields.map((f) => [f.key, f.default])), ...params };

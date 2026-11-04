@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Background,
   BackgroundVariant,
@@ -48,9 +48,11 @@ export function Canvas({
   theme: 'dark' | 'light';
 }) {
   const selected = useEditor((s) => s.selected),
+    selectedIds = useEditor((s) => s.selectedIds),
+    pasteCount = useEditor((s) => s.pasteCount),
     path = useEditor((s) => s.path);
   const initialized = useNodesInitialized();
-  const { fitView, screenToFlowPosition } = useReactFlow();
+  const { fitView, screenToFlowPosition } = useReactFlow<TrailNode>();
   const [dropActive, setDropActive] = useState(false);
   useEffect(() => {
     const clearDrop = () => setDropActive(false);
@@ -97,16 +99,28 @@ export function Canvas({
   const [nodes, setNodes, onNodesChange] = useNodesState<TrailNode>(derived);
   useEffect(() => {
     setNodes((current) => {
-      const selection = new Set(current.filter((node) => node.selected).map((node) => node.id));
+      const selection = new Set(current.filter((n) => n.selected).map((n) => n.id));
       return derived.map((node) => ({ ...node, selected: selection.has(node.id) }));
     });
   }, [derived, setNodes]);
   useEffect(() => {
     setNodes((current) => {
-      if (selected && current.some((node) => node.id === selected && node.selected)) return current;
+      if (selected && current.some((n) => n.id === selected && n.selected)) return current;
       return current.map((node) => ({ ...node, selected: node.id === selected }));
     });
   }, [selected, setNodes]);
+  useEffect(() => {
+    if (pasteCount > 0)
+      setNodes((current) =>
+        current.map((node) => ({ ...node, selected: selectedIds.includes(node.id) })),
+      );
+    // Only a paste requests a group selection; canvas selection changes are read back below.
+  }, [pasteCount, setNodes]);
+  const rememberSelection = useCallback(({ nodes }: { nodes: TrailNode[] }) => {
+    const ids = nodes.map((node) => node.id);
+    if (JSON.stringify(ids) !== JSON.stringify(useEditor.getState().selectedIds))
+      useEditor.setState({ selectedIds: ids });
+  }, []);
   const derivedEdges: TrailEdge[] = useMemo(
     () =>
       graph.edges.map((edge) => ({
@@ -177,7 +191,8 @@ export function Canvas({
         useEditor.getState().add(module.type, module.variantId, position);
       }}
       onNodesChange={onNodesChange}
-      onNodeClick={(_, node) => useEditor.getState().select(node.id)}
+      onNodeClick={(_, node) => useEditor.setState({ selected: node.id })}
+      onSelectionChange={rememberSelection}
       onEdgeClick={() => useEditor.getState().select(null)}
       onPaneClick={() => useEditor.getState().select(null)}
       onSelectionStart={() => useEditor.getState().select(null)}

@@ -1,0 +1,13 @@
+{
+  "recipeVersion": 1,
+  "name": "Forward 输入",
+  "nodes": [
+    {
+      "id": "forward",
+      "type": "ForwardInput",
+      "label": "Forward输入"
+    },
+    { "id": "output", "type": "Output", "label": "输入结构" }
+  ],
+  "connections": [["forward.out", "output.in"]]
+}

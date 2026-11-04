@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { NodeResult, TensorSpec } from '../core/types';
-import { shapeText } from '../core/types';
+import { isTensorSpec, shapeText } from '../core/types';
 
 export function TensorAxes({ spec }: { spec: TensorSpec }) {
   return (
@@ -24,7 +24,9 @@ export function TensorView({ result }: { result?: NodeResult }) {
   const spec = result.outputs[port];
   return (
     <section className="tensor-inspector">
-      <div className="section-label">TENSOR 观察</div>
+      <div className="section-label">
+        {spec && !isTensorSpec(spec) ? '输入结构' : 'TENSOR 观察'}
+      </div>
       {!!entries.length && (
         <div className="port-tabs">
           {entries.map(([key]) => (
@@ -38,7 +40,13 @@ export function TensorView({ result }: { result?: NodeResult }) {
           ))}
         </div>
       )}
-      {spec ? (
+      {spec && !isTensorSpec(spec) ? (
+        <>
+          <div className="container-value-kind">{shapeText(spec)}</div>
+          <pre className="container-value-text">{spec.text || '未填写内容说明'}</pre>
+          <p className="microcopy">容器输入不要求具体形状；文字仅用于架构说明。</p>
+        </>
+      ) : spec ? (
         <>
           <div className="tensor-shape">{shapeText(spec)}</div>
           <div className="tensor-meta">

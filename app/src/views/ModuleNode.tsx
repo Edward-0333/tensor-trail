@@ -1,10 +1,13 @@
-import { useEffect } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { useUpdateNodeInternals, type Node, type NodeProps } from '@xyflow/react';
 import { ChevronRight, AlertCircle, ArrowUpRight } from 'lucide-react';
 import type { ModelNode, NodeResult, Port } from '../core/types';
-import { shapeText } from '../core/types';
+import { isTensorSpec, shapeText } from '../core/types';
 import { ModuleGlyph } from './ModuleGlyph';
 import { PortHandles } from './PortHandles';
+import { useEditor } from '../editor/store';
+import { parseCalculations, calculationLabel } from '../modules/calculation';
+import { isContainerInput } from '../modules/containers';
 
 export type TrailNode = Node<
   {
@@ -43,6 +46,28 @@ export const isTensorNode = (type: string) => ['Input', 'Output', 'Inlet', 'Outl
 
 export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
   const { model, result, inputs, outputs } = data;
+  const [editing, setEditing] = useState(false);
+  const cancelRename = useRef(false);
+  const background = model.tensorColor;
+  const rgb = background
+    ? [1, 3, 5].map((offset) => parseInt(background.slice(offset, offset + 2), 16))
+    : [];
+  const ink =
+    rgb.length && rgb[0] * 0.299 + rgb[1] * 0.587 + rgb[2] * 0.114 < 145 ? '#f8fafc' : '#172033';
+  const spec = result?.outputs.out ?? Object.values(result?.outputs ?? {})[0] ?? result?.inputs.in;
+  const axisLabels = spec && isTensorSpec(spec) && (
+    <div className="node-axis-labels" aria-label="输出轴含义">
+      {spec.axes.length ? (
+        spec.axes.map((axis, i) => (
+          <span key={i} title={`轴 ${i} · ${spec.shape[i]}`}>
+            {axis}
+          </span>
+        ))
+      ) : (
+        <span>标量 · 无轴</span>
+      )}
+    </div>
+  );
   const inputSide = model.portLayout?.input ?? (data.reverse ? 'right' : 'left');
   const outputSide = model.portLayout?.output ?? (data.reverse ? 'left' : 'right');
   const updateNodeInternals = useUpdateNodeInternals();
@@ -50,6 +75,66 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
     updateNodeInternals(model.id);
   }, [model.id, inputSide, outputSide, inputs.length, outputs.length, updateNodeInternals]);
   const bad = result?.status === 'error' || result?.status === 'blocked';
+  const container = isContainerInput(model.type);
+  if (container)
+    return (
+      <div
+        className={`forward-input-node ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
+        data-testid={`node-${model.id}`}
+        style={
+          background
+            ? ({ '--tensor-bg': background, '--tensor-ink': ink } as CSSProperties)
+            : undefined
+        }
+      >
+        <PortHandles
+          inputs={inputs}
+          outputs={outputs}
+          inputSide={inputSide}
+          outputSide={outputSide}
+          labels={false}
+        />
+        {editing ? (
+          <textarea
+            className="forward-input-editor nodrag nopan nowheel"
+            aria-label="编辑 Forward 输入文字"
+            autoFocus
+            defaultValue={model.label}
+            maxLength={200}
+            rows={2}
+            onBlur={(event) => {
+              if (!cancelRename.current)
+                useEditor.getState().renameNode(model.id, event.target.value);
+              setEditing(false);
+            }}
+            onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing) return;
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                event.currentTarget.blur();
+              }
+              if (event.key === 'Escape') {
+                cancelRename.current = true;
+                setEditing(false);
+              }
+            }}
+            onDoubleClick={(event) => event.stopPropagation()}
+          />
+        ) : (
+          <div
+            className="forward-input-text"
+            title={`${model.label} · 双击修改文字`}
+            onDoubleClick={(event) => {
+              event.stopPropagation();
+              cancelRename.current = false;
+              setEditing(true);
+            }}
+          >
+            {model.label}
+          </div>
+        )}
+      </div>
+    );
   if (isTensorNode(model.type)) {
     const spec = result?.outputs.out ?? result?.inputs.in;
     const shape = spec ? shapeText(spec) : bad ? '待修正' : '等待输入';
@@ -57,10 +142,45 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
       <div
         className={`tensor-node ${data.reverse ? 'flow-left' : ''} ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
         data-testid={`node-${model.id}`}
+        style={
+          background
+            ? ({ '--tensor-bg': background, '--tensor-ink': ink } as CSSProperties)
+            : undefined
+        }
       >
-        <div className="tensor-node-label" title={model.label}>
-          {model.label}
-        </div>
+        {editing ? (
+          <input
+            className="tensor-label-input nodrag nowheel"
+            aria-label="编辑 Tensor 名称"
+            autoFocus
+            defaultValue={model.label}
+            maxLength={200}
+            onBlur={(e) => {
+              if (!cancelRename.current) useEditor.getState().renameNode(model.id, e.target.value);
+              setEditing(false);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') e.currentTarget.blur();
+              if (e.key === 'Escape') {
+                cancelRename.current = true;
+                setEditing(false);
+              }
+            }}
+            onDoubleClick={(e) => e.stopPropagation()}
+          />
+        ) : (
+          <div
+            className="tensor-node-label"
+            title={`${model.label} · 双击修改名称`}
+            onDoubleClick={(e) => {
+              e.stopPropagation();
+              cancelRename.current = false;
+              setEditing(true);
+            }}
+          >
+            {model.label}
+          </div>
+        )}
         <div className="tensor-node-shape">
           <PortHandles
             inputs={inputs}
@@ -69,14 +189,46 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
             outputSide={outputSide}
             labels={false}
           />
-          <code title={spec ? `${shape} · ${spec.axes.join(', ')}` : shape}>{shape}</code>
+          <code title={spec && isTensorSpec(spec) ? `${shape} · ${spec.axes.join(', ')}` : shape}>
+            {shape}
+          </code>
         </div>
+        {axisLabels}
       </div>
     );
   }
 
+  if (model.type === 'Concat')
+    return (
+      <div
+        className={`cat-node tone-pink ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.dimmed ? 'dimmed' : ''}`}
+        data-testid={`node-${model.id}`}
+        title={bad ? result?.messages.join('\n') : `${model.label} · 沿指定轴拼接`}
+      >
+        <strong>Cat</strong>
+        <PortHandles
+          inputs={inputs}
+          outputs={outputs}
+          inputSide={inputSide}
+          outputSide={outputSide}
+          horizontalArea={{ top: 12, height: 64 }}
+        />
+        {axisLabels}
+      </div>
+    );
+  let operations: string[] = [];
+  if (model.type === 'Compute') {
+    try {
+      operations = parseCalculations(model.params.operations).map(calculationLabel);
+    } catch {
+      operations = ['步骤无效'];
+    }
+  }
   const rows = Math.max(inputs.length, outputs.length, 1);
-  const bodyHeight = Math.max(rows * 27 + 12, 72);
+  const bodyHeight = Math.max(
+    rows * 27 + 12,
+    operations.length ? Math.ceil(operations.length / 3) * 34 + 18 : 72,
+  );
   const hasTop =
     (inputs.length > 0 && inputSide === 'top') || (outputs.length > 0 && outputSide === 'top');
   const hasBottom =
@@ -97,7 +249,15 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
       </div>
       <div className="node-ports" style={{ minHeight: bodyHeight }}>
         <div className="node-operation">
-          <ModuleGlyph type={model.type} />
+          {model.type === 'Compute' ? (
+            <div className="calculation-chips">
+              {operations.map((label, i) => (
+                <span key={i}>{label}</span>
+              ))}
+            </div>
+          ) : (
+            <ModuleGlyph type={model.type} />
+          )}
         </div>
       </div>
       <PortHandles
@@ -123,6 +283,7 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
           </span>
         )}
       </div>
+      {axisLabels}
     </div>
   );
 }

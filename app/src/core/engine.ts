@@ -1,10 +1,11 @@
-import type { Graph, GraphResult, NodeResult, Registry, TensorSpec } from './types';
+import type { Graph, GraphResult, NodeResult, Registry, TensorSpec, ValueSpec } from './types';
+import { isTensorSpec, shapeText } from './types';
 import { graphIssues, orderGraph, ports } from './graph';
 
 export function inferGraph(
   graph: Graph,
   registry: Registry,
-  external: Record<string, TensorSpec> = {},
+  external: Record<string, ValueSpec> = {},
   depth = 0,
 ): GraphResult {
   const result: GraphResult = { order: [], nodes: {}, outputs: {}, issues: [] };
@@ -60,7 +61,21 @@ export function inferGraph(
         if (f.kind === 'text' && typeof value !== 'string')
           throw new Error(`${f.label} 必须为文本。`);
       }
-      if (!node.customized) r.messages.push(...(def.validate?.(r.inputs, node.params) ?? []));
+      const passthrough = ['Output', 'Outlet', 'Identity'].includes(node.type);
+      const acceptsContainers =
+        passthrough ||
+        node.type === 'Inlet' ||
+        !!def.inferValue ||
+        (!!node.subgraph && (!def.validate || node.customized));
+      const tensorInputs: Record<string, TensorSpec> = {};
+      for (const [port, value] of Object.entries(r.inputs)) {
+        if (isTensorSpec(value)) tensorInputs[port] = value;
+        else if (!acceptsContainers)
+          throw new Error(
+            `输入 ${port} 是${shapeText(value)}，此模块需要 Tensor。请将从容器取出的张量用“输入 Tensor”单独描述后连接。`,
+          );
+      }
+      if (!node.customized) r.messages.push(...(def.validate?.(tensorInputs, node.params) ?? []));
       if (node.type === 'Inlet') {
         const value = external[String(node.params.port)];
         if (!value) throw new Error(`子图输入 ${node.params.port} 没有外部 Tensor。`);
@@ -91,8 +106,13 @@ export function inferGraph(
           r.notes = ['输入输出来自内部子图。双击模块可逐层查看。'];
           if (!Object.keys(r.outputs).length) throw new Error('子图没有可用的 Outlet 输出。');
         }
-      } else if (def.infer) {
-        const inference = def.infer(r.inputs, node.params);
+      } else if (passthrough) {
+        r.outputs = { out: r.inputs.in };
+        r.notes = ['保留输入的数据类型与内容。'];
+      } else if (def.inferValue || def.infer) {
+        const inference = def.inferValue
+          ? def.inferValue(r.inputs, node.params)
+          : def.infer!(tensorInputs, node.params);
         r.outputs = inference.outputs;
         r.notes = inference.notes ?? [];
         r.messages.push(...(inference.warnings ?? []));

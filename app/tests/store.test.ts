@@ -1,32 +1,134 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { tensorValue } from '../src/core/types';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { inferGraph } from '../src/core/engine';
-import { parseProject } from '../src/core/serialization';
 import { example } from '../src/modules/examples';
 import { registry } from '../src/modules';
+import { parseProject, serializeProject } from '../src/core/serialization';
 
-const memory = new Map<string, string>();
-vi.stubGlobal('localStorage', {
-  getItem: (key: string) => memory.get(key) ?? null,
-  setItem: (key: string, value: string) => memory.set(key, value),
-});
 const { useEditor } = await import('../src/editor/store');
 const { canvasApi } = await import('../src/editor/agentBridge');
+const projectSnapshot = () =>
+  parseProject(serializeProject(useEditor.getState().project), registry);
 
 beforeEach(() => {
-  memory.clear();
   useEditor.setState({
     project: example(),
+    hasProject: true,
     canvasVersion: 0,
     path: [],
     selected: 'transformer',
+    selectedIds: ['transformer'],
+    clipboard: null,
+    pasteCount: 0,
     past: [],
     future: [],
     notice: '',
-    saveState: '本地保存',
   });
 });
 
-describe('编辑与持久化事务', () => {
+describe('编辑与文件序列化事务', () => {
+  it('容器输入支持文字、背景、端口布局及撤销重做，JSON 可恢复', () => {
+    useEditor.getState().newProject();
+    useEditor.getState().add('DictInput', undefined, { x: 80, y: 100 });
+    const id = useEditor.getState().selected!;
+    const before = useEditor.getState().project;
+    useEditor.getState().setParam(id, 'text', '图像和 mask\n可不填写维度');
+    useEditor.getState().setTensorColor(id, '#172033');
+    useEditor.getState().setPortSide(id, 'output', 'bottom');
+    const after = useEditor.getState().project;
+    expect(inferGraph(after.graph, registry).nodes[id].outputs.out).toEqual({
+      kind: 'forward',
+      text: '图像和 mask\n可不填写维度',
+    });
+    expect(projectSnapshot()).toEqual(after);
+    useEditor.getState().undo();
+    useEditor.getState().undo();
+    useEditor.getState().undo();
+    expect(useEditor.getState().project).toEqual(before);
+    useEditor.getState().redo();
+    useEditor.getState().redo();
+    useEditor.getState().redo();
+    expect(useEditor.getState().project).toEqual(after);
+  });
+  it('编辑保持文档身份，新建和打开切换身份，撤销重做恢复各自身份', () => {
+    const original = useEditor.getState().documentId;
+    useEditor.getState().renameProject('当前文件的修改');
+    expect(useEditor.getState().documentId).toBe(original);
+    useEditor.getState().newProject();
+    const fresh = useEditor.getState().documentId;
+    expect(fresh).not.toBe(original);
+    useEditor.getState().undo();
+    expect(useEditor.getState().documentId).toBe(original);
+    useEditor.getState().redo();
+    expect(useEditor.getState().documentId).toBe(fresh);
+    useEditor.getState().load(example());
+    expect(useEditor.getState().documentId).not.toBe(fresh);
+  });
+  it('AI 修改保持文件关联，新建模型可独立保存并可撤销返回原文件', () => {
+    const original = useEditor.getState().documentId;
+    const snapshot = canvasApi.getModel();
+    const prepared = canvasApi.patchModel(snapshot.project, {
+      operations: [{ op: 'rename_project', name: 'AI 改名' }],
+    });
+    expect(
+      canvasApi.applyModel({ project: prepared.project, expectedRevision: snapshot.revision }).ok,
+    ).toBe(true);
+    expect(useEditor.getState().documentId).toBe(original);
+    useEditor.getState().startNewDocument();
+    expect(useEditor.getState().documentId).not.toBe(original);
+    useEditor.getState().undo();
+    expect(useEditor.getState().documentId).toBe(original);
+  });
+  it('新建空白项目保留变体，并可一次撤销恢复', () => {
+    useEditor.getState().saveVariant('我的模块');
+    const before = useEditor.getState().project;
+    useEditor.getState().newProject();
+    expect(useEditor.getState().project.graph).toEqual({ nodes: [], edges: [] });
+    expect(useEditor.getState().project.variants).toEqual(before.variants);
+    useEditor.getState().undo();
+    expect(useEditor.getState().project).toEqual(before);
+  });
+  it('复制多个模块和内部连接，粘贴更新 ID 并作为一次撤销保存', () => {
+    const s = useEditor.getState();
+    s.selectMany(['input', 'transformer']);
+    s.copy();
+    const before = useEditor.getState().project;
+    useEditor.getState().paste();
+    const after = useEditor.getState().project;
+    expect(after.graph.nodes).toHaveLength(before.graph.nodes.length + 2);
+    expect(after.graph.edges).toHaveLength(before.graph.edges.length + 1);
+    const copied = after.graph.nodes.slice(-2);
+    expect(copied[0].id).not.toBe('input');
+    expect(copied[1].subgraph).toEqual(before.graph.nodes[1].subgraph);
+    expect(copied[1].subgraph).not.toBe(before.graph.nodes[1].subgraph);
+    expect(after.graph.edges.at(-1)!.source).toBe(copied[0].id);
+    expect(after.graph.edges.at(-1)!.target).toBe(copied[1].id);
+    expect(useEditor.getState().selectedIds).toHaveLength(2);
+    expect(projectSnapshot()).toEqual(after);
+    useEditor.getState().undo();
+    expect(useEditor.getState().project).toEqual(before);
+  });
+  it('子图边界不复制，可将普通算子跨项目粘贴', () => {
+    useEditor.getState().navigate(['transformer']);
+    useEditor.getState().selectMany(['input', 'norm1']);
+    useEditor.getState().copy();
+    expect(useEditor.getState().clipboard!.nodes.map((n) => n.id)).toEqual(['norm1']);
+    useEditor.getState().newProject();
+    useEditor.getState().paste();
+    expect(useEditor.getState().project.graph.nodes[0].type).toBe('LayerNorm');
+  });
+  it('按轴编辑含义，修改维数时同步输入框数量，背景色可保存恢复', () => {
+    useEditor.getState().setParam('input', 'shape', '2, 6');
+    useEditor.getState().setAxis('input', 1, '特征');
+    useEditor.getState().setTensorColor('input', '#ede9fe');
+    const project = useEditor.getState().project;
+    expect(project.graph.nodes[0].params.axes).toBe('batch, 特征');
+    expect(projectSnapshot().graph.nodes[0].tensorColor).toBe('#ede9fe');
+    useEditor.getState().setTensorColor('input', 'url(unsafe)');
+    expect(useEditor.getState().project).toBe(project);
+    useEditor.getState().setTensorColor('input');
+    expect(useEditor.getState().project.graph.nodes[0].tensorColor).toBeUndefined();
+  });
   it('手动调整子图连线只保存布局，一次拖动可一次撤销重做', () => {
     const before = useEditor.getState().project;
     useEditor.getState().navigate(['transformer']);
@@ -42,7 +144,7 @@ describe('编辑与持久化事务', () => {
     expect(after.graph.nodes[1].subgraph!.edges[0].waypoints).not.toBe(points);
     expect(after.graph.nodes[1].subgraph!.nodes).toEqual(before.graph.nodes[1].subgraph!.nodes);
     expect(inferGraph(after.graph, registry)).toEqual(inferGraph(before.graph, registry));
-    expect(parseProject(memory.get('tensor-trail.project.v1')!, registry)).toEqual(after);
+    expect(projectSnapshot()).toEqual(after);
     useEditor.getState().undo();
     expect(useEditor.getState().project).toEqual(before);
     useEditor.getState().redo();
@@ -83,7 +185,7 @@ describe('编辑与持久化事务', () => {
     expect(node.portLayout).toEqual({ input: 'top', output: 'bottom' });
     expect(parent.customized).toBeUndefined();
     expect(inferGraph(after.graph, registry)).toEqual(inferGraph(before.graph, registry));
-    expect(parseProject(memory.get('tensor-trail.project.v1')!, registry)).toEqual(after);
+    expect(projectSnapshot()).toEqual(after);
     useEditor.getState().undo();
     useEditor.getState().undo();
     expect(useEditor.getState().project).toEqual(before);
@@ -125,7 +227,7 @@ describe('编辑与持久化事务', () => {
     expect(after.graph.edges).toEqual(before.graph.edges);
     expect(useEditor.getState().selected).toBe(node.id);
     expect(useEditor.getState().past).toHaveLength(1);
-    expect(parseProject(memory.get('tensor-trail.project.v1')!, registry)).toEqual(after);
+    expect(projectSnapshot()).toEqual(after);
     useEditor.getState().undo();
     expect(useEditor.getState().project).toEqual(before);
     useEditor.getState().redo();
@@ -159,7 +261,7 @@ describe('编辑与持久化事务', () => {
     useEditor.getState().undo();
     expect(useEditor.getState().project).toEqual(before);
   });
-  it('AI 应用保留变体、一次撤销，并自动保存到本机', () => {
+  it('AI 应用保留变体、一次撤销，可序列化为项目 JSON', () => {
     useEditor.getState().saveVariant('保留的变体');
     const before = canvasApi.getModel();
     const prepared = canvasApi.patchModel(before.project, {
@@ -174,7 +276,7 @@ describe('编辑与持久化事务', () => {
     ).toBe(true);
     expect(useEditor.getState().past).toHaveLength(history + 1);
     expect(useEditor.getState().project.variants).toEqual(before.project.variants);
-    expect(parseProject(memory.get('tensor-trail.project.v1')!, registry).name).toBe('AI 修改项目');
+    expect(projectSnapshot().name).toBe('AI 修改项目');
     useEditor.getState().undo();
     expect(useEditor.getState().project).toEqual(before.project);
     expect(
@@ -218,9 +320,9 @@ describe('编辑与持久化事务', () => {
     const instance = project.graph.nodes.at(-1)!;
     expect(instance.type).toBe('Block');
     expect(instance.subgraph).not.toBe(variant.graph);
-    expect(inferGraph(project.graph, registry).nodes[instance.id].outputs.out.shape).toEqual([
-      8, 100, 64,
-    ]);
+    expect(
+      tensorValue(inferGraph(project.graph, registry).nodes[instance.id].outputs.out).shape,
+    ).toEqual([8, 100, 64]);
   });
   it('重复输入连接拒绝提交且保留原项目', () => {
     const previous = useEditor.getState().project;
@@ -235,7 +337,7 @@ describe('编辑与持久化事务', () => {
     useEditor.getState().setParam('transformer', 'heads', Infinity);
     expect(useEditor.getState().project).toBe(previous);
     expect(useEditor.getState().notice).toContain('有限数值');
-    expect(() => parseProject(memory.get('tensor-trail.project.v1')!, registry)).not.toThrow();
+    expect(() => projectSnapshot()).not.toThrow();
   });
   it('达到变体数量上限时不提交也不报告虚假的成功', () => {
     useEditor.getState().edit((_, project) => {
@@ -254,14 +356,14 @@ describe('编辑与持久化事务', () => {
     expect(useEditor.getState().project).toBe(previous);
     expect(useEditor.getState().notice).not.toContain('已保存');
   });
-  it('导入失败不覆盖当前项目，正常编辑自动持久化', () => {
+  it('导入失败不覆盖当前项目，正常编辑可保存为 JSON', () => {
     const previous = useEditor.getState().project;
     useEditor.getState().importText('{"schemaVersion":99}');
     expect(useEditor.getState().project).toBe(previous);
     useEditor.getState().setParam('input', 'shape', '2, 20, 64');
-    const restored = parseProject(memory.get('tensor-trail.project.v1')!, registry);
-    expect(inferGraph(restored.graph, registry).nodes.transformer.outputs.out.shape).toEqual([
-      2, 20, 64,
-    ]);
+    const restored = projectSnapshot();
+    expect(
+      tensorValue(inferGraph(restored.graph, registry).nodes.transformer.outputs.out).shape,
+    ).toEqual([2, 20, 64]);
   });
 });

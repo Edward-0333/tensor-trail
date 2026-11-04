@@ -1,0 +1,29 @@
+{
+  "recipeVersion": 1,
+  "name": "切片 Cat 与计算模块",
+  "nodes": [
+    {
+      "id": "input",
+      "type": "Input",
+      "label": "掩码输入",
+      "params": { "shape": "2, 3, 4", "axes": "batch, time, feature", "dtype": "bool" }
+    },
+    { "id": "slice", "type": "Slice" },
+    { "id": "cat", "type": "Concat" },
+    {
+      "id": "compute",
+      "type": "Compute",
+      "params": {
+        "operations": "[{\"op\":\"invert\"},{\"op\":\"any\",\"dim\":-1,\"keepdim\":false}]"
+      }
+    },
+    { "id": "output", "type": "Output", "label": "计算结果" }
+  ],
+  "connections": [
+    ["input.out", "slice.in"],
+    ["slice.out", "cat.a"],
+    ["slice.out", "cat.b"],
+    ["cat.out", "compute.in"],
+    ["compute.out", "output.in"]
+  ]
+}

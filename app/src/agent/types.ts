@@ -1,4 +1,4 @@
-import type { Params, Project, TensorSpec } from '../core/types';
+import type { Params, Project, ValueSpec } from '../core/types';
 
 export interface RecipeNode {
   id: string;
@@ -43,15 +43,15 @@ export interface NodeTrace {
   path: string[];
   type: string;
   status: string;
-  inputs: Record<string, TensorSpec>;
-  outputs: Record<string, TensorSpec>;
+  inputs: Record<string, ValueSpec>;
+  outputs: Record<string, ValueSpec>;
 }
 export interface ModelResponse {
   apiVersion: 1;
   ok: boolean;
   diagnostics: Diagnostic[];
   nodes: NodeTrace[];
-  outputs: Record<string, TensorSpec>;
+  outputs: Record<string, ValueSpec>;
   defaultsApplied: DefaultApplied[];
   project?: Project;
 }

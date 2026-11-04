@@ -1,3 +1,4 @@
+import { tensorValue } from '../src/core/types';
 import { describe, expect, it } from 'vitest';
 import { buildModel, describeModules, getSchemas, patchModel, validateModel } from '../src/agent';
 import { inferGraph } from '../src/core/engine';
@@ -33,12 +34,12 @@ describe('Q/K/V multi-head attention', () => {
     const attention = result.nodes.attention;
     expect(result.issues).toEqual([]);
     expect(attention.status, attention.messages.join()).toBe('ok');
-    expect(attention.outputs.out.shape).toEqual([2, 3, 64]);
-    expect(attention.child!.nodes.q_heads.outputs.out.shape).toEqual([2, 8, 3, 8]);
-    expect(attention.child!.nodes.k_heads.outputs.out.shape).toEqual([2, 8, 5, 8]);
-    expect(attention.child!.nodes.v_heads.outputs.out.shape).toEqual([2, 8, 5, 8]);
-    expect(attention.child!.nodes.scores.outputs.out.shape).toEqual([2, 8, 3, 5]);
-    expect(attention.child!.nodes.context.outputs.out.shape).toEqual([2, 8, 3, 8]);
+    expect(tensorValue(attention.outputs.out).shape).toEqual([2, 3, 64]);
+    expect(tensorValue(attention.child!.nodes.q_heads.outputs.out).shape).toEqual([2, 8, 3, 8]);
+    expect(tensorValue(attention.child!.nodes.k_heads.outputs.out).shape).toEqual([2, 8, 5, 8]);
+    expect(tensorValue(attention.child!.nodes.v_heads.outputs.out).shape).toEqual([2, 8, 5, 8]);
+    expect(tensorValue(attention.child!.nodes.scores.outputs.out).shape).toEqual([2, 8, 3, 5]);
+    expect(tensorValue(attention.child!.nodes.context.outputs.out).shape).toEqual([2, 8, 3, 8]);
     expect(result.nodes.output.inputs.in).toEqual(attention.outputs.out);
   });
 
@@ -49,15 +50,15 @@ describe('Q/K/V multi-head attention', () => {
     });
     const result = inferGraph(g, registry).nodes.attention;
     expect(result.status, result.messages.join()).toBe('ok');
-    expect(result.outputs.out.shape).toEqual([2, 7, 128]);
-    expect(result.child!.nodes.scores.outputs.out.shape).toEqual([2, 4, 7, 7]);
+    expect(tensorValue(result.outputs.out).shape).toEqual([2, 7, 128]);
+    expect(tensorValue(result.child!.nodes.scores.outputs.out).shape).toEqual([2, 4, 7, 7]);
   });
 
   it('keeps rectangular score shapes when causal masking is enabled', () => {
     const result = inferGraph(graph(undefined, { causal: true }), registry).nodes.attention;
     expect(result.status, result.messages.join()).toBe('ok');
-    expect(result.child!.nodes.mask.outputs.out.shape).toEqual([2, 8, 3, 5]);
-    expect(result.outputs.out.shape).toEqual([2, 3, 64]);
+    expect(tensorValue(result.child!.nodes.mask.outputs.out).shape).toEqual([2, 8, 3, 5]);
+    expect(tensorValue(result.outputs.out).shape).toEqual([2, 3, 64]);
   });
 
   it.each([
@@ -101,7 +102,7 @@ describe('Q/K/V multi-head attention', () => {
     const result = inferGraph(graph(['B, Tq, 64', 'C, S, 32', 'B, U, 48']), registry).nodes
       .attention;
     expect(result.status).toBe('warning');
-    expect(result.outputs.out.shape).toEqual(['B', 'Tq', 64]);
+    expect(tensorValue(result.outputs.out).shape).toEqual(['B', 'Tq', 64]);
     expect(result.messages.join()).toContain('batch');
     expect(result.messages.join()).toContain('序列长度');
   });
@@ -127,7 +128,7 @@ describe('Q/K/V attention AI and persistence', () => {
   it('builds and round-trips the documented cross-attention recipe including port layout and routes', () => {
     const result = buildModel(crossAttention);
     expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
-    expect(result.outputs.output.shape).toEqual([2, 3, 64]);
+    expect(tensorValue(result.outputs.output).shape).toEqual([2, 3, 64]);
     const project = result.project!;
     project.graph.nodes.find((n) => n.id === 'attention')!.portLayout = {
       input: 'top',
@@ -146,9 +147,10 @@ describe('Q/K/V attention AI and persistence', () => {
       operations: [{ op: 'set_params', id: 'attention', params: { heads: 4 } }],
     });
     expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
-    expect(result.outputs.output.shape).toEqual([2, 3, 64]);
+    expect(tensorValue(result.outputs.output).shape).toEqual([2, 3, 64]);
     expect(
-      result.nodes.find((n) => n.path.join('/') === 'attention/scores')!.outputs.out.shape,
+      tensorValue(result.nodes.find((n) => n.path.join('/') === 'attention/scores')!.outputs.out)
+        .shape,
     ).toEqual([2, 4, 3, 5]);
     expect(result.project!.graph.edges).toEqual(before.graph.edges);
     expect(original).toEqual(before);

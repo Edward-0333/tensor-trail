@@ -786,9 +786,10 @@ kbd {
 .tensor-node {
   --tone: var(--muted);
   width: max-content;
-  min-width: 144px;
+  min-width: 120px;
   max-width: 340px;
-  padding: 28px 12px 12px;
+  padding: 8px 10px;
+  background: var(--tensor-bg, transparent);
   border: 1px solid transparent;
   border-radius: 6px;
   position: relative;
@@ -801,7 +802,8 @@ kbd {
   max-width: 300px;
   margin-bottom: 5px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 14px;
+  font-weight: 600;
   line-height: 1.4;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -828,7 +830,7 @@ kbd {
 .tensor-node.selected,
 .tensor-node.step-active {
   --tone: var(--accent);
-  background: var(--accent-bg);
+  background: var(--tensor-bg, transparent);
   border-color: var(--accent-border);
 }
 .tensor-node.invalid {

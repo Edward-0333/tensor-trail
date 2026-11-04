@@ -1,5 +1,6 @@
 import type { Graph, Project, Registry } from './types';
 import { graphIssues } from './graph';
+import { canonicalModuleType } from './inputTypes';
 function requireThat(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
@@ -47,7 +48,12 @@ export function parseProject(text: string, registry: Registry): Project {
           node.definitionVersion === 1,
         '节点 ID、名称或定义版本无效。',
       );
-      const def = registry.get(node.type);
+      const type = canonicalModuleType(node.type);
+      if (node.type !== type) {
+        node.type = type;
+        if (['字典输入 Dict', '列表输入 List'].includes(node.label)) node.label = 'Forward输入';
+      }
+      const def = registry.get(type);
       requireThat(def, `尚未注册模块 ${node.type}。`);
       requireThat(
         record(node.params) &&
@@ -70,6 +76,11 @@ export function parseProject(text: string, registry: Registry): Project {
         'customized 必须为布尔值。',
       );
       const layout = node.portLayout;
+      requireThat(
+        node.tensorColor === undefined ||
+          (typeof node.tensorColor === 'string' && /^#[0-9a-fA-F]{6}$/.test(node.tensorColor)),
+        'Tensor 背景色必须为六位十六进制颜色。',
+      );
       requireThat(
         layout === undefined ||
           (record(layout) &&

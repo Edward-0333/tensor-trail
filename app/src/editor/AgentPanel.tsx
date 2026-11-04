@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Braces, Check, Download, X } from 'lucide-react';
 import { canvasApi } from './agentBridge';
+import { useEditor } from './store';
 import type { ModelResponse } from '../agent';
 import { shapeText } from '../core/types';
 import example from '../../examples/cnn-transformer.recipe.json';
@@ -248,8 +249,10 @@ export function AgentPanel({ onClose }: { onClose: () => void }) {
               expectedRevision: revision,
               allowWarnings,
             });
-            if (applied.ok) onClose();
-            else {
+            if (applied.ok) {
+              if (mode === 'build') useEditor.getState().startNewDocument();
+              onClose();
+            } else {
               setResult(applied);
               setMessage('没有应用修改，请重新检查。');
             }

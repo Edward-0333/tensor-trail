@@ -3,7 +3,7 @@ import { useEditor } from './store';
 
 const bridge = createCanvasApi({
   read: () => useEditor.getState().project,
-  commit: (project) => useEditor.getState().load(project),
+  commit: (project) => useEditor.getState().load(project, true),
   subscribe: (changed) =>
     useEditor.subscribe((state, previous) => {
       if (state.project !== previous.project) changed();

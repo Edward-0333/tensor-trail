@@ -27,6 +27,9 @@ try {
     [8, 100, 64],
   );
   assert.equal(run(['validate', model]).ok, true);
+  const structured = run(['build', 'examples/structured-input.recipe.json']);
+  assert.equal(structured.outputs.output.kind, 'forward');
+  assert.equal(run(['validate', '-'], 0, JSON.stringify(structured.project)).ok, true);
   assert.equal(run(['patch', model, 'examples/swiglu.patch.json', '--out', next]).ok, true);
   assert.equal(
     JSON.parse(await fs.readFile(next, 'utf8')).graph.nodes.find((n) => n.id === 'encoder').params
@@ -49,7 +52,7 @@ try {
   run(['validate', '-'], 2, '{');
   run(['unknown'], 2);
   console.log(
-    'CLI smoke passed: catalogue, schema, build, validate, patch, stdin, error exits and output preservation.',
+    'CLI smoke passed: catalogue, schema, build, structured inputs, validate, patch, stdin, error exits and output preservation.',
   );
 } finally {
   // Delete only the unique directory created by this test, within the OS temp folder.

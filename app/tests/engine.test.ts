@@ -1,3 +1,4 @@
+import { tensorValue } from '../src/core/types';
 import { describe, expect, it } from 'vitest';
 import type { Graph, Params, Project, TensorSpec } from '../src/core/types';
 import { inferGraph } from '../src/core/engine';
@@ -29,7 +30,8 @@ const check = (graph: Graph) => inferGraph(graph, registry);
 describe('形状与轴语义', () => {
   it('Linear 仅变换最后一维', () =>
     expect(
-      rule('Linear', { in: spec([2, 10, 64]) }, { out_features: 23 }).outputs.out.shape,
+      tensorValue(rule('Linear', { in: spec([2, 10, 64]) }, { out_features: 23 }).outputs.out)
+        .shape,
     ).toEqual([2, 10, 23]));
   it('Permute 同时更新轴名称', () =>
     expect(
@@ -41,27 +43,31 @@ describe('形状与轴语义', () => {
     ));
   it('Conv1d 正确处理步长、填充与膨胀', () =>
     expect(
-      rule(
-        'Conv1d',
-        { in: spec([2, 4, 17]) },
-        {
-          in_channels: 4,
-          out_channels: 8,
-          kernel_size: 3,
-          stride: 2,
-          padding: 2,
-          dilation: 2,
-          groups: 2,
-        },
-      ).outputs.out.shape,
+      tensorValue(
+        rule(
+          'Conv1d',
+          { in: spec([2, 4, 17]) },
+          {
+            in_channels: 4,
+            out_channels: 8,
+            kernel_size: 3,
+            stride: 2,
+            padding: 2,
+            dilation: 2,
+            groups: 2,
+          },
+        ).outputs.out,
+      ).shape,
     ).toEqual([2, 8, 9]));
   it('Conv2d 使用两个空间轴', () =>
     expect(
-      rule(
-        'Conv2d',
-        { in: spec([2, 3, 32, 40]) },
-        { out_channels: 16, kernel_size: 5, padding: 0, stride: 2 },
-      ).outputs.out.shape,
+      tensorValue(
+        rule(
+          'Conv2d',
+          { in: spec([2, 3, 32, 40]) },
+          { out_channels: 16, kernel_size: 5, padding: 0, stride: 2 },
+        ).outputs.out,
+      ).shape,
     ).toEqual([2, 16, 14, 18]));
   it('卷积不能产生非正尺寸', () =>
     expect(() => rule('Conv1d', { in: spec([2, 64, 2]) }, { kernel_size: 9, padding: 0 })).toThrow(
@@ -70,42 +76,45 @@ describe('形状与轴语义', () => {
   it('卷积分组约束不会静默忽略', () =>
     expect(() => rule('Conv1d', { in: spec([2, 64, 10]) }, { groups: 3 })).toThrow('整除'));
   it('Reshape -1 依据总元素数推导', () =>
-    expect(rule('Reshape', { in: spec([2, 3, 4]) }, { shape: '2, -1' }).outputs.out.shape).toEqual([
-      2, 12,
-    ]));
+    expect(
+      tensorValue(rule('Reshape', { in: spec([2, 3, 4]) }, { shape: '2, -1' }).outputs.out).shape,
+    ).toEqual([2, 12]));
   it('Reshape 拒绝元素数不守恒和多个 -1', () => {
     expect(() => rule('Reshape', { in: spec([2, 3, 4]) }, { shape: '2, 13' })).toThrow('总数');
     expect(() => rule('Reshape', { in: spec([2, 3, 4]) }, { shape: '-1, -1' })).toThrow('最多');
   });
   it('Flatten 保留合并区间之外的轴', () =>
     expect(
-      rule('Flatten', { in: spec([2, 3, 4, 5]) }, { start_dim: 1, end_dim: 2 }).outputs.out.shape,
+      tensorValue(
+        rule('Flatten', { in: spec([2, 3, 4, 5]) }, { start_dim: 1, end_dim: 2 }).outputs.out,
+      ).shape,
     ).toEqual([2, 12, 5]));
   it('MatMul 正确广播批维并收缩矩阵维', () =>
     expect(
-      rule('MatMul', { a: spec([2, 3, 5, 7]), b: spec([1, 3, 7, 11]) }).outputs.out.shape,
+      tensorValue(rule('MatMul', { a: spec([2, 3, 5, 7]), b: spec([1, 3, 7, 11]) }).outputs.out)
+        .shape,
     ).toEqual([2, 3, 5, 11]));
   it('MatMul 拒绝不一致的收缩维', () =>
     expect(() => rule('MatMul', { a: spec([2, 5, 7]), b: spec([2, 8, 9]) })).toThrow('收缩维'));
   it('Add 支持单例广播并拒绝不相容尺寸', () => {
-    expect(rule('Add', { a: spec([2, 3, 4]), b: spec([1, 3, 1]) }).outputs.out.shape).toEqual([
-      2, 3, 4,
-    ]);
+    expect(
+      tensorValue(rule('Add', { a: spec([2, 3, 4]), b: spec([1, 3, 1]) }).outputs.out).shape,
+    ).toEqual([2, 3, 4]);
     expect(() => rule('Add', { a: spec([2, 3, 4]), b: spec([2, 5, 4]) })).toThrow('对应维度');
   });
   it('Concat 只累加指定轴', () =>
-    expect(rule('Concat', { a: spec([2, 3, 4]), b: spec([2, 3, 7]) }).outputs.out.shape).toEqual([
-      2, 3, 11,
-    ]));
+    expect(
+      tensorValue(rule('Concat', { a: spec([2, 3, 4]), b: spec([2, 3, 7]) }).outputs.out).shape,
+    ).toEqual([2, 3, 11]));
   it('LSTM 双向输出与最终状态分离', () => {
     const result = rule(
       'LSTM',
       { in: spec([2, 5, 4]) },
       { input_size: 4, hidden_size: 7, num_layers: 3, bidirectional: true },
     );
-    expect(result.outputs.out.shape).toEqual([2, 5, 14]);
-    expect(result.outputs.hidden.shape).toEqual([6, 2, 7]);
-    expect(result.outputs.cell.shape).toEqual([6, 2, 7]);
+    expect(tensorValue(result.outputs.out).shape).toEqual([2, 5, 14]);
+    expect(tensorValue(result.outputs.hidden).shape).toEqual([6, 2, 7]);
+    expect(tensorValue(result.outputs.cell).shape).toEqual([6, 2, 7]);
   });
   it('GRU 非 batch-first 时 hidden 仍以层数开头', () => {
     const result = rule(
@@ -113,12 +122,12 @@ describe('形状与轴语义', () => {
       { in: spec([5, 2, 4]) },
       { input_size: 4, hidden_size: 7, batch_first: false },
     );
-    expect(result.outputs.hidden.shape).toEqual([1, 2, 7]);
-    expect(result.outputs.out.shape).toEqual([5, 2, 7]);
+    expect(tensorValue(result.outputs.hidden).shape).toEqual([1, 2, 7]);
+    expect(tensorValue(result.outputs.out).shape).toEqual([5, 2, 7]);
   });
   it('符号尺寸保留且不可证明的约束标记警告', () => {
     const result = rule('Linear', { in: spec(['B', 'T', 'D']) });
-    expect(result.outputs.out.shape).toEqual(['B', 'T', 64]);
+    expect(tensorValue(result.outputs.out).shape).toEqual(['B', 'T', 64]);
     expect(result.warnings?.length).toBe(1);
     expect(rule('Reshape', { in: spec(['B', 3, 4]) }, { shape: '2, -1' }).warnings?.length).toBe(1);
   });
@@ -131,18 +140,20 @@ describe('子图、多端口与错误传播', () => {
     const result = check(example().graph),
       block = result.nodes.transformer;
     expect(block.status).toBe('ok');
-    expect(block.outputs.out.shape).toEqual([8, 100, 64]);
+    expect(tensorValue(block.outputs.out).shape).toEqual([8, 100, 64]);
     const attention = block.child!.nodes.attention;
-    expect(attention.child!.nodes.q_heads.outputs.out.shape).toEqual([8, 8, 100, 8]);
-    expect(attention.child!.nodes.scores.outputs.out.shape).toEqual([8, 8, 100, 100]);
+    expect(tensorValue(attention.child!.nodes.q_heads.outputs.out).shape).toEqual([8, 8, 100, 8]);
+    expect(tensorValue(attention.child!.nodes.scores.outputs.out).shape).toEqual([8, 8, 100, 100]);
     expect(attention.outputs.out).toEqual(attention.child!.outputs.out);
   });
   it.each(['Pre-Norm', 'Post-Norm'])('%s + RMSNorm + SwiGLU + causal 可完整推导', (order) => {
     const graph = single('Transformer', { order, norm: 'RMSNorm', ffn: 'SwiGLU', causal: true });
     const result = check(graph).nodes.subject;
     expect(result.status).toBe('ok');
-    expect(result.outputs.out.shape).toEqual([8, 100, 64]);
-    expect(result.child!.nodes.ffn.child!.nodes.gated.outputs.out.shape).toEqual([8, 100, 128]);
+    expect(tensorValue(result.outputs.out).shape).toEqual([8, 100, 64]);
+    expect(tensorValue(result.child!.nodes.ffn.child!.nodes.gated.outputs.out).shape).toEqual([
+      8, 100, 128,
+    ]);
   });
   it('不整除头数时报错并阻断下游', () => {
     const project = example();
@@ -157,9 +168,9 @@ describe('子图、多端口与错误传播', () => {
   });
   it('混合网络得到预期的卷积与 LSTM 输出', () => {
     const result = check(example('mixed').graph);
-    expect(result.nodes.cnn.outputs.out.shape).toEqual([8, 128, 100]);
-    expect(result.nodes.lstm.outputs.out.shape).toEqual([8, 100, 32]);
-    expect(result.nodes.lstm.outputs.hidden.shape).toEqual([1, 8, 32]);
+    expect(tensorValue(result.nodes.cnn.outputs.out).shape).toEqual([8, 128, 100]);
+    expect(tensorValue(result.nodes.lstm.outputs.out).shape).toEqual([8, 100, 32]);
+    expect(tensorValue(result.nodes.lstm.outputs.hidden).shape).toEqual([1, 8, 32]);
   });
   it('从 LSTM hidden 端口连接时不能误用序列输出', () => {
     const graph = single('LSTM');
@@ -171,7 +182,7 @@ describe('子图、多端口与错误传播', () => {
       target: 'final',
       targetPort: 'in',
     });
-    expect(check(graph).nodes.final.inputs.in.shape).toEqual([1, 8, 32]);
+    expect(tensorValue(check(graph).nodes.final.inputs.in).shape).toEqual([1, 8, 32]);
   });
   it('不同变体实例的子图相互独立', () => {
     const original = registry.create('Transformer'),
@@ -216,7 +227,9 @@ describe('项目保存协议', () => {
     });
     const loaded = parseProject(serializeProject(project), registry);
     expect(loaded).toEqual(project);
-    expect(check(loaded.graph).nodes.transformer.outputs.out.shape).toEqual([8, 100, 64]);
+    expect(tensorValue(check(loaded.graph).nodes.transformer.outputs.out).shape).toEqual([
+      8, 100, 64,
+    ]);
   });
   it('拒绝未知版本与未知模块', () => {
     expect(() =>

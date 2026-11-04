@@ -179,6 +179,19 @@ function diagram(type: string): { label: string; content: ReactNode } {
           </>
         ),
       };
+    case 'Slice':
+      return {
+        label: '保留指定轴的一段区间',
+        content: (
+          <>
+            <g opacity="0.3">
+              <Grid x={17} y={10} columns={6} rows={3} />
+            </g>
+            <rect x="15" y="8" width="20" height="29" rx="2" />
+            <path d="M41 5V43" strokeDasharray="3 3" />
+          </>
+        ),
+      };
     case 'Flatten':
       return {
         label: '将多个轴展平成一行',

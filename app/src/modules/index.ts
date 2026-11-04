@@ -1,6 +1,10 @@
 import { ModuleRegistry } from './registry';
 import { primitives } from './primitives';
 import { installComposites } from './composites';
+import { calculationModules } from './calculation';
+import { containerInputs } from './containers';
 export const registry = new ModuleRegistry();
 primitives.forEach((def) => registry.register(def));
+containerInputs.forEach((def) => registry.register(def));
+calculationModules.forEach((def) => registry.register(def));
 installComposites(registry);

@@ -62,7 +62,7 @@ export const primitives: ModuleDefinition[] = [
     [
       text('shape', '形状', '8, 100, 64'),
       text('axes', '轴含义', 'batch, sequence, feature'),
-      select('dtype', '数据类型', 'float32', ['float32', 'float16', 'float64', 'int64']),
+      select('dtype', '数据类型', 'float32', ['float32', 'float16', 'float64', 'int64', 'bool']),
     ],
     (_, p) => {
       const shape = dimensions(p.shape);
@@ -351,7 +351,7 @@ export const primitives: ModuleDefinition[] = [
   ),
   base(
     'Concat',
-    'Concat',
+    'Cat',
     '分支运算',
     '沿一个轴拼接两个 Tensor。',
     [num('dim', '拼接轴', -1, -8)],

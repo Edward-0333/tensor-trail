@@ -1,37 +1,51 @@
 import { create } from 'zustand';
 import type { Graph, ModelEdge, Params, PortLayout, PortSide, Project } from '../core/types';
-import { clone, uid } from '../core/types';
+import { clone, uid, isTensorSpec } from '../core/types';
 import { graphAt, graphIssues, markAncestors, ports } from '../core/graph';
 import { inferGraph, resultAt } from '../core/engine';
 import { parseProject, serializeProject } from '../core/serialization';
 import { registry } from '../modules';
-import { example } from '../modules/examples';
-
-const STORAGE_KEY = 'tensor-trail.project.v1';
-function restore(): { project: Project; notice: string } {
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    return {
-      project: saved ? parseProject(saved, registry) : example(),
-      notice: saved ? '已恢复本地项目' : '从一个 Transformer 开始，双击模块查看内部。',
-    };
-  } catch {
-    return {
-      project: example(),
-      notice: '本地项目未能读取，已打开示例。旧记录在你编辑前不会被覆盖。',
-    };
-  }
+import { dimensions } from '../modules/math';
+import { copySelection, duplicateSelection } from './clipboard';
+const initial = {
+  project: {
+    schemaVersion: 1,
+    name: '未打开项目',
+    graph: { nodes: [], edges: [] },
+    variants: [],
+  } as Project,
+  documentId: uid(),
+  notice: '请选择 JSON 文件打开项目，或新建一个项目。',
+};
+// File associations follow a document through edits and undo, but never enter exported JSON.
+const documentIds = new WeakMap<Project, string>();
+const activeDocuments = new WeakSet<Project>();
+function documentId(project: Project, id: string = uid()): string {
+  const existing = documentIds.get(project);
+  if (existing) return existing;
+  documentIds.set(project, id);
+  return id;
 }
-const initial = restore();
 interface EditorState {
   project: Project;
+  hasProject: boolean;
+  documentId: string;
+  startNewDocument: () => void;
   canvasVersion: number;
   path: string[];
   selected: string | null;
+  selectedIds: string[];
+  clipboard: Graph | null;
+  pasteCount: number;
+  selectMany: (ids: string[]) => void;
+  copy: () => void;
+  paste: () => void;
+  newProject: () => void;
+  setAxis: (id: string, axis: number, name: string) => void;
+  setTensorColor: (id: string, color?: string) => void;
   past: Project[];
   future: Project[];
   notice: string;
-  saveState: string;
   select: (id: string | null) => void;
   navigate: (path: string[]) => void;
   toast: (message: string) => void;
@@ -50,22 +64,101 @@ interface EditorState {
   saveVariant: (name: string) => void;
   undo: () => void;
   redo: () => void;
-  load: (project: Project) => void;
+  load: (project: Project, preserveDocument?: boolean) => void;
   importText: (text: string) => void;
 }
 
 export const useEditor = create<EditorState>((set, get) => ({
   ...initial,
+  hasProject: false,
+  documentId: documentId(initial.project, initial.documentId),
+  startNewDocument: () => {
+    const id = uid();
+    documentIds.set(get().project, id);
+    activeDocuments.add(get().project);
+    set({ documentId: id, hasProject: true });
+  },
   canvasVersion: 0,
   path: [],
-  selected: 'transformer',
+  selected: null,
+  selectedIds: [],
+  clipboard: null,
+  pasteCount: 0,
   past: [],
   future: [],
-  saveState: '本地保存',
-  select: (id) => set({ selected: id }),
-  navigate: (path) => set({ path, selected: null }),
+  select: (id) => set({ selected: id, selectedIds: id ? [id] : [] }),
+  selectMany: (ids) => {
+    if (JSON.stringify(ids) !== JSON.stringify(get().selectedIds))
+      set({ selected: ids[0] ?? null, selectedIds: ids });
+  },
+  navigate: (path) => set({ path, selected: null, selectedIds: [] }),
+  newProject: () => {
+    get().load({
+      schemaVersion: 1,
+      name: '未命名项目',
+      graph: { nodes: [], edges: [] },
+      variants: clone(get().project.variants),
+    });
+    set({ notice: '已新建空白项目，可拖入模块；撤销可返回上一项目。' });
+  },
+  copy: () => {
+    const s = get(),
+      fragment = copySelection(
+        graphAt(s.project.graph, s.path),
+        s.selectedIds.length ? s.selectedIds : s.selected ? [s.selected] : [],
+      );
+    if (!fragment.nodes.length) {
+      set({ notice: '请先选择可复制的模块；子图边界不能复制。' });
+      return;
+    }
+    set({
+      clipboard: fragment,
+      pasteCount: 0,
+      notice: `已复制 ${fragment.nodes.length} 个模块，Ctrl+V 粘贴。`,
+    });
+  },
+  paste: () => {
+    const { clipboard, pasteCount } = get();
+    if (!clipboard?.nodes.length) return;
+    const fragment = duplicateSelection(clipboard, 32 * (pasteCount + 1));
+    if (
+      get().edit((g) => {
+        g.nodes.push(...fragment.nodes);
+        g.edges.push(...fragment.edges);
+      })
+    )
+      set({
+        selected: fragment.nodes[0].id,
+        selectedIds: fragment.nodes.map((n) => n.id),
+        pasteCount: pasteCount + 1,
+        notice: `已粘贴 ${fragment.nodes.length} 个模块，可一次撤销。`,
+      });
+  },
+  setAxis: (id, axis, name) =>
+    get().edit((g) => {
+      const node = g.nodes.find((n) => n.id === id)!;
+      if (node.type !== 'Input') throw new Error('请在输入 Tensor 编辑轴含义，后续模块自动推导。');
+      const shape = dimensions(node.params.shape);
+      if (axis < 0 || axis >= shape.length) throw new Error('轴超出范围。');
+      const previous = String(node.params.axes)
+        .split(',')
+        .map((s) => s.trim());
+      const axes = shape.map((_, i) => previous[i] || `axis${i}`);
+      axes[axis] = name.trim().replaceAll(',', '，').slice(0, 120) || `axis${axis}`;
+      node.params.axes = axes.join(', ');
+    }),
+  setTensorColor: (id, color) =>
+    get().edit((g) => {
+      const node = g.nodes.find((n) => n.id === id)!;
+      if (color) node.tensorColor = color;
+      else delete node.tensorColor;
+    }, false),
   toast: (notice) => set({ notice }),
   edit: (fn, semantic = true) => {
+    if (!get().hasProject) {
+      set({ notice: '请先打开 JSON 文件或新建项目。' });
+      return false;
+    }
     const { project, path, past } = get();
     const draft = clone(project);
     try {
@@ -73,6 +166,10 @@ export const useEditor = create<EditorState>((set, get) => ({
       if (semantic) markAncestors(draft.graph, path);
       // Keep every committed edit reloadable, including size and nesting limits.
       parseProject(serializeProject(draft), registry);
+      documentId(project, get().documentId);
+      documentId(draft, get().documentId);
+      activeDocuments.add(project);
+      activeDocuments.add(draft);
       set({ project: draft, past: [...past.slice(-39), project], future: [] });
       return true;
     } catch (e) {
@@ -87,6 +184,18 @@ export const useEditor = create<EditorState>((set, get) => ({
       if (node.subgraph && node.customized)
         throw new Error('此模块已有内部编辑，请进入子图修改各算子。');
       node.params[key] = value;
+      if (node.type === 'Input' && key === 'shape') {
+        try {
+          const previous = String(node.params.axes)
+            .split(',')
+            .map((s) => s.trim());
+          node.params.axes = dimensions(value)
+            .map((_, i) => previous[i] || `axis${i}`)
+            .join(', ');
+        } catch {
+          /* Keep incomplete shape edits visible for correction. */
+        }
+      }
       const def = registry.get(node.type)!;
       const valid = def.fields.every(
         (f) =>
@@ -132,7 +241,7 @@ export const useEditor = create<EditorState>((set, get) => ({
       ]?.outputs;
       const sourcePort = source ? ports(source, registry).outputs[0]?.id : undefined;
       const spec = specs?.[sourcePort ?? ''];
-      if (spec && !variant) {
+      if (spec && isTensorSpec(spec) && !variant) {
         const last = spec.shape.at(-1);
         const keys = ['in_features', 'input_size', 'd_model', 'features'];
         for (const key of keys)
@@ -156,6 +265,7 @@ export const useEditor = create<EditorState>((set, get) => ({
     if (committed && added)
       set({
         selected: added,
+        selectedIds: [added],
         notice: position
           ? '已在落点添加模块，拖动端口即可连线。'
           : '已添加模块；可拖动端口调整连接。',
@@ -178,7 +288,7 @@ export const useEditor = create<EditorState>((set, get) => ({
       graph.nodes = graph.nodes.filter((n) => !removable.has(n.id));
       graph.edges = graph.edges.filter((e) => !removable.has(e.source) && !removable.has(e.target));
     });
-    set({ selected: null });
+    set({ selected: null, selectedIds: [] });
   },
   removeEdges: (ids) =>
     get().edit((graph) => {
@@ -247,11 +357,14 @@ export const useEditor = create<EditorState>((set, get) => ({
     if (past.length)
       set({
         project: past.at(-1)!,
+        hasProject: activeDocuments.has(past.at(-1)!),
+        documentId: documentId(past.at(-1)!),
         canvasVersion: get().canvasVersion + 1,
         past: past.slice(0, -1),
         future: [project, ...future],
         path: [],
         selected: null,
+        selectedIds: [],
         notice: '已撤销。',
       });
   },
@@ -260,21 +373,31 @@ export const useEditor = create<EditorState>((set, get) => ({
     if (future.length)
       set({
         project: future[0],
+        hasProject: activeDocuments.has(future[0]),
+        documentId: documentId(future[0]),
         canvasVersion: get().canvasVersion + 1,
         past: [...past, project],
         future: future.slice(1),
         path: [],
         selected: null,
+        selectedIds: [],
         notice: '已重做。',
       });
   },
-  load: (project) => {
-    const { past, project: previous } = get();
+  load: (project, preserveDocument = false) => {
+    const { past, project: previous, documentId: previousId } = get();
+    documentId(previous, previousId);
+    if (get().hasProject) activeDocuments.add(previous);
+    const loaded = clone(project);
+    activeDocuments.add(loaded);
     set({
-      project: clone(project),
+      project: loaded,
+      hasProject: true,
+      documentId: documentId(loaded, preserveDocument ? previousId : uid()),
       canvasVersion: get().canvasVersion + 1,
       path: [],
       selected: null,
+      selectedIds: [],
       past: [...past.slice(-39), previous],
       future: [],
       notice: '项目已载入；可撤销返回上一项目。',
@@ -288,16 +411,3 @@ export const useEditor = create<EditorState>((set, get) => ({
     }
   },
 }));
-
-useEditor.subscribe((state, previous) => {
-  if (state.project === previous.project) return;
-  try {
-    localStorage.setItem(STORAGE_KEY, serializeProject(state.project));
-    if (state.saveState !== '已保存到本机') useEditor.setState({ saveState: '已保存到本机' });
-  } catch {
-    useEditor.setState({
-      saveState: '本地保存失败，请导出 JSON',
-      notice: '浏览器存储不可用或已满，请导出 JSON 保存当前项目。',
-    });
-  }
-});

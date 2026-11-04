@@ -1,3 +1,4 @@
+import { tensorValue } from '../src/core/types';
 import { describe, expect, it } from 'vitest';
 import {
   buildModel,
@@ -34,9 +35,11 @@ describe('AI recipes and diagnostics', () => {
   it('builds an expanded, deterministic, reloadable Transformer with node shapes and defaults', () => {
     const result = buildModel(recipe());
     expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
-    expect(result.outputs.output.shape).toEqual([2, 12, 64]);
+    expect(tensorValue(result.outputs.output).shape).toEqual([2, 12, 64]);
     expect(
-      result.nodes.find((n) => n.path.join('/') === 'encoder/attention/q_heads')?.outputs.out.shape,
+      tensorValue(
+        result.nodes.find((n) => n.path.join('/') === 'encoder/attention/q_heads')?.outputs.out,
+      ).shape,
     ).toEqual([2, 8, 12, 8]);
     expect(result.defaultsApplied).toContainEqual({
       path: ['encoder'],
@@ -52,9 +55,13 @@ describe('AI recipes and diagnostics', () => {
   it('builds the CNN → Transformer → bidirectional LSTM example with named hidden ports', () => {
     const result = buildModel(mixed);
     expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
-    expect(result.outputs.output.shape).toEqual([8, 100, 64]);
-    expect(result.nodes.find((n) => n.path[0] === 'cnn')?.outputs.out.shape).toEqual([8, 128, 100]);
-    expect(result.nodes.find((n) => n.type === 'LSTM')?.outputs.hidden.shape).toEqual([2, 8, 32]);
+    expect(tensorValue(result.outputs.output).shape).toEqual([8, 100, 64]);
+    expect(tensorValue(result.nodes.find((n) => n.path[0] === 'cnn')?.outputs.out).shape).toEqual([
+      8, 128, 100,
+    ]);
+    expect(tensorValue(result.nodes.find((n) => n.type === 'LSTM')?.outputs.hidden).shape).toEqual([
+      2, 8, 32,
+    ]);
   });
   it('builds custom nested blocks and preserves their boundary ports', () => {
     const r = recipe();
@@ -76,7 +83,7 @@ describe('AI recipes and diagnostics', () => {
     const result = buildModel(r);
     expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
     expect(result.project!.graph.nodes[1].customized).toBe(true);
-    expect(result.outputs.output.shape).toEqual([2, 12, 64]);
+    expect(tensorValue(result.outputs.output).shape).toEqual([2, 12, 64]);
   });
   it.each([
     ['typo module', { id: 'encoder', type: 'Transfomer' }, 'UNKNOWN_MODULE'],
@@ -195,7 +202,7 @@ describe('Atomic model patches', () => {
       ],
     });
     expect(result.ok).toBe(true);
-    expect(result.outputs.output.shape).toEqual([2, 12, 64]);
+    expect(tensorValue(result.outputs.output).shape).toEqual([2, 12, 64]);
     expect(original.graph.nodes).toHaveLength(3);
   });
   it('rejects a later failed operation without partial mutation', () => {
