@@ -9,7 +9,7 @@ import {
   type Project,
 } from '../core/types';
 import { graphAt, markAncestors, orderGraph } from '../core/graph';
-import { inferGraph } from '../core/engine';
+import { inferProject } from '../core/engine';
 import { parseProject, serializeProject } from '../core/serialization';
 import { identifierPattern } from './catalog';
 import type { DefaultApplied, Diagnostic, ModelResponse } from './types';
@@ -64,7 +64,7 @@ function params(type: string, value: unknown, path: string[]): Params {
           ? typeof v === 'boolean'
           : f.kind === 'select'
             ? typeof v === 'string' && !!f.options?.includes(v)
-            : typeof v === 'string' && v.length < 2000;
+            : typeof v === 'string' && v.length <= (f.maxLength ?? 1999);
     if (!valid) fail('INVALID_PARAMETER', `${type}.${k} 的类型、范围或选项无效。`, path, k);
   }
   return p as Params;
@@ -208,7 +208,7 @@ function inspect(project: Project): ModelResponse {
       if (!path.length && n.type === 'Output' && r.inputs.in) response.outputs[n.id] = r.inputs.in;
     }
   };
-  walk(project.graph, inferGraph(project.graph, registry), []);
+  walk(project.graph, inferProject(project, registry), []);
   for (const type of ['Input', 'Output'])
     if (
       !project.graph.nodes.some(
@@ -221,7 +221,7 @@ function inspect(project: Project): ModelResponse {
         path: [],
         message:
           type === 'Input'
-            ? '顶层模型至少需要一个输入节点（Input 或 ForwardInput）。'
+            ? '顶层模型至少需要一个输入节点（Input、ForwardInput 或 DictionaryInput）。'
             : `顶层模型至少需要一个 ${type} 节点。`,
       });
     }
@@ -239,13 +239,14 @@ export function buildModel(recipe: unknown): ModelResponse {
   try {
     bounded(recipe);
     const v = record(recipe, 'recipe');
-    keys(v, ['recipeVersion', 'name', 'nodes', 'connections']);
+    keys(v, ['recipeVersion', 'name', 'nodes', 'connections', 'hyperparameters']);
     if (v.recipeVersion !== undefined && v.recipeVersion !== 1)
       fail('UNSUPPORTED_VERSION', '仅支持 recipeVersion: 1。');
     const defaults: DefaultApplied[] = [];
     const project = checkedProject({
       schemaVersion: 1,
       name: name(v.name),
+      ...(v.hyperparameters !== undefined ? { hyperparameters: v.hyperparameters } : {}),
       graph: makeGraph({ nodes: v.nodes, connections: v.connections }, [], defaults),
       variants: [],
     });

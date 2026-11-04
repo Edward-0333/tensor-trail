@@ -1,7 +1,10 @@
 import type { Project } from '../core/types';
 import { registry } from './index';
+import { plutoForwardInputExample } from './plutoInputExample';
 
-export function example(kind: 'transformer' | 'mixed' | 'blank' = 'transformer'): Project {
+export type ExampleKind = 'transformer' | 'mixed' | 'blank' | 'pluto-input';
+export function example(kind: ExampleKind = 'transformer'): Project {
+  if (kind === 'pluto-input') return plutoForwardInputExample();
   const project: Project = {
     schemaVersion: 1,
     name:

@@ -50,6 +50,7 @@ export function PortHandles({
               position={positions[side]}
               style={offset}
               aria-label={`${kind === 'target' ? '输入' : '输出'} ${port.id}`}
+              title={port.label}
             />
             {labels && (
               <span

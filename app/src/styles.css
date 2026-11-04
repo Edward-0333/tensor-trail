@@ -790,13 +790,25 @@ kbd {
   max-width: 340px;
   padding: 8px 10px;
   background: var(--tensor-bg, transparent);
-  border: 1px solid transparent;
+  border: 1px solid var(--tone);
   border-radius: 6px;
   position: relative;
   transition:
     opacity 0.2s,
     background 0.15s,
     border-color 0.15s;
+}
+.tensor-node.forward-input-node {
+  --tone: var(--category-purple);
+}
+.tensor-node.tensor-input {
+  --tone: var(--category-blue);
+}
+.tensor-node.tensor-output {
+  --tone: var(--category-green);
+}
+.tensor-node.tensor-variable {
+  --tone: var(--category-cyan);
 }
 .tensor-node-label {
   max-width: 300px;
@@ -829,9 +841,9 @@ kbd {
 }
 .tensor-node.selected,
 .tensor-node.step-active {
-  --tone: var(--accent);
   background: var(--tensor-bg, transparent);
-  border-color: var(--accent-border);
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
 }
 .tensor-node.invalid {
   --tone: var(--danger);

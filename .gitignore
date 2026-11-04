@@ -13,3 +13,5 @@ coverage/
 Thumbs.db
 references/
 .publish/
+__pycache__/
+*.py[cod]

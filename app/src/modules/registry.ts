@@ -12,7 +12,10 @@ export class ModuleRegistry {
     return this.definitions.get(canonicalModuleType(type));
   }
   list(includeInternal = false) {
-    return [...this.definitions.values()].filter((d) => includeInternal || d.category !== '内部');
+    // DictionaryInput remains readable for older projects; new inputs use ForwardInput.
+    return [...this.definitions.values()].filter(
+      (d) => d.type !== 'DictionaryInput' && (includeInternal || d.category !== '内部'),
+    );
   }
   create(type: string, params: Params = {}, id: string = uid()): ModelNode {
     type = canonicalModuleType(type);

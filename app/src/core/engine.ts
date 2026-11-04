@@ -1,4 +1,13 @@
-import type { Graph, GraphResult, NodeResult, Registry, TensorSpec, ValueSpec } from './types';
+import type {
+  Graph,
+  GraphResult,
+  NodeResult,
+  Registry,
+  TensorSpec,
+  ValueSpec,
+  Hyperparameters,
+  Project,
+} from './types';
 import { isTensorSpec, shapeText } from './types';
 import { graphIssues, orderGraph, ports } from './graph';
 
@@ -7,6 +16,7 @@ export function inferGraph(
   registry: Registry,
   external: Record<string, ValueSpec> = {},
   depth = 0,
+  hyperparameters: Hyperparameters = {},
 ): GraphResult {
   const result: GraphResult = { order: [], nodes: {}, outputs: {}, issues: [] };
   if (depth > 12) {
@@ -49,6 +59,8 @@ export function inferGraph(
         // Customized composites derive their semantics solely from their concrete child graph.
         if (node.customized && node.subgraph) break;
         const value = node.params[f.key];
+        // Older network inputs have only a name and remarks; their schema is optional.
+        if (def.type === 'ForwardInput' && f.key === 'schema' && value === undefined) continue;
         if (
           f.kind === 'number' &&
           (typeof value !== 'number' || !Number.isSafeInteger(value) || value < (f.min ?? 1))
@@ -72,17 +84,17 @@ export function inferGraph(
         if (isTensorSpec(value)) tensorInputs[port] = value;
         else if (!acceptsContainers)
           throw new Error(
-            `输入 ${port} 是${shapeText(value)}，此模块需要 Tensor。请将从容器取出的张量用“输入 Tensor”单独描述后连接。`,
+            `输入 ${port} 是${shapeText(value)}，此模块需要 Tensor。${value.kind === 'dict' ? '字典需先取出 Tensor 字段，请使用“字典字段读取”。' : ''}`,
           );
       }
       if (!node.customized) r.messages.push(...(def.validate?.(tensorInputs, node.params) ?? []));
       if (node.type === 'Inlet') {
         const value = external[String(node.params.port)];
-        if (!value) throw new Error(`子图输入 ${node.params.port} 没有外部 Tensor。`);
+        if (!value) throw new Error(`子图输入 ${node.params.port} 没有外部数据。`);
         r.outputs = { out: value };
-        r.notes = ['从上一级模块接收 Tensor。'];
+        r.notes = ['从上一级模块接收输入，保留其数据类型。'];
       } else if (node.subgraph) {
-        r.child = inferGraph(node.subgraph, registry, r.inputs, depth + 1);
+        r.child = inferGraph(node.subgraph, registry, r.inputs, depth + 1, hyperparameters);
         const failures = Object.entries(r.child.nodes).filter(
           ([, v]) => v.status === 'error' || v.status === 'blocked',
         );
@@ -111,8 +123,8 @@ export function inferGraph(
         r.notes = ['保留输入的数据类型与内容。'];
       } else if (def.inferValue || def.infer) {
         const inference = def.inferValue
-          ? def.inferValue(r.inputs, node.params)
-          : def.infer!(tensorInputs, node.params);
+          ? def.inferValue(r.inputs, node.params, { hyperparameters })
+          : def.infer!(tensorInputs, node.params, { hyperparameters });
         r.outputs = inference.outputs;
         r.notes = inference.notes ?? [];
         r.messages.push(...(inference.warnings ?? []));
@@ -127,6 +139,10 @@ export function inferGraph(
     }
   }
   return result;
+}
+
+export function inferProject(project: Project, registry: Registry): GraphResult {
+  return inferGraph(project.graph, registry, {}, 0, project.hyperparameters ?? {});
 }
 
 export function resultAt(result: GraphResult, path: string[]): GraphResult | undefined {

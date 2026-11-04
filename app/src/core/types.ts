@@ -8,14 +8,36 @@ export interface ContainerSpec {
   kind: 'forward' | 'dict' | 'list';
   text: string;
 }
-export type ValueSpec = TensorSpec | ContainerSpec;
+export interface DictionarySpec {
+  kind: 'dict';
+  fields: Record<string, TensorSpec | DictionarySpec>;
+}
+/** A Python integer size, or an unresolved symbolic integer dimension; never a Tensor. */
+export interface IntegerSpec {
+  kind: 'int';
+  value: Dim;
+}
+export type ValueSpec = TensorSpec | ContainerSpec | DictionarySpec | IntegerSpec;
 export const isTensorSpec = (value: ValueSpec): value is TensorSpec => 'shape' in value;
+export const isIntegerSpec = (value: ValueSpec): value is IntegerSpec =>
+  !isTensorSpec(value) && value.kind === 'int';
+export const isDictionarySpec = (value: ValueSpec): value is DictionarySpec =>
+  !isTensorSpec(value) && value.kind === 'dict' && 'fields' in value;
 export function tensorValue(value: ValueSpec | undefined): TensorSpec {
   if (!value) throw new Error('没有可用的 Tensor。');
   if (!isTensorSpec(value)) throw new Error(`需要 Tensor，当前为${shapeText(value)}。`);
   return value;
 }
 export type Params = Record<string, string | number | boolean>;
+export interface Hyperparameter {
+  type: 'int' | 'float' | 'bool' | 'string';
+  value: number | boolean | string;
+  source?: string;
+}
+export type Hyperparameters = Record<string, Hyperparameter>;
+export interface InferenceContext {
+  hyperparameters: Hyperparameters;
+}
 export type PortSide = 'left' | 'right' | 'top' | 'bottom';
 export interface PortLayout {
   input?: PortSide;
@@ -33,6 +55,7 @@ export interface Field {
   min?: number;
   options?: string[];
   help?: string;
+  maxLength?: number;
 }
 export interface ModelNode {
   id: string;
@@ -43,6 +66,7 @@ export interface ModelNode {
   position: { x: number; y: number };
   portLayout?: PortLayout;
   tensorColor?: string;
+  /** Called module's forward body or an explicitly merged calculation group. */
   subgraph?: Graph;
   customized?: boolean;
 }
@@ -71,9 +95,19 @@ export interface ModuleDefinition {
   fields: Field[];
   inputs: Port[];
   outputs: Port[];
+  /** Optional parameter-dependent ports. IDs must remain stable while labels change. */
+  getPorts?: (params: Params) => { inputs: Port[]; outputs: Port[] };
   composite?: boolean;
-  infer?: (inputs: Record<string, TensorSpec>, params: Params) => Inference;
-  inferValue?: (inputs: Record<string, ValueSpec>, params: Params) => Inference<ValueSpec>;
+  infer?: (
+    inputs: Record<string, TensorSpec>,
+    params: Params,
+    context?: InferenceContext,
+  ) => Inference;
+  inferValue?: (
+    inputs: Record<string, ValueSpec>,
+    params: Params,
+    context?: InferenceContext,
+  ) => Inference<ValueSpec>;
   build?: (params: Params) => Graph;
   validate?: (inputs: Record<string, TensorSpec>, params: Params) => string[];
 }
@@ -102,6 +136,8 @@ export interface Variant {
 export interface Project {
   schemaVersion: 1;
   name: string;
+  hyperparameters?: Hyperparameters;
+  /** Main model's forward body, displayed directly as the initial/root view. */
   graph: Graph;
   variants: Variant[];
 }
@@ -111,10 +147,14 @@ export const shapeText = (s?: ValueSpec) =>
     ? '待连接'
     : isTensorSpec(s)
       ? `[${s.shape.join(', ')}]`
-      : s.kind === 'forward'
-        ? 'Forward输入'
-        : s.kind === 'dict'
-          ? '字典 dict'
-          : '列表 list';
+      : isIntegerSpec(s)
+        ? `int · ${s.value}${typeof s.value === 'string' ? '（符号）' : ''}`
+        : s.kind === 'forward'
+          ? '网络输入'
+          : s.kind === 'dict'
+            ? isDictionarySpec(s)
+              ? `dict · ${Object.keys(s.fields).length} 个字段`
+              : '字典 dict'
+            : '列表 list';
 export const clone = <T>(value: T): T => structuredClone(value);
 export const uid = () => crypto.randomUUID();

@@ -2,12 +2,14 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { useUpdateNodeInternals, type Node, type NodeProps } from '@xyflow/react';
 import { ChevronRight, AlertCircle, ArrowUpRight } from 'lucide-react';
 import type { ModelNode, NodeResult, Port } from '../core/types';
-import { isTensorSpec, shapeText } from '../core/types';
+import { isDictionarySpec, isTensorSpec, isIntegerSpec, shapeText } from '../core/types';
 import { ModuleGlyph } from './ModuleGlyph';
 import { PortHandles } from './PortHandles';
 import { useEditor } from '../editor/store';
-import { parseCalculations, calculationLabel } from '../modules/calculation';
+import { parseCalculations, calculationLabel, sliceLabel } from '../modules/calculation';
 import { isContainerInput } from '../modules/containers';
+import { parseFieldPath } from '../modules/indexing';
+import { orderGraph } from '../core/graph';
 
 export type TrailNode = Node<
   {
@@ -34,7 +36,7 @@ export const tone = (category: string) =>
           ? 'teal'
           : category === '归一化'
             ? 'green'
-            : category === '维度操作'
+            : ['维度操作', '索引与切片', '形状查询'].includes(category)
               ? 'sky'
               : category === '分支运算'
                 ? 'pink'
@@ -42,7 +44,25 @@ export const tone = (category: string) =>
 
 export const categoryColor = (category: string) => `var(--category-${tone(category)})`;
 
-export const isTensorNode = (type: string) => ['Input', 'Output', 'Inlet', 'Outlet'].includes(type);
+export const isTensorNode = (type: string) =>
+  ['Input', 'Output', 'Inlet', 'Outlet', 'TensorVariable'].includes(type);
+
+function operationText(node: ModelNode): string {
+  try {
+    if (node.type === 'DictionaryGet')
+      return parseFieldPath(node.params.path)
+        .map((key) => `[${JSON.stringify(key)}]`)
+        .join('');
+    if (node.type === 'Slice') return sliceLabel(node.params);
+    if (node.type === 'TensorIndex') return `轴 ${node.params.dim} · 索引 ${node.params.index}`;
+    if (node.type === 'TensorSize') return `shape · 读取轴 ${node.params.axes}`;
+    if (node.type === 'Compute')
+      return parseCalculations(node.params.operations).map(calculationLabel).join(' › ');
+  } catch {
+    /* Incomplete parameters remain editable inside the group. */
+  }
+  return node.label;
+}
 
 export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
   const { model, result, inputs, outputs } = data;
@@ -76,10 +96,69 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
   }, [model.id, inputSide, outputSide, inputs.length, outputs.length, updateNodeInternals]);
   const bad = result?.status === 'error' || result?.status === 'blocked';
   const container = isContainerInput(model.type);
+  if (model.type === 'LocalParameter')
+    return (
+      <div
+        className={`local-parameter-node tone-orange ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
+        data-testid={`node-${model.id}`}
+        aria-label={`局部参数 ${model.label}`}
+        title={
+          bad
+            ? result?.messages.join('\n')
+            : `${model.label} · ${shapeText(result?.outputs.out)} · 双击修改名称`
+        }
+      >
+        <PortHandles
+          inputs={inputs}
+          outputs={outputs}
+          inputSide={inputSide}
+          outputSide={outputSide}
+          labels={false}
+        />
+        {editing ? (
+          <input
+            className="local-parameter-editor nodrag nopan nowheel"
+            aria-label="编辑局部参数名称"
+            autoFocus
+            defaultValue={model.label}
+            maxLength={200}
+            style={{ width: `${Math.max(2, Math.min(model.label.length, 12))}ch` }}
+            onBlur={(event) => {
+              if (!cancelRename.current)
+                useEditor.getState().renameNode(model.id, event.target.value);
+              setEditing(false);
+            }}
+            onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing) return;
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                event.currentTarget.blur();
+              }
+              if (event.key === 'Escape') {
+                cancelRename.current = true;
+                setEditing(false);
+              }
+            }}
+            onDoubleClick={(event) => event.stopPropagation()}
+          />
+        ) : (
+          <span
+            className="local-parameter-name"
+            onDoubleClick={(event) => {
+              event.stopPropagation();
+              cancelRename.current = false;
+              setEditing(true);
+            }}
+          >
+            {model.label}
+          </span>
+        )}
+      </div>
+    );
   if (container)
     return (
       <div
-        className={`forward-input-node ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
+        className={`${model.type === 'DictionaryInput' ? 'dictionary-input-node' : 'tensor-node forward-input-node'} ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
         data-testid={`node-${model.id}`}
         style={
           background
@@ -97,7 +176,7 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
         {editing ? (
           <textarea
             className="forward-input-editor nodrag nopan nowheel"
-            aria-label="编辑 Forward 输入文字"
+            aria-label="编辑网络输入名称"
             autoFocus
             defaultValue={model.label}
             maxLength={200}
@@ -133,15 +212,32 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
             {model.label}
           </div>
         )}
+        {model.type === 'DictionaryInput' && (
+          <div className="dictionary-node-summary">
+            <strong>{spec && isDictionarySpec(spec) ? shapeText(spec) : 'dict · 待修正'}</strong>
+            {spec && isDictionarySpec(spec) && (
+              <span title={Object.keys(spec.fields).join(', ')}>
+                {Object.keys(spec.fields).join(' · ') || '在属性面板中添加字段'}
+              </span>
+            )}
+          </div>
+        )}
       </div>
     );
   if (isTensorNode(model.type)) {
     const spec = result?.outputs.out ?? result?.inputs.in;
     const shape = spec ? shapeText(spec) : bad ? '待修正' : '等待输入';
+    const tensorRole =
+      model.type === 'TensorVariable'
+        ? 'tensor-variable'
+        : ['Input', 'Inlet'].includes(model.type)
+          ? 'tensor-input'
+          : 'tensor-output';
     return (
       <div
-        className={`tensor-node ${data.reverse ? 'flow-left' : ''} ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
+        className={`tensor-node ${spec && isIntegerSpec(spec) ? 'integer-value-node' : ''} ${tensorRole} ${data.reverse ? 'flow-left' : ''} ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
         data-testid={`node-${model.id}`}
+        aria-label={model.type === 'TensorVariable' ? `张量变量 ${model.label}` : undefined}
         style={
           background
             ? ({ '--tensor-bg': background, '--tensor-ink': ink } as CSSProperties)
@@ -151,7 +247,7 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
         {editing ? (
           <input
             className="tensor-label-input nodrag nowheel"
-            aria-label="编辑 Tensor 名称"
+            aria-label={spec && isIntegerSpec(spec) ? '编辑变量名称' : '编辑 Tensor 名称'}
             autoFocus
             defaultValue={model.label}
             maxLength={200}
@@ -160,6 +256,7 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
               setEditing(false);
             }}
             onKeyDown={(e) => {
+              if (e.nativeEvent.isComposing) return;
               if (e.key === 'Enter') e.currentTarget.blur();
               if (e.key === 'Escape') {
                 cancelRename.current = true;
@@ -198,6 +295,101 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
     );
   }
 
+  if (model.type === 'TensorSize') {
+    return (
+      <div
+        className={`compact-operation-node size-query-node tone-sky ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
+        data-testid={`node-${model.id}`}
+        aria-label={`${model.label}，读取轴 ${model.params.axes}`}
+        title={bad ? result?.messages.join('\n') : `${model.label} · 每个输出为整数尺寸`}
+        style={{
+          minHeight: Math.max(
+            34,
+            ((inputSide === outputSide
+              ? inputs.length + outputs.length
+              : Math.max(inputs.length, outputs.length)) +
+              1) *
+              12,
+          ),
+        }}
+      >
+        <code title={`读取轴 ${model.params.axes}`}>Size · 轴 {model.params.axes}</code>
+        <PortHandles
+          inputs={inputs}
+          outputs={outputs}
+          inputSide={inputSide}
+          outputSide={outputSide}
+          labels={false}
+        />
+      </div>
+    );
+  }
+
+  if (model.type === 'DictionaryGet' || model.type === 'Slice') {
+    const isSlice = model.type === 'Slice';
+    const kind = isSlice ? '切片 Slice' : '字典字段读取';
+    let expression = isSlice ? '切片参数待修正' : '选择字典字段';
+    try {
+      expression = isSlice
+        ? sliceLabel(model.params)
+        : parseFieldPath(model.params.path)
+            .map((key) => `[${JSON.stringify(key)}]`)
+            .join('');
+    } catch {
+      /* The inspector shows validation errors for incomplete parameters. */
+    }
+    return (
+      <div
+        className={`compact-operation-node ${isSlice ? 'slice-node' : 'field-read-node'} tone-${tone(data.category)} ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
+        data-testid={`node-${model.id}`}
+        aria-label={`${kind}：${expression}`}
+        title={
+          bad ? `${expression}\n${result?.messages.join('\n')}` : `${model.label} · ${expression}`
+        }
+      >
+        <PortHandles
+          inputs={inputs}
+          outputs={outputs}
+          inputSide={inputSide}
+          outputSide={outputSide}
+          labels={false}
+        />
+        <code>{expression}</code>
+      </div>
+    );
+  }
+
+  if (model.type === 'CalculationGroup' && model.subgraph) {
+    const child = model.subgraph;
+    const steps = orderGraph(child)
+      .map((id) => child.nodes.find((n) => n.id === id)!)
+      .filter((n) => !['Inlet', 'Outlet'].includes(n.type));
+    return (
+      <div
+        className={`calculation-group-node tone-sky ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
+        data-testid={`node-${model.id}`}
+        aria-label={`${model.label}，${steps.length} 个操作，双击进入编辑`}
+        title={bad ? result?.messages.join('\n') : `${model.label} · 双击编辑内部操作`}
+        style={{ minHeight: Math.max(inputs.length, outputs.length) * 24 + 16 }}
+      >
+        <PortHandles
+          inputs={inputs}
+          outputs={outputs}
+          inputSide={inputSide}
+          outputSide={outputSide}
+          labels={inputs.length > 1 || outputs.length > 1}
+        />
+        <ol className="calculation-group-steps">
+          {steps.map((node) => (
+            <li key={node.id}>
+              <code title={`${node.label} · ${operationText(node)}`}>{operationText(node)}</code>
+            </li>
+          ))}
+        </ol>
+      </div>
+    );
+  }
+
   if (model.type === 'Concat')
     return (
       <div
@@ -224,10 +416,17 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
       operations = ['步骤无效'];
     }
   }
+  if (model.type === 'TensorIndex')
+    operations = [`轴 ${model.params.dim}`, `索引 ${model.params.index}`];
   const rows = Math.max(inputs.length, outputs.length, 1);
+  const indexing = model.type === 'TensorIndex';
   const bodyHeight = Math.max(
     rows * 27 + 12,
-    operations.length ? Math.ceil(operations.length / 3) * 34 + 18 : 72,
+    indexing
+      ? operations.length * 34 + 24
+      : operations.length
+        ? Math.ceil(operations.length / 3) * 34 + 18
+        : 72,
   );
   const hasTop =
     (inputs.length > 0 && inputSide === 'top') || (outputs.length > 0 && outputSide === 'top');
@@ -236,8 +435,9 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
     (outputs.length > 0 && outputSide === 'bottom');
   return (
     <div
-      className={`module-node tone-${tone(data.category)} ${hasTop ? 'has-top-ports' : ''} ${hasBottom ? 'has-bottom-ports' : ''} ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
+      className={`module-node ${indexing ? 'indexing-node' : ''} tone-${tone(data.category)} ${hasTop ? 'has-top-ports' : ''} ${hasBottom ? 'has-bottom-ports' : ''} ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
       data-testid={`node-${model.id}`}
+      title={model.subgraph ? `双击进入 ${model.label} 的 forward()` : undefined}
     >
       <div className="node-heading">
         <div className="node-title">
@@ -249,10 +449,12 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
       </div>
       <div className="node-ports" style={{ minHeight: bodyHeight }}>
         <div className="node-operation">
-          {model.type === 'Compute' ? (
+          {['Compute', 'TensorIndex'].includes(model.type) ? (
             <div className="calculation-chips">
               {operations.map((label, i) => (
-                <span key={i}>{label}</span>
+                <span key={i} title={label}>
+                  {label}
+                </span>
               ))}
             </div>
           ) : (
@@ -275,7 +477,7 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
           </span>
         ) : model.subgraph ? (
           <button className="nodrag" onClick={data.open}>
-            展开 {model.subgraph.nodes.length} 个节点 <ChevronRight size={12} />
+            进入 forward() <ChevronRight size={12} />
           </button>
         ) : (
           <span>

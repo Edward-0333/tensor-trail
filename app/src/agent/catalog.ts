@@ -19,7 +19,7 @@ function fieldSchema(f: Field) {
         ? { type: 'boolean' }
         : f.kind === 'select'
           ? { type: 'string', enum: f.options }
-          : { type: 'string', maxLength: 1999 }),
+          : { type: 'string', maxLength: f.maxLength ?? 1999 }),
     default: f.default,
     description: f.help || f.label,
   };
@@ -37,6 +37,12 @@ export function describeModules(includeInternal = false) {
       internal: d.category === '内部',
       inputs: d.inputs,
       outputs: d.outputs,
+      ...(d.getPorts
+        ? {
+            dynamicPorts:
+              'Output ports depend on parameters. TensorSize uses dim0, dim1, ... in axes order; names changes labels only.',
+          }
+        : {}),
       fields: d.fields,
       paramsSchema: object(Object.fromEntries(d.fields.map((f) => [f.key, fieldSchema(f)])), []),
     })),
@@ -63,7 +69,7 @@ export function getSchemas() {
           params: object(Object.fromEntries(d.fields.map((f) => [f.key, fieldSchema(f)])), []),
           ...(d.composite ? { subgraph: { $ref: '#/$defs/graph' } } : {}),
         },
-        ['id', 'type', ...(d.type === 'Block' ? ['subgraph'] : [])],
+        ['id', 'type', ...(d.composite && !d.build ? ['subgraph'] : [])],
       ),
     ),
   };
@@ -111,6 +117,33 @@ export function getSchemas() {
         {
           recipeVersion: { const: 1 },
           name,
+          hyperparameters: {
+            type: 'object',
+            maxProperties: 128,
+            propertyNames: {
+              pattern: '^(?!__proto__$|prototype$|constructor$|self$)[A-Za-z_][A-Za-z0-9_]{0,63}$',
+            },
+            additionalProperties: {
+              oneOf: [
+                [
+                  'int',
+                  {
+                    type: 'integer',
+                    minimum: -Number.MAX_SAFE_INTEGER,
+                    maximum: Number.MAX_SAFE_INTEGER,
+                  },
+                ],
+                ['float', { type: 'number' }],
+                ['bool', { type: 'boolean' }],
+                ['string', { type: 'string', maxLength: 1999 }],
+              ].map(([type, value]) =>
+                object(
+                  { type: { const: type }, value, source: { type: 'string', maxLength: 256 } },
+                  ['type', 'value'],
+                ),
+              ),
+            },
+          },
           ...graph.properties,
         },
         ['name', 'nodes', 'connections'],

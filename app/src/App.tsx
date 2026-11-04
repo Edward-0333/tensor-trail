@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'reac
 import {
   ArrowDownToLine,
   ArrowUpFromLine,
-  Boxes,
   ChevronRight,
   CircleCheck,
   CircleAlert,
@@ -15,7 +14,6 @@ import {
   Pause,
   Play,
   Redo2,
-  Search,
   SkipBack,
   StepForward,
   Undo2,
@@ -23,17 +21,18 @@ import {
   Save,
 } from 'lucide-react';
 import { ReactFlowProvider } from '@xyflow/react';
-import { graphAt } from './core/graph';
-import { inferGraph, resultAt } from './core/engine';
+import { resolveForwardView } from './core/hierarchy';
+import { inferProject, resultAt } from './core/engine';
 import { shapeText } from './core/types';
 import { registry } from './modules';
-import { example } from './modules/examples';
+import { example, type ExampleKind } from './modules/examples';
 import { useEditor } from './editor/store';
 import { Canvas } from './editor/Canvas';
 import { Inspector } from './editor/Inspector';
+import { ForwardHierarchyHelp } from './editor/ForwardHierarchyHelp';
 import { AgentPanel } from './editor/AgentPanel';
-import { startModuleDrag } from './editor/moduleDrag';
-import { isTensorNode, tone } from './views/ModuleNode';
+import { NodeLibrary } from './editor/NodeLibrary';
+import { isTensorNode } from './views/ModuleNode';
 import './editor/workbench.css';
 import { clipboardText, readClipboard } from './editor/clipboard';
 import { canOpenSourceFile, projectFiles } from './editor/fileActions';
@@ -50,8 +49,7 @@ export default function App() {
   const fileState = useSyncExternalStore(projectFiles.subscribe, projectFiles.getSnapshot);
   const [agentOpen, setAgentOpen] = useState(false);
   const [flowExpanded, setFlowExpanded] = useState(false);
-  const [search, setSearch] = useState(''),
-    [step, setStep] = useState(-1),
+  const [step, setStep] = useState(-1),
     [playing, setPlaying] = useState(false),
     [mobilePane, setMobilePane] = useState('canvas'),
     [libraryVisible, setLibraryVisible] = useState(true),
@@ -76,11 +74,9 @@ export default function App() {
     pathKey = state.path.join('/');
   const openProject = () =>
     canOpenSourceFile ? void projectFiles.open() : fileRef.current?.click();
-  const rootResult = useMemo(
-    () => inferGraph(state.project.graph, registry),
-    [state.project.graph],
-  );
-  const graph = graphAt(state.project.graph, state.path);
+  const rootResult = useMemo(() => inferProject(state.project, registry), [state.project]);
+  const forwardView = resolveForwardView(state.project.graph, state.path);
+  const { graph } = forwardView;
   const result = resultAt(rootResult, state.path) ?? {
     order: [],
     nodes: {},
@@ -186,29 +182,7 @@ export default function App() {
       window.removeEventListener('paste', paste);
     };
   }, []);
-  const categories = [
-    '输入输出',
-    '基础层',
-    '卷积',
-    '循环网络',
-    'Transformer',
-    '维度操作',
-    '分支运算',
-    '归一化',
-    '注意力算子',
-  ];
-  const library = registry
-    .list()
-    .filter((d) =>
-      `${d.label} ${d.type} ${d.description}`.toLowerCase().includes(search.toLowerCase()),
-    );
   const currentStep = step >= 0 ? graph.nodes.find((n) => n.id === order[step]) : undefined;
-  const breadcrumbs = state.path.map((id, i) => ({
-    id,
-    label:
-      graphAt(state.project.graph, state.path.slice(0, i)).nodes.find((n) => n.id === id)?.label ??
-      id,
-  }));
   return (
     <div
       className={`app-shell mobile-pane-${mobilePane} ${libraryVisible ? '' : 'library-hidden'} ${inspectorVisible ? '' : 'inspector-hidden'}`}
@@ -245,8 +219,8 @@ export default function App() {
           <div className="view-actions">
             <button
               className="icon-button"
-              aria-label="切换模块库"
-              title="显示 / 隐藏模块库"
+              aria-label="切换模块库与计算库"
+              title="显示 / 隐藏模块库与计算库"
               aria-pressed={libraryVisible}
               onClick={() => setLibraryVisible((v) => !v)}
             >
@@ -274,7 +248,7 @@ export default function App() {
             className="save-state"
             title={
               fileState.fileName ||
-              (state.hasProject ? '当前项目尚未保存到文件' : '请选择 JSON 文件打开项目')
+              (state.hasProject ? '当前项目尚未保存到文件' : '打开已有项目，或新建项目')
             }
           >
             <span />{' '}
@@ -369,7 +343,7 @@ export default function App() {
           className={mobilePane === 'library' ? 'active' : ''}
           onClick={() => setMobilePane('library')}
         >
-          模块库
+          模块与计算
         </button>
         <button
           className={mobilePane === 'canvas' ? 'active' : ''}
@@ -385,126 +359,36 @@ export default function App() {
         </button>
       </nav>
       <main className="workspace">
-        <aside className="library">
-          <div className="panel-heading">
-            <Boxes size={17} />
-            <h2>模块库</h2>
-            <span className="count-badge">{registry.list().length}</span>
-          </div>
-          <label className="search-field">
-            <Search size={15} />
-            <input
-              ref={searchRef}
-              aria-label="搜索模块"
-              placeholder="搜索模块或操作…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-            <kbd>/</kbd>
-          </label>
-          <p className="library-hint">
-            {state.hasProject ? '拖动模块到画布添加' : '先打开 JSON 文件或新建项目'}
-          </p>
-          <div className="library-scroll">
-            {categories.map((category) => {
-              const modules = library.filter((d) => d.category === category);
-              if (!modules.length) return null;
-              return (
-                <details
-                  className={`module-group tone-${tone(category)}`}
-                  key={category}
-                  open={!!search || ['Transformer', '输入输出'].includes(category)}
-                >
-                  <summary>
-                    <span className="category-dot" />
-                    <span>{category}</span>
-                    <small>{modules.length}</small>
-                  </summary>
-                  <div className="module-items" role="list">
-                    {modules.map((def) => (
-                      <div
-                        key={def.type}
-                        className={`library-module tone-${tone(category)}`}
-                        role="listitem"
-                        tabIndex={0}
-                        aria-label={`${def.label}，拖入画布添加`}
-                        title={def.label}
-                        draggable={state.hasProject}
-                        aria-disabled={!state.hasProject}
-                        onDragStart={(event) => startModuleDrag(event, { type: def.type })}
-                      >
-                        <strong>{def.label}</strong>
-                      </div>
-                    ))}
-                  </div>
-                </details>
-              );
-            })}
-            {!library.length && (
-              <p className="search-empty">没有匹配的模块，试试 Conv1d、LSTM 或 Attention。</p>
-            )}
-            <section className="my-variants">
-              <div className="section-label">
-                我的变体 <span>{state.project.variants.length}</span>
-              </div>
-              {state.project.variants.length ? (
-                <div role="list">
-                  {state.project.variants.map((variant) => (
-                    <div
-                      className="variant-card"
-                      key={variant.id}
-                      role="listitem"
-                      tabIndex={0}
-                      aria-label={`${variant.name}，拖入画布添加`}
-                      title={variant.name}
-                      draggable
-                      onDragStart={(event) =>
-                        startModuleDrag(event, { type: 'Block', variantId: variant.id })
-                      }
-                    >
-                      <span>{variant.name}</span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="variant-placeholder">
-                  调整一个 Transformer，
-                  <br />
-                  把它保存成自己的模块。
-                </div>
-              )}
-            </section>
-          </div>
-          <div className="library-footer">
-            <span className="mode-dot" />
-            <div>
-              <strong>形状模式</strong>
-              <span>无需训练 · 无真实数值</span>
-            </div>
-          </div>
-        </aside>
+        <NodeLibrary searchRef={searchRef} />
         <section className="center-stage">
           <div className="canvas-toolbar">
             <nav className="breadcrumbs" aria-label="模型层级">
-              <button onClick={() => state.navigate([])}>
+              <button
+                aria-current={state.path.length === 0 ? 'page' : undefined}
+                onClick={() => state.navigate([])}
+              >
                 <Network size={14} />
-                模型总览
+                {forwardView.levels[0].title}
               </button>
-              {breadcrumbs.map((crumb, i) => (
-                <span key={crumb.id}>
+              {forwardView.levels.slice(1).map((level, i) => (
+                <span key={level.path.join('/')}>
                   <ChevronRight size={12} />
-                  <button onClick={() => state.navigate(state.path.slice(0, i + 1))}>
-                    {crumb.label}
+                  <button
+                    aria-current={i === state.path.length - 1 ? 'page' : undefined}
+                    onClick={() => state.navigate(level.path)}
+                  >
+                    {level.title}
                   </button>
                 </span>
               ))}
             </nav>
+            <ForwardHierarchyHelp />
             <select
               aria-label="载入示例"
               value=""
               onChange={(e) => {
                 if (e.target.value) {
-                  const project = example(e.target.value as 'transformer' | 'mixed' | 'blank');
+                  const project = example(e.target.value as ExampleKind);
                   project.variants = state.project.variants;
                   state.load(project);
                 }
@@ -516,14 +400,15 @@ export default function App() {
               <option value="transformer">走进 Transformer</option>
               <option value="mixed">Transformer → CNN → LSTM</option>
               <option value="blank">空白画布</option>
+              <option value="pluto-input">PLUTO：data 网络输入</option>
             </select>
           </div>
           <div className="canvas-region">
             {state.hasProject && (
               <div className="canvas-caption">
-                <strong>{breadcrumbs.at(-1)?.label ?? '模型总览'}</strong>
+                <strong>{forwardView.current.title}</strong>
                 <small>
-                  {graph.nodes.length} 个模块 · {graph.edges.length} 条连接
+                  本层 {graph.nodes.length} 个节点 · {graph.edges.length} 条连接
                 </small>
               </div>
             )}
@@ -533,21 +418,31 @@ export default function App() {
             {!state.hasProject && (
               <div className="canvas-empty-state">
                 <div>
-                  <h2>打开 JSON 项目</h2>
-                  <p>选择项目文件，开始查看和编辑架构。</p>
-                  <button
-                    className="primary-button"
-                    disabled={fileState.busy}
-                    onClick={openProject}
-                  >
-                    <ArrowUpFromLine size={16} />
-                    打开 JSON 文件
-                  </button>
+                  <h2>开始绘制架构</h2>
+                  <p>打开已有项目，或新建一个空白项目。</p>
+                  <div className="canvas-empty-actions">
+                    <button
+                      className="primary-button"
+                      disabled={fileState.busy}
+                      onClick={openProject}
+                    >
+                      <ArrowUpFromLine size={16} />
+                      打开项目
+                    </button>
+                    <button
+                      className="soft-button"
+                      disabled={fileState.busy}
+                      onClick={state.newProject}
+                    >
+                      <FilePlus2 size={16} />
+                      新建项目
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
             <div className="canvas-instruction">
-              左键框选 <span>·</span> 中键平移 <span>·</span> 双击组合模块展开
+              左键框选 <span>·</span> 中键平移 <span>·</span> 双击模块进入 forward()
             </div>
           </div>
           {state.hasProject && (

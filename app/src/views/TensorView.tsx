@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import type { NodeResult, TensorSpec } from '../core/types';
-import { isTensorSpec, shapeText } from '../core/types';
+import type { NodeResult, TensorSpec, Port } from '../core/types';
+import { isDictionarySpec, isTensorSpec, isIntegerSpec, shapeText } from '../core/types';
+import { DictionaryTree } from './DictionaryTree';
 
 export function TensorAxes({ spec }: { spec: TensorSpec }) {
   return (
@@ -16,7 +17,7 @@ export function TensorAxes({ spec }: { spec: TensorSpec }) {
   );
 }
 
-export function TensorView({ result }: { result?: NodeResult }) {
+export function TensorView({ result, outputPorts }: { result?: NodeResult; outputPorts?: Port[] }) {
   const [chosen, setChosen] = useState('out');
   if (!result) return <p className="muted">连接输入后，在这里查看 Tensor。</p>;
   const entries = Object.entries(result.outputs);
@@ -25,7 +26,11 @@ export function TensorView({ result }: { result?: NodeResult }) {
   return (
     <section className="tensor-inspector">
       <div className="section-label">
-        {spec && !isTensorSpec(spec) ? '输入结构' : 'TENSOR 观察'}
+        {spec && isIntegerSpec(spec)
+          ? '整数尺寸'
+          : spec && !isTensorSpec(spec)
+            ? '输入结构'
+            : 'TENSOR 观察'}
       </div>
       {!!entries.length && (
         <div className="port-tabs">
@@ -35,12 +40,26 @@ export function TensorView({ result }: { result?: NodeResult }) {
               className={port === key ? 'active' : ''}
               onClick={() => setChosen(key)}
             >
-              {key}
+              {outputPorts?.find((p) => p.id === key)?.label ?? key}
             </button>
           ))}
         </div>
       )}
-      {spec && !isTensorSpec(spec) ? (
+      {spec && isDictionarySpec(spec) ? (
+        <>
+          <div className="container-value-kind">{shapeText(spec)}</div>
+          <DictionaryTree value={spec} />
+          <p className="microcopy">字段结构描述，不包含真实张量数值。</p>
+        </>
+      ) : spec && isIntegerSpec(spec) ? (
+        <>
+          <div className="tensor-shape">{spec.value}</div>
+          <div className="tensor-meta">
+            {typeof spec.value === 'number' ? 'int · 整数尺寸' : 'int · 符号尺寸（尚未确定数值）'}
+          </div>
+          <p className="microcopy">读取张量的轴长度，不是张量元素或零维 Tensor；不参与梯度计算。</p>
+        </>
+      ) : spec && !isTensorSpec(spec) ? (
         <>
           <div className="container-value-kind">{shapeText(spec)}</div>
           <pre className="container-value-text">{spec.text || '未填写内容说明'}</pre>

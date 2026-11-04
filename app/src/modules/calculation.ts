@@ -1,4 +1,5 @@
-import type { ModuleDefinition, TensorSpec } from '../core/types';
+import type { ModuleDefinition, TensorSpec, Params, Hyperparameters } from '../core/types';
+import { resolveIntegerExpression } from '../core/hyperparameters';
 import { axisIndex, requireThat, tensor } from './math';
 import { input, output, num, text } from './primitives';
 
@@ -99,12 +100,36 @@ export function calculate(x: TensorSpec, op: Calculation): TensorSpec {
   return tensor(shape, [...x.axes], x.dtype);
 }
 
+/** Keep the user's expression visible, independently of its current parameter value. */
+export function sliceLabel(params: Params): string {
+  const op = parseCalculations(
+    JSON.stringify([{ op: 'slice', ...params, start: '', stop: '' }]),
+  )[0];
+  requireThat(op.op === 'slice', '需要切片操作。');
+  requireThat(
+    typeof params.start === 'string' && typeof params.stop === 'string',
+    '切片边界应为文本表达式或留空。',
+  );
+  return calculationLabel({ ...op, start: params.start, stop: params.stop });
+}
+
+function resolveSlice(params: Params, hyperparameters?: Hyperparameters): Calculation {
+  const resolve = (value: unknown) =>
+    value === '' ? '' : String(resolveIntegerExpression(value, hyperparameters));
+  return parseCalculations(
+    JSON.stringify([
+      { op: 'slice', ...params, start: resolve(params.start), stop: resolve(params.stop) },
+    ]),
+  )[0];
+}
+
 export const calculationModules: ModuleDefinition[] = [
   {
     type: 'Slice',
     label: '切片 Slice',
     category: '维度操作',
-    description: '沿指定轴切片，默认 [..., :2]；负数边界从轴末尾计数，留空表示起点或终点。',
+    description:
+      '沿指定轴切片，默认 [..., :2]；起止边界支持 history_steps 等超参数表达式，负数从轴末尾计数，留空表示起点或终点。',
     inputs: input,
     outputs: output,
     fields: [
@@ -113,12 +138,16 @@ export const calculationModules: ModuleDefinition[] = [
       text('stop', '结束（不含，留空到末尾）', '2'),
       num('step', '步长', 1),
     ],
-    infer: ({ in: x }, p) => {
-      const op = parseCalculations(JSON.stringify([{ op: 'slice', ...p }]))[0];
+    infer: ({ in: x }, p, context) => {
+      const op = resolveSlice(p, context?.hyperparameters);
       const out = calculate(x, op);
       return {
         outputs: { out },
-        notes: [calculationLabel(op)],
+        notes: [
+          sliceLabel(p) === calculationLabel(op)
+            ? sliceLabel(p)
+            : `${sliceLabel(p)} → ${calculationLabel(op)}`,
+        ],
         warnings: out.shape.some((d) => typeof d === 'string' && d.startsWith('slice('))
           ? ['符号维度的切片长度需要具体尺寸验证。']
           : [],

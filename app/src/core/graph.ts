@@ -9,6 +9,7 @@ export function ports(node: ModelNode, registry: Registry): { inputs: Port[]; ou
     return { inputs: boundary('Inlet'), outputs: boundary('Outlet') };
   }
   const def = registry.get(node.type);
+  if (def?.getPorts) return def.getPorts(node.params);
   return { inputs: def?.inputs ?? [], outputs: def?.outputs ?? [] };
 }
 

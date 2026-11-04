@@ -1,6 +1,7 @@
 import type { Graph, Project, Registry } from './types';
 import { graphIssues } from './graph';
 import { canonicalModuleType } from './inputTypes';
+import { validateHyperparameters } from './hyperparameters';
 function requireThat(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
@@ -26,6 +27,7 @@ export function parseProject(text: string, registry: Registry): Project {
     '项目名称或变体列表无效。',
   );
   let total = 0;
+  if (value.hyperparameters !== undefined) validateHyperparameters(value.hyperparameters);
   const inspect = (candidate: unknown, depth = 0): void => {
     requireThat(depth <= 12, '子图嵌套超过 12 层。');
     requireThat(
@@ -51,17 +53,18 @@ export function parseProject(text: string, registry: Registry): Project {
       const type = canonicalModuleType(node.type);
       if (node.type !== type) {
         node.type = type;
-        if (['字典输入 Dict', '列表输入 List'].includes(node.label)) node.label = 'Forward输入';
+        if (['字典输入 Dict', '列表输入 List'].includes(node.label)) node.label = '网络输入';
       }
       const def = registry.get(type);
       requireThat(def, `尚未注册模块 ${node.type}。`);
       requireThat(
         record(node.params) &&
-          Object.values(node.params).every(
-            (p) =>
+          Object.entries(node.params).every(
+            ([key, p]) =>
               (typeof p === 'number' && Number.isFinite(p)) ||
               typeof p === 'boolean' ||
-              (typeof p === 'string' && p.length < 2000),
+              (typeof p === 'string' &&
+                p.length <= (def.fields.find((f) => f.key === key)?.maxLength ?? 1999)),
           ),
         '节点参数必须是有限数值、开关或短文本。',
       );

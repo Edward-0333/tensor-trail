@@ -20,6 +20,7 @@ import { categoryColor, ModuleNode, type TrailNode } from '../views/ModuleNode';
 import { useEditor } from './store';
 import { MODULE_DRAG_TYPE, readModuleDrag } from './moduleDrag';
 import { EditableEdge, type TrailEdge } from '../views/EditableEdge';
+import { nearbyCalculation, type NodeBounds } from '../core/calculationGroups';
 
 const nodeTypes = { module: ModuleNode };
 const edgeTypes = { editable: EditableEdge };
@@ -52,7 +53,18 @@ export function Canvas({
     pasteCount = useEditor((s) => s.pasteCount),
     path = useEditor((s) => s.path);
   const initialized = useNodesInitialized();
-  const { fitView, screenToFlowPosition } = useReactFlow<TrailNode>();
+  const { fitView, screenToFlowPosition, getNodes } = useReactFlow<TrailNode>();
+  const [mergePreview, setMergePreview] = useState<{ moving: string; target: string } | null>(null);
+  const bounds = (node: TrailNode): NodeBounds => ({
+    id: node.id,
+    position: node.position,
+    width: node.measured?.width ?? 0,
+    height: node.measured?.height ?? 0,
+  });
+  const mergeTarget = (node: TrailNode, moved: TrailNode[], altKey: boolean) =>
+    !altKey && moved.length === 1
+      ? nearbyCalculation(graph, bounds(node), getNodes().map(bounds), registry)
+      : undefined;
   const [dropActive, setDropActive] = useState(false);
   useEffect(() => {
     const clearDrop = () => setDropActive(false);
@@ -165,7 +177,10 @@ export function Canvas({
     <ReactFlow<TrailNode, TrailEdge>
       className={dropActive ? 'module-drop-active' : undefined}
       colorMode={theme}
-      nodes={nodes}
+      nodes={nodes.map((node) => ({
+        ...node,
+        className: mergePreview?.target === node.id ? 'calculation-merge-target' : undefined,
+      }))}
       edges={edges}
       nodeTypes={nodeTypes}
       edgeTypes={edgeTypes}
@@ -197,14 +212,18 @@ export function Canvas({
       onPaneClick={() => useEditor.getState().select(null)}
       onSelectionStart={() => useEditor.getState().select(null)}
       onNodeDoubleClick={(_, node) => node.data.open()}
-      onNodeDragStop={(_, __, moved) => {
-        const positions = new Map(moved.map((node) => [node.id, node.position]));
-        useEditor.getState().edit((current) => {
-          for (const node of current.nodes) {
-            const position = positions.get(node.id);
-            if (position) node.position = { ...position };
-          }
-        }, false);
+      onNodeDragStart={() => setMergePreview(null)}
+      onNodeDrag={(event, node, moved) => {
+        const target = mergeTarget(node, moved, event.altKey);
+        setMergePreview(target ? { moving: node.id, target } : null);
+      }}
+      onNodeDragStop={(event, node, moved) => {
+        const target = mergeTarget(node, moved, event.altKey);
+        setMergePreview(null);
+        useEditor.getState().finishNodeDrag(
+          moved.map((n) => ({ id: n.id, position: n.position })),
+          target ? [node.id, target] : undefined,
+        );
       }}
       onNodesDelete={(deleted) => useEditor.getState().removeNodes(deleted.map((n) => n.id))}
       onEdgesDelete={(deleted) => useEditor.getState().removeEdges(deleted.map((e) => e.id))}
@@ -236,6 +255,11 @@ export function Canvas({
       elevateEdgesOnSelect
     >
       {dropActive && <div className="canvas-drop-hint">松开以添加模块</div>}
+      {mergePreview && (
+        <div className="canvas-merge-hint" role="status">
+          松开合并计算 · 按住 Alt 仅移动
+        </div>
+      )}
       <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="var(--grid)" />
       <Controls showInteractive={false} />
       <MiniMap

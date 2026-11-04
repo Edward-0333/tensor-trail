@@ -1,12 +1,23 @@
 import { create } from 'zustand';
-import type { Graph, ModelEdge, Params, PortLayout, PortSide, Project } from '../core/types';
+import type {
+  Graph,
+  ModelEdge,
+  Params,
+  PortLayout,
+  PortSide,
+  Project,
+  Hyperparameter,
+} from '../core/types';
 import { clone, uid, isTensorSpec } from '../core/types';
 import { graphAt, graphIssues, markAncestors, ports } from '../core/graph';
-import { inferGraph, resultAt } from '../core/engine';
+import { resolveForwardView } from '../core/hierarchy';
+import { inferProject, resultAt } from '../core/engine';
+import { checkHyperparameterName } from '../core/hyperparameters';
 import { parseProject, serializeProject } from '../core/serialization';
 import { registry } from '../modules';
 import { dimensions } from '../modules/math';
 import { copySelection, duplicateSelection } from './clipboard';
+import { mergeCalculations, splitCalculationGroup } from '../core/calculationGroups';
 const initial = {
   project: {
     schemaVersion: 1,
@@ -15,7 +26,7 @@ const initial = {
     variants: [],
   } as Project,
   documentId: uid(),
-  notice: '请选择 JSON 文件打开项目，或新建一个项目。',
+  notice: '请打开项目，或新建一个项目。',
 };
 // File associations follow a document through edits and undo, but never enter exported JSON.
 const documentIds = new WeakMap<Project, string>();
@@ -51,6 +62,7 @@ interface EditorState {
   toast: (message: string) => void;
   edit: (fn: (graph: Graph, project: Project) => void, semantic?: boolean) => boolean;
   setParam: (id: string, key: string, value: Params[string]) => void;
+  setHyperparameter: (name: string, value?: Hyperparameter) => boolean;
   setPortSide: (id: string, kind: keyof PortLayout, side: PortSide | 'auto') => void;
   renameNode: (id: string, name: string) => void;
   renameProject: (name: string) => void;
@@ -60,6 +72,11 @@ interface EditorState {
   removeEdges: (ids: string[]) => void;
   setEdgeWaypoints: (id: string, points?: ModelEdge['waypoints']) => void;
   move: (id: string, position: { x: number; y: number }) => void;
+  finishNodeDrag: (
+    positions: { id: string; position: { x: number; y: number } }[],
+    merge?: [string, string],
+  ) => void;
+  splitCalculation: (id: string) => void;
   replace: (id: string, type: string) => void;
   saveVariant: (name: string) => void;
   undo: () => void;
@@ -91,7 +108,14 @@ export const useEditor = create<EditorState>((set, get) => ({
     if (JSON.stringify(ids) !== JSON.stringify(get().selectedIds))
       set({ selected: ids[0] ?? null, selectedIds: ids });
   },
-  navigate: (path) => set({ path, selected: null, selectedIds: [] }),
+  navigate: (path) => {
+    try {
+      resolveForwardView(get().project.graph, path);
+      set({ path: [...path], selected: null, selectedIds: [] });
+    } catch (e) {
+      set({ notice: (e as Error).message });
+    }
+  },
   newProject: () => {
     get().load({
       schemaVersion: 1,
@@ -156,7 +180,7 @@ export const useEditor = create<EditorState>((set, get) => ({
   toast: (notice) => set({ notice }),
   edit: (fn, semantic = true) => {
     if (!get().hasProject) {
-      set({ notice: '请先打开 JSON 文件或新建项目。' });
+      set({ notice: '请先打开项目或新建项目。' });
       return false;
     }
     const { project, path, past } = get();
@@ -177,6 +201,14 @@ export const useEditor = create<EditorState>((set, get) => ({
       return false;
     }
   },
+  setHyperparameter: (name, value) =>
+    get().edit((_, project) => {
+      checkHyperparameterName(name);
+      const parameters = { ...project.hyperparameters };
+      if (value) parameters[name] = value;
+      else delete parameters[name];
+      project.hyperparameters = parameters;
+    }, false),
   setParam: (id, key, value) =>
     get().edit((graph) => {
       if (typeof value === 'number' && !Number.isFinite(value)) throw new Error('请输入有限数值。');
@@ -236,9 +268,8 @@ export const useEditor = create<EditorState>((set, get) => ({
       const node = variant
         ? registry.fromVariant(variant.name, variant.graph)
         : registry.create(type);
-      const specs = resultAt(inferGraph(project.graph, registry), get().path)?.nodes[
-        source?.id ?? ''
-      ]?.outputs;
+      const specs = resultAt(inferProject(project, registry), get().path)?.nodes[source?.id ?? '']
+        ?.outputs;
       const sourcePort = source ? ports(source, registry).outputs[0]?.id : undefined;
       const spec = specs?.[sourcePort ?? ''];
       if (spec && isTensorSpec(spec) && !variant) {
@@ -306,6 +337,36 @@ export const useEditor = create<EditorState>((set, get) => ({
       const node = graph.nodes.find((n) => n.id === id);
       if (node) node.position = position;
     }, false),
+  finishNodeDrag: (positions, merge) => {
+    let merged: string | undefined;
+    const committed = get().edit((graph) => {
+      for (const item of positions) {
+        const node = graph.nodes.find((n) => n.id === item.id);
+        if (node) node.position = { ...item.position };
+      }
+      if (merge) merged = mergeCalculations(graph, merge[0], merge[1], registry);
+    }, !!merge);
+    if (committed && merged)
+      set({
+        selected: merged,
+        selectedIds: [merged],
+        notice: '已合并计算节点；双击编辑内部操作，Ctrl+Z 撤销，属性面板可拆开组合。',
+      });
+  },
+  splitCalculation: (id) => {
+    let ids: string[] = [];
+    if (
+      get().edit((graph) => {
+        ids = splitCalculationGroup(graph, id);
+      })
+    )
+      set({
+        selected: ids[0] ?? null,
+        selectedIds: ids,
+        pasteCount: get().pasteCount + 1,
+        notice: '已拆开计算组合，恢复各操作与连接。',
+      });
+  },
   replace: (id, type) =>
     get().edit((graph) => {
       const index = graph.nodes.findIndex((n) => n.id === id),

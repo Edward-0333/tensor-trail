@@ -18,8 +18,8 @@ function connected(
   };
 }
 
-describe('Forward 输入与旧输入兼容', () => {
-  it('模块库只保留 Forward 输入，默认节点只有名称和可选备注', () => {
+describe('网络输入与旧输入兼容', () => {
+  it('文字型网络输入仍使用 ForwardInput 类型，默认节点只有名称和可选备注', () => {
     expect(
       registry
         .list()
@@ -27,8 +27,8 @@ describe('Forward 输入与旧输入兼容', () => {
         .map((def) => def.type),
     ).toEqual(['ForwardInput']);
     const node = registry.create('ForwardInput');
-    expect(node.label).toBe('Forward输入');
-    expect(node.params).toEqual({ text: '' });
+    expect(node.label).toBe('网络输入');
+    expect(node.params).toEqual({ schema: '', text: '' });
   });
   it('打开旧项目会合并根图、子图和变体中的输入，保留自定义名称、备注和连线', () => {
     const graph = connected();
@@ -72,7 +72,7 @@ describe('Forward 输入与旧输入兼容', () => {
     expect(migrated.graph.nodes[0]).toMatchObject({
       id: 'data',
       type: 'ForwardInput',
-      label: 'Forward输入',
+      label: '网络输入',
       tensorColor: '#172033',
       params: { text: '自由描述，不要求是 JSON' },
       portLayout: { output: 'bottom' },
@@ -88,13 +88,13 @@ describe('Forward 输入与旧输入兼容', () => {
     expect(project.graph.nodes[0].type).toBe('DictInput');
   });
   it.each([
-    ['ForwardInput', 'forward', 'Forward输入'],
-    ['DictInput', 'forward', 'Forward输入'],
-    ['ListInput', 'forward', 'Forward输入'],
+    ['ForwardInput', 'forward', '网络输入'],
+    ['DictInput', 'forward', '网络输入'],
+    ['ListInput', 'forward', '网络输入'],
   ])('%s 无需任何形状参数，文本可以留空或自由填写', (type, kind, label) => {
     for (const text of ['', 'forward(batch)\n图像、掩码和其他信息', '<b>作为普通文字显示</b>']) {
       const node = registry.create(type, { text }, 'data');
-      expect(Object.keys(node.params)).toEqual(['text']);
+      expect(node.params.schema).toBe('');
       const result = inferGraph({ nodes: [node], edges: [] }, registry).nodes.data;
       expect(result.status).toBe('ok');
       expect(result.outputs.out).toEqual({ kind, text });
@@ -136,7 +136,7 @@ describe('Forward 输入与旧输入兼容', () => {
       const result = inferGraph(graph, registry);
       expect(result.nodes.data.status).toBe('ok');
       expect(result.nodes.next.status).toBe('error');
-      expect(result.nodes.next.messages[0]).toContain('Forward输入');
+      expect(result.nodes.next.messages[0]).toContain('网络输入');
       expect(result.nodes.next.messages[0]).toContain('需要 Tensor');
       expect(result.nodes.next.outputs).toEqual({});
       expect(result.nodes.output.status).toBe('blocked');
@@ -181,7 +181,7 @@ describe('Forward 输入与旧输入兼容', () => {
     });
     const result = inferGraph(graph, registry);
     expect(result.nodes.next.status).toBe('error');
-    expect(result.nodes.next.child!.nodes.linear.messages[0]).toContain('Forward输入');
+    expect(result.nodes.next.child!.nodes.linear.messages[0]).toContain('网络输入');
     expect(tensorValue(result.nodes.linear.outputs.out).shape).toEqual([8, 100, 64]);
   });
   it('内容说明、名称、背景、端口方向及位置可保存、重开和复制', () => {

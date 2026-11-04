@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { registry } from '../src/modules';
-import { calculate, parseCalculations, type Calculation } from '../src/modules/calculation';
+import {
+  calculate,
+  parseCalculations,
+  sliceLabel,
+  type Calculation,
+} from '../src/modules/calculation';
 import { buildModel, describeModules } from '../src/agent';
 import type { TensorSpec } from '../src/core/types';
 
@@ -19,6 +24,36 @@ const slice = (values: Partial<Extract<Calculation, { op: 'slice' }>> = {}): Cal
 });
 
 describe('切片与计算操作', () => {
+  it('PLUTO 历史掩码切片跟随 history_steps，保留 bool 类型与表达式显示', () => {
+    const rule = registry.get('Slice')!.infer!;
+    const params = { dim: 2, start: '', stop: 'self.history_steps', step: 1 };
+    for (const steps of [21, 10, 0, 120]) {
+      const result = rule({ in: spec([2, 49, 101], 'bool') }, params, {
+        hyperparameters: { history_steps: { type: 'int', value: steps } },
+      });
+      expect(result.outputs.out).toEqual(spec([2, 49, Math.min(101, steps)], 'bool'));
+    }
+    expect(sliceLabel(params)).toBe('[轴2: :self.history_steps]');
+    expect(
+      rule(
+        { in: spec([2, 49, 101], 'bool') },
+        { ...params, start: 'history_steps - 3', stop: 'history_steps' },
+        { hyperparameters: { history_steps: { type: 'int', value: 21 } } },
+      ).outputs.out.shape,
+    ).toEqual([2, 49, 3]);
+  });
+  it.each(['missing', '1.5', 'history_steps / 2', 'history_steps()', '1;alert(1)'])(
+    '拒绝切片的无效或非整数边界 %s',
+    (stop) => {
+      expect(() =>
+        registry.get('Slice')!.infer!(
+          { in: spec([2, 49, 101]) },
+          { dim: 2, start: '', stop, step: 1 },
+          { hyperparameters: { history_steps: { type: 'int', value: 21 } } },
+        ),
+      ).toThrow();
+    },
+  );
   it('默认 [..., :2] 只裁剪最后一维，并保留轴名称', () => {
     const input = spec([8, 100, 64]);
     expect(calculate(input, slice())).toEqual({ ...input, shape: [8, 100, 2] });

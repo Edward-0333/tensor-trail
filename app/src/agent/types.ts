@@ -1,4 +1,4 @@
-import type { Params, Project, ValueSpec } from '../core/types';
+import type { Params, Project, ValueSpec, Hyperparameters } from '../core/types';
 
 export interface RecipeNode {
   id: string;
@@ -14,6 +14,7 @@ export interface RecipeGraph {
 export interface Recipe extends RecipeGraph {
   recipeVersion?: 1;
   name: string;
+  hyperparameters?: Hyperparameters;
 }
 export type Operation =
   | { op: 'add_node'; path?: string[]; node: RecipeNode }

@@ -113,7 +113,7 @@ export class ProjectFiles {
     let writable: Awaited<ReturnType<ProjectFile['createWritable']>> | undefined;
     try {
       if (doc.hasProject === false) {
-        this.host.toast('请先打开 JSON 文件或新建项目。');
+        this.host.toast('请先打开项目或新建项目。');
         return;
       }
       let handle = saveAs ? undefined : previous?.handle;
