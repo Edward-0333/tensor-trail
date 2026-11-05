@@ -66,7 +66,9 @@ export interface ModelNode {
   position: { x: number; y: number };
   portLayout?: PortLayout;
   tensorColor?: string;
-  /** Called module's forward body or an explicitly merged calculation group. */
+  /** Another placement of the same value, owned by a canonical node in this graph. */
+  valueSource?: string;
+  /** Called module's forward, a helper function body, or an explicitly merged calculation group. */
   subgraph?: Graph;
   customized?: boolean;
 }
@@ -77,6 +79,8 @@ export interface ModelEdge {
   target: string;
   targetPort: string;
   waypoints?: { x: number; y: number }[];
+  /** Label anchor as a fraction of the routed line's length, from source (0) to target (1). */
+  labelPosition?: number;
 }
 export interface Graph {
   nodes: ModelNode[];
@@ -93,6 +97,8 @@ export interface ModuleDefinition {
   category: string;
   description: string;
   fields: Field[];
+  /** Fields relevant to the active mode; inactive settings remain stored for switching back. */
+  getFields?: (params: Params) => Field[];
   inputs: Port[];
   outputs: Port[];
   /** Optional parameter-dependent ports. IDs must remain stable while labels change. */

@@ -12,7 +12,7 @@ export const calculationLabel = (op: Calculation) =>
   op.op === 'invert'
     ? '~'
     : op.op === 'any'
-      ? `any(${op.dim ?? ''}${op.keepdim ? ', keepdim' : ''})`
+      ? `any(${[...(op.dim === null ? [] : [op.dim]), ...(op.keepdim ? ['keepdim=True'] : [])].join(', ')})`
       : `${op.dim === -1 ? '[..., ' : `[轴${op.dim}: `}${op.start}:${op.stop}${op.step === 1 ? '' : `:${op.step}`}]`;
 
 function bound(value: unknown): string {
@@ -67,21 +67,30 @@ export function parseCalculations(value: unknown): Calculation[] {
 export function calculate(x: TensorSpec, op: Calculation): TensorSpec {
   if (op.op === 'invert') {
     requireThat(
-      ['bool', 'int64'].includes(x.dtype),
-      '~ 取反需要 bool 或 int64 输入；浮点 Tensor 不支持按位取反。',
+      ['bool', 'int64', 'int32', 'int16', 'int8', 'uint8'].includes(x.dtype),
+      '~ 取反需要 bool 或整数输入；浮点 Tensor 不支持按位取反。',
     );
     return structuredClone(x);
   }
   if (op.op === 'any') {
+    // PyTorch preserves uint8 for this legacy dtype; other inputs produce bool.
+    const dtype = x.dtype === 'uint8' ? 'uint8' : 'bool';
+    if (x.shape.length === 0) {
+      requireThat(
+        op.dim === null || op.dim === 0 || op.dim === -1,
+        '标量 any 的轴只支持 0、-1 或全部轴。',
+      );
+      return tensor([], [], dtype);
+    }
     if (op.dim === null)
-      return tensor(op.keepdim ? x.shape.map(() => 1) : [], op.keepdim ? [...x.axes] : [], 'bool');
+      return tensor(op.keepdim ? x.shape.map(() => 1) : [], op.keepdim ? [...x.axes] : [], dtype);
     const axis = axisIndex(op.dim, x.shape.length);
     return tensor(
       op.keepdim
         ? x.shape.map((d, i) => (i === axis ? 1 : d))
         : x.shape.filter((_, i) => i !== axis),
       op.keepdim ? [...x.axes] : x.axes.filter((_, i) => i !== axis),
-      'bool',
+      dtype,
     );
   }
   requireThat(x.shape.length > 0, '标量 Tensor 没有可切片的轴。');

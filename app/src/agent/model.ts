@@ -11,6 +11,8 @@ import {
 import { graphAt, markAncestors, orderGraph } from '../core/graph';
 import { inferProject } from '../core/engine';
 import { parseProject, serializeProject } from '../core/serialization';
+import { syncValueLinks, valueOwner } from '../core/valueLinks';
+import { removeValueNodes } from '../editor/valueLinkEditing';
 import { identifierPattern } from './catalog';
 import type { DefaultApplied, Diagnostic, ModelResponse } from './types';
 
@@ -54,12 +56,17 @@ function params(type: string, value: unknown, path: string[]): Params {
   const d = registry.get(type);
   if (!d) fail('UNKNOWN_MODULE', `未知模块 ${type}；请先调用 describeModules。`, path);
   const p = record(value, 'params');
+  const effective = {
+    ...Object.fromEntries(d.fields.map((f) => [f.key, f.default])),
+    ...p,
+  } as Params;
+  const active = new Set((d.getFields?.(effective) ?? d.fields).map((f) => f.key));
   for (const [k, v] of Object.entries(p)) {
     const f = d.fields.find((field) => field.key === k);
     if (!f) fail('UNKNOWN_PARAMETER', `${type} 没有参数 ${k}。`, path, k);
     const valid =
       f.kind === 'number'
-        ? typeof v === 'number' && Number.isSafeInteger(v) && v >= (f.min ?? 1)
+        ? typeof v === 'number' && Number.isSafeInteger(v) && (!active.has(k) || v >= (f.min ?? 1))
         : f.kind === 'boolean'
           ? typeof v === 'boolean'
           : f.kind === 'select'
@@ -205,7 +212,8 @@ function inspect(project: Project): ModelResponse {
             message,
           });
       if (n.subgraph && r.child) walk(n.subgraph, r.child, at);
-      if (!path.length && n.type === 'Output' && r.inputs.in) response.outputs[n.id] = r.inputs.in;
+      if (!path.length && n.type === 'Output' && !n.valueSource && r.inputs.in)
+        response.outputs[n.id] = r.inputs.in;
     }
   };
   walk(project.graph, inferProject(project, registry), []);
@@ -314,19 +322,19 @@ export function patchModel(value: unknown, patch: unknown): ModelResponse {
         layouts.set(JSON.stringify(path), path);
       } else if (op.op === 'remove_node') {
         const node = find();
-        if (['Inlet', 'Outlet'].includes(node.type))
+        if (!node.valueSource && ['Inlet', 'Outlet'].includes(node.type))
           fail('PROTECTED_BOUNDARY', '不能删除子图边界节点。', [...path, node.id]);
-        g.nodes = g.nodes.filter((n) => n.id !== node.id);
-        g.edges = g.edges.filter((e) => e.source !== node.id && e.target !== node.id);
+        removeValueNodes(project.graph, path, [node.id]);
       } else if (op.op === 'set_params') {
-        const node = find(),
-          at = [...path, node.id];
+        const requested = find(),
+          node = valueOwner(g, requested),
+          at = [...path, requested.id];
         if (node.subgraph && node.customized)
           fail('CUSTOMIZED_COMPOSITE', '此组合模块已手动修改，请用 path 修改内部算子。', at);
         Object.assign(node.params, params(node.type, op.params, at));
         const def = registry.get(node.type)!;
         if (def.build) node.subgraph = def.build(node.params);
-      } else if (op.op === 'rename_node') find().label = name(op.label);
+      } else if (op.op === 'rename_node') valueOwner(g, find()).label = name(op.label);
       else if (op.op === 'connect' || op.op === 'disconnect') {
         let i = 0;
         while (g.edges.some((e) => e.id === `edge_${i}`)) i++;
@@ -346,6 +354,7 @@ export function patchModel(value: unknown, patch: unknown): ModelResponse {
       if (countNodes(project.graph) > 2000) fail('LIMIT_EXCEEDED', '展开后的节点数不能超过 2000。');
     }
     // Validate only the complete transaction: disconnect + reconnect may be temporarily incomplete.
+    syncValueLinks(project.graph);
     const checked = checkedProject(project);
     for (const path of layouts.values()) layoutGraph(graphAt(checked.graph, path));
     return { ...inspect(checked), defaultsApplied: defaults };

@@ -120,7 +120,7 @@ describe('切片与计算操作', () => {
   it('符号维度产生待验证警告，轴越界会报错', () => {
     const node = registry.create('Slice');
     expect(
-      registry.get('Slice')!.infer!({ in: spec(['B', 'T']) }, node.params).warnings?.length,
+      registry.get(node.type)!.infer!({ in: spec(['B', 'T']) }, node.params).warnings?.length,
     ).toBeGreaterThan(0);
     expect(() => calculate(spec([2, 3]), slice({ dim: 4 }))).toThrow('范围');
   });
@@ -149,6 +149,9 @@ describe('切片与计算操作', () => {
     });
     expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
     expect(result.outputs.y).toEqual({ shape: [2], axes: ['batch'], dtype: 'bool' });
-    expect(describeModules().modules.some((m) => m.type === 'Slice')).toBe(true);
+    expect(
+      describeModules().modules.some((m) => m.type === 'TensorIndex' && m.label === '索引与切片'),
+    ).toBe(true);
+    expect(describeModules().modules.some((m) => m.type === 'Slice')).toBe(false);
   });
 });

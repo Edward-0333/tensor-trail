@@ -13,7 +13,12 @@ export function IndexExpressionField({ node, field }: { node: ModelNode; field: 
   let preview: string;
   let invalid = false;
   try {
-    preview = `解析结果：${resolveIntegerExpression(draft, parameters)}`;
+    preview =
+      draft === '' && ['start', 'stop'].includes(field.key)
+        ? field.key === 'start'
+          ? '从该轴起点开始'
+          : '取到该轴末尾'
+        : `解析结果：${resolveIntegerExpression(draft, parameters)}`;
   } catch (error) {
     preview = (error as Error).message;
     invalid = true;

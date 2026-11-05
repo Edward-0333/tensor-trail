@@ -8,8 +8,9 @@ import type {
   Hyperparameters,
   Project,
 } from './types';
-import { isTensorSpec, shapeText } from './types';
+import { clone, isTensorSpec, shapeText } from './types';
 import { graphIssues, orderGraph, ports } from './graph';
+import { normalizeTensorSelection } from './indexingTypes';
 
 export function inferGraph(
   graph: Graph,
@@ -28,13 +29,33 @@ export function inferGraph(
   result.order = orderGraph(graph);
   const byId = new Map(graph.nodes.map((n) => [n.id, n]));
   for (const id of result.order) {
-    const node = byId.get(id)!;
+    const stored = byId.get(id)!;
+    // Also accept legacy nodes passed directly to inference, without mutating the graph.
+    const node = { ...stored, ...normalizeTensorSelection(stored.type, stored.params) };
     const r: NodeResult = { status: 'ok', inputs: {}, outputs: {}, messages: [], notes: [] };
     result.nodes[id] = r;
     const def = registry.get(node.type);
     if (!def) {
       r.status = 'error';
       r.messages.push(`尚未注册 ${node.type} 的形状规则。`);
+      continue;
+    }
+    if (node.valueSource !== undefined) {
+      const owner = result.nodes[node.valueSource];
+      if (!owner || owner.status === 'error' || owner.status === 'blocked') {
+        r.status = 'blocked';
+        r.messages = [
+          `共享值来源 ${byId.get(node.valueSource)?.label ?? node.valueSource} 暂无有效结果。`,
+          ...(owner?.messages ?? []),
+        ];
+      } else {
+        r.status = owner.status;
+        r.inputs = clone(owner.inputs);
+        r.outputs = clone(owner.outputs);
+        r.messages = [...owner.messages];
+        r.notes = [...owner.notes, '与来源节点共享同一值；解除链接后可独立修改。'];
+      }
+      // A boundary alias is another local view, never an extra parent interface.
       continue;
     }
     for (const edge of graph.edges.filter((e) => e.target === id)) {
@@ -55,7 +76,7 @@ export function inferGraph(
       continue;
     }
     try {
-      for (const f of def.fields) {
+      for (const f of def.getFields?.(node.params) ?? def.fields) {
         // Customized composites derive their semantics solely from their concrete child graph.
         if (node.customized && node.subgraph) break;
         const value = node.params[f.key];
@@ -116,7 +137,11 @@ export function inferGraph(
           );
           r.messages.push(...new Set(warnings));
           r.notes = ['输入输出来自内部子图。双击模块可逐层查看。'];
-          if (!Object.keys(r.outputs).length) throw new Error('子图没有可用的 Outlet 输出。');
+          if (!Object.keys(r.outputs).length) {
+            if (node.type === 'Submodule' && !node.subgraph.nodes.some((n) => n.type === 'Outlet'))
+              r.messages.push('子模块内部流程待完善，尚未定义输出。');
+            else throw new Error('子图没有可用的 Outlet 输出。');
+          }
         }
       } else if (passthrough) {
         r.outputs = { out: r.inputs.in };

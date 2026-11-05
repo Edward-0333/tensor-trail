@@ -8,12 +8,19 @@ import { PortHandles } from './PortHandles';
 import { useEditor } from '../editor/store';
 import { parseCalculations, calculationLabel, sliceLabel } from '../modules/calculation';
 import { isContainerInput } from '../modules/containers';
-import { parseFieldPath } from '../modules/indexing';
+import { parseFieldPath, tensorIndexLabel } from '../modules/indexing';
 import { orderGraph } from '../core/graph';
+import { unsqueezeLabel } from '../modules/unsqueeze';
+import { anyLabel } from '../modules/logical';
+import { castLabel } from '../modules/cast';
+import { viewLabel } from '../modules/featureMath';
+import { functionTitle } from '../core/hierarchy';
+import type { LocalParameterColor } from './localParameterColors';
 
 export type TrailNode = Node<
   {
     model: ModelNode;
+    localParameterColor?: LocalParameterColor;
     result?: NodeResult;
     inputs: Port[];
     outputs: Port[];
@@ -36,7 +43,7 @@ export const tone = (category: string) =>
           ? 'teal'
           : category === '归一化'
             ? 'green'
-            : ['维度操作', '索引与切片', '形状查询'].includes(category)
+            : ['维度操作', '索引与切片', '形状查询', '数学运算', '逻辑与归约'].includes(category)
               ? 'sky'
               : category === '分支运算'
                 ? 'pink'
@@ -47,14 +54,35 @@ export const categoryColor = (category: string) => `var(--category-${tone(catego
 export const isTensorNode = (type: string) =>
   ['Input', 'Output', 'Inlet', 'Outlet', 'TensorVariable'].includes(type);
 
+const elementwiseLabels: Record<string, string> = {
+  BitwiseAnd: '&',
+  Subtract: '−',
+  Where: 'where',
+  ZerosLike: 'zeros_like',
+  AlignTrailingDims: '尾部补维',
+};
+const featureOperations = ['Cos', 'Sin', 'IntegerMultiply', 'View', 'Flatten'];
+
 function operationText(node: ModelNode): string {
   try {
+    if (elementwiseLabels[node.type]) return elementwiseLabels[node.type];
+    if (node.type === 'Cos') return 'cos()';
+    if (node.type === 'Sin') return 'sin()';
+    if (node.type === 'IntegerMultiply') return '× int';
+    if (node.type === 'View') return viewLabel(node.params);
+    if (node.type === 'Flatten')
+      return `flatten(${node.params.start_dim ?? 1}, ${node.params.end_dim ?? -1})`;
+    if (node.type === 'ToVector') return functionTitle(node.label);
     if (node.type === 'DictionaryGet')
       return parseFieldPath(node.params.path)
         .map((key) => `[${JSON.stringify(key)}]`)
         .join('');
     if (node.type === 'Slice') return sliceLabel(node.params);
-    if (node.type === 'TensorIndex') return `轴 ${node.params.dim} · 索引 ${node.params.index}`;
+    if (node.type === 'TensorIndex') return tensorIndexLabel(node.params);
+    if (node.type === 'Unsqueeze') return unsqueezeLabel(node.params);
+    if (node.type === 'Any') return anyLabel(node.params);
+    if (node.type === 'Invert') return '~';
+    if (node.type === 'Cast') return castLabel(node.params);
     if (node.type === 'TensorSize') return `shape · 读取轴 ${node.params.axes}`;
     if (node.type === 'Compute')
       return parseCalculations(node.params.operations).map(calculationLabel).join(' › ');
@@ -90,6 +118,10 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
   );
   const inputSide = model.portLayout?.input ?? (data.reverse ? 'right' : 'left');
   const outputSide = model.portLayout?.output ?? (data.reverse ? 'left' : 'right');
+  const sideCount = (side: string) =>
+    (inputSide === side ? inputs.length : 0) + (outputSide === side ? outputs.length : 0);
+  const verticalPorts = Math.max(sideCount('left'), sideCount('right'));
+  const horizontalPorts = Math.max(sideCount('top'), sideCount('bottom'));
   const updateNodeInternals = useUpdateNodeInternals();
   useEffect(() => {
     updateNodeInternals(model.id);
@@ -99,13 +131,18 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
   if (model.type === 'LocalParameter')
     return (
       <div
-        className={`local-parameter-node tone-orange ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
+        className={`local-parameter-node tone-orange ${data.localParameterColor && data.localParameterColor.count > 1 ? 'distinct-local-parameter' : ''} ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
         data-testid={`node-${model.id}`}
         aria-label={`局部参数 ${model.label}`}
+        style={
+          data.localParameterColor
+            ? ({ '--local-parameter-tone': data.localParameterColor.color } as CSSProperties)
+            : undefined
+        }
         title={
           bad
             ? result?.messages.join('\n')
-            : `${model.label} · ${shapeText(result?.outputs.out)} · 双击修改名称`
+            : `${model.label} · ${shapeText(result?.outputs.out)}${data.localParameterColor && data.localParameterColor.count > 1 ? ` · 同名独立定义 ${data.localParameterColor.index + 1}/${data.localParameterColor.count} · 来源 ${data.localParameterColor.ownerId}` : ''} · 双击修改名称`
         }
       >
         <PortHandles
@@ -155,10 +192,10 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
         )}
       </div>
     );
-  if (container)
+  if (container || model.type === 'Inlet')
     return (
       <div
-        className={`${model.type === 'DictionaryInput' ? 'dictionary-input-node' : 'tensor-node forward-input-node'} ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
+        className={`${model.type === 'DictionaryInput' ? 'dictionary-input-node' : 'tensor-node forward-input-node'} ${model.type === 'Inlet' ? 'module-input-node' : ''} ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
         data-testid={`node-${model.id}`}
         style={
           background
@@ -176,7 +213,7 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
         {editing ? (
           <textarea
             className="forward-input-editor nodrag nopan nowheel"
-            aria-label="编辑网络输入名称"
+            aria-label={model.type === 'Inlet' ? '编辑模块输入名称' : '编辑网络输入名称'}
             autoFocus
             defaultValue={model.label}
             maxLength={200}
@@ -295,6 +332,127 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
     );
   }
 
+  if (model.type === 'Submodule') {
+    const pending = outputs.length === 0;
+    const bodyHeight = Math.max(48, Math.max(inputs.length, outputs.length) * 24 + 24);
+    const hasTop = inputSide === 'top' || (outputs.length > 0 && outputSide === 'top');
+    const hasBottom = inputSide === 'bottom' || (outputs.length > 0 && outputSide === 'bottom');
+    return (
+      <div
+        className={`module-node submodule-node tone-${tone(data.category)} ${hasTop ? 'has-top-ports' : ''} ${hasBottom ? 'has-bottom-ports' : ''} ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
+        data-testid={`node-${model.id}`}
+        aria-label={`子模块 ${model.label}`}
+        title={`双击进入 ${model.label} 的 forward()`}
+      >
+        <div className="node-heading">
+          <div className="node-title">
+            <strong className="node-kind">{model.label}</strong>
+          </div>
+          <ArrowUpRight className="node-expand-icon" size={15} />
+        </div>
+        <div
+          className={`submodule-body ${pending ? 'pending' : ''}`}
+          style={{ minHeight: bodyHeight }}
+        >
+          {bad ? '查看输入或内部提示' : pending ? '内部流程待完善' : '子模块 · forward()'}
+        </div>
+        <PortHandles
+          inputs={inputs}
+          outputs={outputs}
+          inputSide={inputSide}
+          outputSide={outputSide}
+          horizontalArea={{ top: 3 + (hasTop ? 60 : 47), height: bodyHeight }}
+        />
+        <div className="node-footer">
+          <button className="nodrag" onClick={data.open}>
+            进入 forward() <ChevronRight size={12} />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (model.type === 'IntegerParameter') {
+    return (
+      <div
+        className={`compact-operation-node tone-orange ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
+        data-testid={`node-${model.id}`}
+        title={
+          bad ? result?.messages.join('\n') : `${model.params.expression} → ${shapeText(spec)}`
+        }
+      >
+        <PortHandles
+          inputs={inputs}
+          outputs={outputs}
+          inputSide={inputSide}
+          outputSide={outputSide}
+          labels={false}
+        />
+        <code>{model.label}</code>
+      </div>
+    );
+  }
+
+  if (model.type === 'ToVector') {
+    return (
+      <div
+        className={`compact-operation-node function-node to-vector-node tone-${tone(data.category)} ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
+        data-testid={`node-${model.id}`}
+        aria-label={`函数：${functionTitle(model.label)}，双击进入函数`}
+        title={
+          bad
+            ? `${functionTitle(model.label)}\n${result?.messages.join('\n')}`
+            : `${functionTitle(model.label)} · 双击进入函数`
+        }
+        style={{
+          minHeight: Math.max(
+            44,
+            ((inputSide === outputSide
+              ? inputs.length + outputs.length
+              : Math.max(inputs.length, outputs.length)) +
+              1) *
+              14,
+          ),
+        }}
+      >
+        <PortHandles
+          inputs={inputs}
+          outputs={outputs}
+          inputSide={inputSide}
+          outputSide={outputSide}
+          labels={false}
+        />
+        <span className="function-symbol" aria-hidden="true">
+          ƒ
+        </span>
+        <strong>{model.label}</strong>
+      </div>
+    );
+  }
+
+  if (model.type === 'Function') {
+    return (
+      <div
+        className={`compact-operation-node function-node tone-${tone(data.category)} ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
+        data-testid={`node-${model.id}`}
+        aria-label={`函数：${model.label}`}
+        title={`${model.label} · 在右侧查看和编辑数学公式`}
+      >
+        <PortHandles
+          inputs={inputs}
+          outputs={outputs}
+          inputSide={inputSide}
+          outputSide={outputSide}
+          labels={false}
+        />
+        <span className="function-symbol" aria-hidden="true">
+          ƒ
+        </span>
+        <strong>{model.label}</strong>
+      </div>
+    );
+  }
+
   if (model.type === 'TensorSize') {
     return (
       <div
@@ -325,22 +483,88 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
     );
   }
 
-  if (model.type === 'DictionaryGet' || model.type === 'Slice') {
+  if (featureOperations.includes(model.type)) {
+    const expression = operationText(model);
+    return (
+      <div
+        className={`compact-operation-node feature-operation-node tone-${tone(data.category)} ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
+        data-testid={`node-${model.id}`}
+        aria-label={`${model.label}：${expression}`}
+        title={
+          bad ? `${expression}\n${result?.messages.join('\n')}` : `${model.label} · ${expression}`
+        }
+        style={{
+          minHeight: Math.max(34, (verticalPorts + 1) * 14),
+          minWidth: Math.max(64, (horizontalPorts + 1) * 16),
+        }}
+      >
+        <PortHandles
+          inputs={inputs}
+          outputs={outputs}
+          inputSide={inputSide}
+          outputSide={outputSide}
+          labels={false}
+        />
+        <code>{expression}</code>
+      </div>
+    );
+  }
+
+  if (['Any', 'Invert', 'Cast'].includes(model.type) || elementwiseLabels[model.type]) {
+    const expression = operationText(model);
+    return (
+      <div
+        className={`compact-operation-node ${model.type === 'Invert' ? 'invert-node' : 'any-node'} tone-${tone(data.category)} ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
+        data-testid={`node-${model.id}`}
+        aria-label={`${model.label}：${expression}`}
+        title={
+          bad ? `${expression}\n${result?.messages.join('\n')}` : `${model.label} · ${expression}`
+        }
+        style={{
+          minHeight: Math.max(
+            34,
+            ((inputSide === outputSide
+              ? inputs.length + outputs.length
+              : Math.max(inputs.length, outputs.length)) +
+              1) *
+              14,
+          ),
+        }}
+      >
+        <PortHandles
+          inputs={inputs}
+          outputs={outputs}
+          inputSide={inputSide}
+          outputSide={outputSide}
+          labels={false}
+        />
+        <code>{expression}</code>
+      </div>
+    );
+  }
+
+  if (['DictionaryGet', 'Slice', 'TensorIndex', 'Unsqueeze'].includes(model.type)) {
     const isSlice = model.type === 'Slice';
-    const kind = isSlice ? '切片 Slice' : '字典字段读取';
+    const isIndex = model.type === 'TensorIndex';
+    const isUnsqueeze = model.type === 'Unsqueeze';
+    const kind = isUnsqueeze ? '增加维度' : isSlice || isIndex ? '索引与切片' : '字典字段读取';
     let expression = isSlice ? '切片参数待修正' : '选择字典字段';
     try {
       expression = isSlice
         ? sliceLabel(model.params)
-        : parseFieldPath(model.params.path)
-            .map((key) => `[${JSON.stringify(key)}]`)
-            .join('');
+        : isIndex
+          ? tensorIndexLabel(model.params)
+          : isUnsqueeze
+            ? unsqueezeLabel(model.params)
+            : parseFieldPath(model.params.path)
+                .map((key) => `[${JSON.stringify(key)}]`)
+                .join('');
     } catch {
       /* The inspector shows validation errors for incomplete parameters. */
     }
     return (
       <div
-        className={`compact-operation-node ${isSlice ? 'slice-node' : 'field-read-node'} tone-${tone(data.category)} ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
+        className={`compact-operation-node ${isSlice ? 'slice-node' : isIndex ? 'tensor-index-node' : isUnsqueeze ? 'unsqueeze-node' : 'field-read-node'} tone-${tone(data.category)} ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
         data-testid={`node-${model.id}`}
         aria-label={`${kind}：${expression}`}
         title={
@@ -390,24 +614,34 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
     );
   }
 
-  if (model.type === 'Concat')
+  if (model.type === 'Concat' || model.type === 'Stack') {
+    const stack = model.type === 'Stack';
+    const height = verticalPorts >= 5 ? (verticalPorts + 1) * 16 + 24 : 88;
+    const width = horizontalPorts >= 5 ? (horizontalPorts + 1) * 16 : 88;
     return (
       <div
-        className={`cat-node tone-pink ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.dimmed ? 'dimmed' : ''}`}
+        className={`cat-node ${stack ? 'stack-node' : ''} ${width > 88 || height > 88 ? 'many-port-node' : ''} tone-pink ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
         data-testid={`node-${model.id}`}
-        title={bad ? result?.messages.join('\n') : `${model.label} · 沿指定轴拼接`}
+        aria-label={`${model.label}，${inputs.length} 路输入`}
+        title={
+          bad
+            ? result?.messages.join('\n')
+            : `${model.label} · ${inputs.length} 路输入 · ${stack ? '沿新轴堆叠' : '沿已有轴拼接'} · dim=${model.params.dim}`
+        }
+        style={{ width, height }}
       >
-        <strong>Cat</strong>
+        <strong>{stack ? 'Stack' : 'Cat'}</strong>
         <PortHandles
           inputs={inputs}
           outputs={outputs}
           inputSide={inputSide}
           outputSide={outputSide}
-          horizontalArea={{ top: 12, height: 64 }}
+          horizontalArea={{ top: 12, height: height - 24 }}
         />
         {axisLabels}
       </div>
     );
+  }
   let operations: string[] = [];
   if (model.type === 'Compute') {
     try {
@@ -416,17 +650,10 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
       operations = ['步骤无效'];
     }
   }
-  if (model.type === 'TensorIndex')
-    operations = [`轴 ${model.params.dim}`, `索引 ${model.params.index}`];
   const rows = Math.max(inputs.length, outputs.length, 1);
-  const indexing = model.type === 'TensorIndex';
   const bodyHeight = Math.max(
     rows * 27 + 12,
-    indexing
-      ? operations.length * 34 + 24
-      : operations.length
-        ? Math.ceil(operations.length / 3) * 34 + 18
-        : 72,
+    operations.length ? Math.ceil(operations.length / 3) * 34 + 18 : 72,
   );
   const hasTop =
     (inputs.length > 0 && inputSide === 'top') || (outputs.length > 0 && outputSide === 'top');
@@ -435,7 +662,7 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
     (outputs.length > 0 && outputSide === 'bottom');
   return (
     <div
-      className={`module-node ${indexing ? 'indexing-node' : ''} tone-${tone(data.category)} ${hasTop ? 'has-top-ports' : ''} ${hasBottom ? 'has-bottom-ports' : ''} ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
+      className={`module-node tone-${tone(data.category)} ${hasTop ? 'has-top-ports' : ''} ${hasBottom ? 'has-bottom-ports' : ''} ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
       data-testid={`node-${model.id}`}
       title={model.subgraph ? `双击进入 ${model.label} 的 forward()` : undefined}
     >
@@ -449,7 +676,7 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
       </div>
       <div className="node-ports" style={{ minHeight: bodyHeight }}>
         <div className="node-operation">
-          {['Compute', 'TensorIndex'].includes(model.type) ? (
+          {model.type === 'Compute' ? (
             <div className="calculation-chips">
               {operations.map((label, i) => (
                 <span key={i} title={label}>

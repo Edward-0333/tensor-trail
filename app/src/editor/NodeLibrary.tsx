@@ -7,7 +7,15 @@ import { startModuleDrag } from './moduleDrag';
 import { useEditor } from './store';
 import { calculationCategories, libraryCategory } from '../modules/libraryCategories';
 
-const moduleCategories = ['输入输出', '基础层', '卷积', '循环网络', 'Transformer', '归一化'];
+const moduleCategories = [
+  '输入输出',
+  '网络结构',
+  '基础层',
+  '卷积',
+  '循环网络',
+  'Transformer',
+  '归一化',
+];
 
 function Foldout({
   className,
@@ -47,7 +55,8 @@ export function NodeLibrary({ searchRef }: { searchRef: RefObject<HTMLInputEleme
   const state = useEditor();
   const [search, setSearch] = useState('');
   const query = search.trim().toLowerCase();
-  const definitions = registry.list();
+  // Boundary ports belong to the current submodule, never to the root forward().
+  const definitions = registry.list(state.path.length > 0);
   const matches = (definition: ModuleDefinition) =>
     `${definition.label} ${definition.type} ${definition.description} ${libraryCategory(definition)}`
       .toLowerCase()
@@ -67,7 +76,7 @@ export function NodeLibrary({ searchRef }: { searchRef: RefObject<HTMLInputEleme
           key={category}
           className={`module-group tone-${tone(category)}`}
           query={query}
-          defaultOpen={['输入输出', '索引与切片', '形状查询'].includes(category)}
+          defaultOpen={['输入输出', '网络结构', '索引与切片', '形状查询'].includes(category)}
           title={
             <>
               <span className="category-dot" />

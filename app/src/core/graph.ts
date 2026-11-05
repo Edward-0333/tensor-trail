@@ -1,22 +1,32 @@
 import type { Graph, ModelNode, Port, Registry } from './types';
+import { valueLinkIssues } from './valueLinks';
 
 export function ports(node: ModelNode, registry: Registry): { inputs: Port[]; outputs: Port[] } {
   if (node.subgraph) {
     const boundary = (type: string) =>
       node
-        .subgraph!.nodes.filter((n) => n.type === type)
+        .subgraph!.nodes.filter((n) => n.type === type && n.valueSource === undefined)
         .map((n) => ({ id: String(n.params.port), label: n.label }));
     return { inputs: boundary('Inlet'), outputs: boundary('Outlet') };
   }
   const def = registry.get(node.type);
-  if (def?.getPorts) return def.getPorts(node.params);
-  return { inputs: def?.inputs ?? [], outputs: def?.outputs ?? [] };
+  const declared = def?.getPorts?.(node.params) ?? {
+    inputs: def?.inputs ?? [],
+    outputs: def?.outputs ?? [],
+  };
+  return node.valueSource === undefined ? declared : { ...declared, inputs: [] };
 }
 
 export function orderGraph(graph: Graph): string[] {
   const degree = new Map(graph.nodes.map((n) => [n.id, 0]));
   const next = new Map<string, string[]>();
-  for (const e of graph.edges) {
+  const dependencies = [
+    ...graph.edges,
+    ...graph.nodes.flatMap((node) =>
+      node.valueSource === undefined ? [] : [{ source: node.valueSource, target: node.id }],
+    ),
+  ];
+  for (const e of dependencies) {
     degree.set(e.target, (degree.get(e.target) ?? 0) + 1);
     next.set(e.source, [...(next.get(e.source) ?? []), e.target]);
   }
@@ -37,7 +47,7 @@ export function orderGraph(graph: Graph): string[] {
 }
 
 export function graphIssues(graph: Graph, registry: Registry): string[] {
-  const issues: string[] = [];
+  const issues: string[] = valueLinkIssues(graph);
   const nodes = new Map(graph.nodes.map((n) => [n.id, n]));
   if (nodes.size !== graph.nodes.length) issues.push('节点 ID 重复。');
   const occupied = new Set<string>();

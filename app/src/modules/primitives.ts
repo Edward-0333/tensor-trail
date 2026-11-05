@@ -96,7 +96,7 @@ export const primitives: ModuleDefinition[] = [
     'Inlet',
     '模块输入',
     '内部',
-    '从父模块接收 Tensor。',
+    '接收父模块传入的数据，保留 Tensor、字典等数据的类型和结构。',
     [text('port', '端口标识', 'in')],
     undefined,
     [],
@@ -348,37 +348,6 @@ export const primitives: ModuleDefinition[] = [
         { id: 'b', label: '输入 B' },
       ],
     ),
-  ),
-  base(
-    'Concat',
-    'Cat',
-    '分支运算',
-    '沿一个轴拼接两个 Tensor。',
-    [num('dim', '拼接轴', -1, -8)],
-    ({ a, b }, p) => {
-      requireThat(
-        a.shape.length === b.shape.length && a.dtype === b.dtype,
-        'Concat 需要相同维数和 dtype。',
-      );
-      const axis = axisIndex(n(p, 'dim'), a.shape.length),
-        warnings: string[] = [];
-      a.shape.forEach((d, i) => {
-        if (i !== axis) same(d, b.shape[i], '非拼接轴必须相等', warnings);
-      });
-      const shape = [...a.shape],
-        x = shape[axis],
-        y = b.shape[axis];
-      shape[axis] = typeof x === 'number' && typeof y === 'number' ? x + y : `(${x}+${y})`;
-      return {
-        outputs: { out: tensor(shape, [...a.axes], a.dtype) },
-        warnings,
-        notes: [`沿第 ${axis} 轴拼接，其余维度不变。`],
-      };
-    },
-    [
-      { id: 'a', label: '输入 A' },
-      { id: 'b', label: '输入 B' },
-    ],
   ),
   base(
     'MatMul',

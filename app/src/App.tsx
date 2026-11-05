@@ -19,6 +19,8 @@ import {
   Undo2,
   FilePlus2,
   Save,
+  Copy,
+  ClipboardPaste,
 } from 'lucide-react';
 import { ReactFlowProvider } from '@xyflow/react';
 import { resolveForwardView } from './core/hierarchy';
@@ -34,7 +36,8 @@ import { AgentPanel } from './editor/AgentPanel';
 import { NodeLibrary } from './editor/NodeLibrary';
 import { isTensorNode } from './views/ModuleNode';
 import './editor/workbench.css';
-import { clipboardText, readClipboard } from './editor/clipboard';
+import { clipboardText } from './editor/clipboard';
+import { createModuleClipboard } from './editor/moduleClipboard';
 import { canOpenSourceFile, projectFiles } from './editor/fileActions';
 import { isContainerInput } from './modules/containers';
 
@@ -46,6 +49,7 @@ function saveProject(saveAs = false) {
 
 export default function App() {
   const state = useEditor();
+  const moduleClipboard = useMemo(() => createModuleClipboard(), []);
   const fileState = useSyncExternalStore(projectFiles.subscribe, projectFiles.getSnapshot);
   const [agentOpen, setAgentOpen] = useState(false);
   const [flowExpanded, setFlowExpanded] = useState(false);
@@ -77,6 +81,10 @@ export default function App() {
   const rootResult = useMemo(() => inferProject(state.project, registry), [state.project]);
   const forwardView = resolveForwardView(state.project.graph, state.path);
   const { graph } = forwardView;
+  const selection = new Set(
+    state.selectedIds.length ? state.selectedIds : state.selected ? [state.selected] : [],
+  );
+  const canCopy = graph.nodes.some((node) => selection.has(node.id));
   const result = resultAt(rootResult, state.path) ?? {
     order: [],
     nodes: {},
@@ -117,7 +125,17 @@ export default function App() {
     if (playing || step >= 0) setFlowExpanded(true);
   }, [playing, step]);
   useEffect(() => {
+    const editing = (target: EventTarget | null) =>
+      document.querySelector('dialog[open]') ||
+      [target, document.activeElement].some(
+        (element) =>
+          element instanceof Element &&
+          (element.closest('input,textarea,select') ||
+            (element instanceof HTMLElement && element.isContentEditable)),
+      );
+    let graphCopyPending = false;
     const handler = (e: KeyboardEvent) => {
+      if (e.isComposing || e.altKey) return;
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
         e.preventDefault();
         if (document.querySelector('dialog[open]'))
@@ -125,11 +143,8 @@ export default function App() {
         else saveProject(e.shiftKey);
         return;
       }
-      if (document.querySelector('dialog[open]')) return;
-      if (
-        e.key === '/' &&
-        !(e.target as HTMLElement).closest('input,textarea,select,[contenteditable="true"]')
-      ) {
+      if (editing(e.target)) return;
+      if (e.key === '/') {
         e.preventDefault();
         setLibraryVisible(true);
         setMobilePane('library');
@@ -137,51 +152,60 @@ export default function App() {
         return;
       }
       if (!(e.ctrlKey || e.metaKey)) return;
-      if ((e.target as HTMLElement).closest('input,textarea,select,[contenteditable="true"]'))
-        return;
-      if (e.key.toLowerCase() === 'z') {
+      const key = e.key.toLowerCase();
+      if (key === 'c') {
+        const state = useEditor.getState();
+        graphCopyPending = Boolean(state.selectedIds.length || state.selected);
+        if (graphCopyPending) moduleClipboard.copy();
+        // Keep the native copy event so browsers can also export this fragment.
+      } else if (key === 'v' && moduleClipboard.ownsShortcut()) {
+        e.preventDefault();
+        moduleClipboard.paste();
+      } else if (key === 'z') {
         e.preventDefault();
         e.shiftKey ? useEditor.getState().redo() : useEditor.getState().undo();
       }
     };
-    const editing = (target: EventTarget | null) =>
-      document.querySelector('dialog[open]') ||
-      (target instanceof HTMLElement &&
-        target.closest('input,textarea,select,[contenteditable="true"]'));
+    const keyup = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() === 'c') graphCopyPending = false;
+    };
     const copy = (event: ClipboardEvent) => {
-      if (editing(event.target)) return;
+      // Native copy may target an old text selection even after its input lost focus.
+      // The keydown context already established whether this is a graph copy.
+      const fromGraphShortcut = graphCopyPending;
+      graphCopyPending = false;
+      if (!fromGraphShortcut && editing(event.target)) {
+        // A text copy supersedes the old graph buffer; leave text editing native.
+        moduleClipboard.discard();
+        return;
+      }
       const state = useEditor.getState();
       if (!state.selectedIds.length && !state.selected) return;
-      state.copy();
-      const fragment = useEditor.getState().clipboard;
-      if (fragment?.nodes.length && event.clipboardData) {
-        event.clipboardData.setData('text/plain', clipboardText(fragment));
-        event.preventDefault();
-      }
+      const fragment = moduleClipboard.copy();
+      event.preventDefault();
+      event.clipboardData?.setData(
+        'text/plain',
+        fragment?.nodes.length ? clipboardText(fragment) : '',
+      );
     };
     const paste = (event: ClipboardEvent) => {
       if (editing(event.target)) return;
-      try {
-        const fragment = readClipboard(event.clipboardData?.getData('text/plain') ?? '');
-        if (!fragment) return;
+      if (moduleClipboard.pasteText(event.clipboardData?.getData('text/plain') ?? ''))
         event.preventDefault();
-        const state = useEditor.getState();
-        if (!state.clipboard || clipboardText(state.clipboard) !== clipboardText(fragment))
-          useEditor.setState({ clipboard: fragment, pasteCount: 0 });
-        useEditor.getState().paste();
-      } catch (e) {
-        useEditor.getState().toast(`粘贴失败：${(e as Error).message}`);
-      }
     };
     window.addEventListener('keydown', handler);
+    window.addEventListener('keyup', keyup);
     window.addEventListener('copy', copy);
     window.addEventListener('paste', paste);
+    window.addEventListener('blur', moduleClipboard.release);
     return () => {
       window.removeEventListener('keydown', handler);
+      window.removeEventListener('keyup', keyup);
       window.removeEventListener('copy', copy);
       window.removeEventListener('paste', paste);
+      window.removeEventListener('blur', moduleClipboard.release);
     };
-  }, []);
+  }, [moduleClipboard]);
   const currentStep = step >= 0 ? graph.nodes.find((n) => n.id === order[step]) : undefined;
   return (
     <div
@@ -261,6 +285,24 @@ export default function App() {
                   : '未打开项目'}
           </span>
           <div className="history-buttons">
+            <button
+              className="icon-button"
+              aria-label="复制模块"
+              title="复制模块 Ctrl+C"
+              disabled={!state.hasProject || !canCopy}
+              onClick={() => moduleClipboard.copy()}
+            >
+              <Copy size={17} />
+            </button>
+            <button
+              className="icon-button"
+              aria-label="粘贴模块"
+              title="粘贴模块 Ctrl+V"
+              disabled={!state.hasProject || !state.clipboard?.nodes.length}
+              onClick={() => moduleClipboard.paste()}
+            >
+              <ClipboardPaste size={17} />
+            </button>
             <button
               className="icon-button"
               aria-label="撤销"

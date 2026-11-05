@@ -10,6 +10,7 @@ import {
   parseDictionarySchema,
 } from '../core/dictionary';
 import { useEditor } from './store';
+import { valueOwner } from '../core/valueLinks';
 
 export function DictionaryInputEditor({ node }: { node: ModelNode }) {
   const [error, setError] = useState('');
@@ -46,8 +47,7 @@ export function DictionaryInputEditor({ node }: { node: ModelNode }) {
         return;
       }
       const committed = useEditor.getState().edit((graph) => {
-        const current = graph.nodes.find((item) => item.id === node.id);
-        if (!current) throw new Error('输入节点已不存在。');
+        const current = valueOwner(graph, node.id);
         current.params.schema = text;
       });
       setError(committed ? '' : useEditor.getState().notice);

@@ -8,7 +8,7 @@ export const localParameter: ModuleDefinition = {
   label: '局部参数',
   category: '输入输出',
   description:
-    '为上游计算得到的整数或符号尺寸命名，例如 bs、A。画布只显示名称，数值和类型在属性中查看；右侧端口可继续传递该值。',
+    '为上游计算得到的整数或符号尺寸命名，例如 bs、A。画布只显示名称，数值和类型在属性中查看；右侧端口可继续传递该值。同一局部参数用于多处时，默认建议在各使用处放置关联副本，用短线就近连接。',
   fields: [],
   inputs: input,
   outputs: output,

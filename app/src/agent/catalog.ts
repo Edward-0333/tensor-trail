@@ -40,7 +40,15 @@ export function describeModules(includeInternal = false) {
       ...(d.getPorts
         ? {
             dynamicPorts:
-              'Output ports depend on parameters. TensorSize uses dim0, dim1, ... in axes order; names changes labels only.',
+              d.type === 'TensorSize'
+                ? 'Output ports depend on axes: dim0, dim1, ...; names changes labels only.'
+                : ['Concat', 'Stack'].includes(d.type)
+                  ? 'input_count selects 1–16 ordered Tensor inputs a, b, c, ...; omitted count defaults to 2 for legacy Concat.'
+                  : d.type === 'View'
+                    ? 'Tensor input in plus integer inputs d0–d7 referenced in shape, each appearing once as a port; example shape: d0, d1, -1.'
+                    : d.type === 'TensorIndex'
+                      ? 'Slice mode with stopFromInput=true adds integer input stop alongside Tensor input in.'
+                      : 'Ports depend on module parameters.',
           }
         : {}),
       fields: d.fields,

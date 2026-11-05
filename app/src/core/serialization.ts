@@ -1,7 +1,9 @@
-import type { Graph, Project, Registry } from './types';
+import type { Graph, ModelNode, Project, Registry } from './types';
 import { graphIssues } from './graph';
 import { canonicalModuleType } from './inputTypes';
 import { validateHyperparameters } from './hyperparameters';
+import { migrateTensorSelection } from './indexingTypes';
+import { syncValueLinks } from './valueLinks';
 function requireThat(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
@@ -28,7 +30,7 @@ export function parseProject(text: string, registry: Registry): Project {
   );
   let total = 0;
   if (value.hyperparameters !== undefined) validateHyperparameters(value.hyperparameters);
-  const inspect = (candidate: unknown, depth = 0): void => {
+  const inspect = (candidate: unknown, depth = 0, ownerType?: string): void => {
     requireThat(depth <= 12, '子图嵌套超过 12 层。');
     requireThat(
       record(candidate) && Array.isArray(candidate.nodes) && Array.isArray(candidate.edges),
@@ -68,6 +70,7 @@ export function parseProject(text: string, registry: Registry): Project {
           ),
         '节点参数必须是有限数值、开关或短文本。',
       );
+      migrateTensorSelection(node as unknown as ModelNode);
       requireThat(
         record(node.position) &&
           Number.isFinite(node.position.x) &&
@@ -77,6 +80,10 @@ export function parseProject(text: string, registry: Registry): Project {
       requireThat(
         node.customized === undefined || typeof node.customized === 'boolean',
         'customized 必须为布尔值。',
+      );
+      requireThat(
+        node.valueSource === undefined || identifier(node.valueSource),
+        '共享值来源必须是有效节点 ID。',
       );
       const layout = node.portLayout;
       requireThat(
@@ -96,18 +103,25 @@ export function parseProject(text: string, registry: Registry): Project {
       );
       if (def.composite) {
         requireThat(node.subgraph, '组合模块缺少子图。');
-        inspect(node.subgraph, depth + 1);
+        inspect(node.subgraph, depth + 1, type);
       } else requireThat(node.subgraph === undefined, '普通算子不能携带子图。');
       if (node.type === 'Inlet' || node.type === 'Outlet') {
         requireThat(depth > 0, '根图不能使用子图边界节点。');
-        const set = node.type === 'Inlet' ? inlet : outlet,
-          port = node.params.port;
-        requireThat(identifier(port) && !set.has(port), '子图边界端口重复或无效。');
-        set.add(port);
+        if (node.valueSource === undefined) {
+          const set = node.type === 'Inlet' ? inlet : outlet,
+            port = node.params.port;
+          requireThat(identifier(port) && !set.has(port), '子图边界端口重复或无效。');
+          set.add(port);
+        }
       }
     }
     if (depth > 0)
-      requireThat(inlet.size > 0 && outlet.size > 0, '子图至少需要一个 Inlet 和一个 Outlet。');
+      requireThat(
+        inlet.size > 0 && (outlet.size > 0 || ownerType === 'Submodule'),
+        ownerType === 'Submodule'
+          ? '子模块至少需要一个 Inlet 输入。'
+          : '子图至少需要一个 Inlet 和一个 Outlet。',
+      );
     for (const edge of candidate.edges) {
       requireThat(
         record(edge) &&
@@ -127,9 +141,18 @@ export function parseProject(text: string, registry: Registry): Project {
             )),
         '连线控制点无效；每条连线最多支持 100 个有限坐标点。',
       );
+      requireThat(
+        edge.labelPosition === undefined ||
+          (typeof edge.labelPosition === 'number' &&
+            Number.isFinite(edge.labelPosition) &&
+            edge.labelPosition >= 0 &&
+            edge.labelPosition <= 1),
+        '连线文字位置必须是 0 到 1 之间的有限数值。',
+      );
     }
     const issues = graphIssues(candidate as unknown as Graph, registry);
     requireThat(!issues.length, issues.join('\n'));
+    syncValueLinks(candidate as unknown as Graph);
   };
   inspect(value.graph);
   const ids = new Set<string>();

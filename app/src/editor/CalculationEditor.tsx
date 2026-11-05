@@ -142,7 +142,7 @@ export function CalculationEditor({ node }: { node: ModelNode }) {
           ＋ 添加运算
         </option>
         <option value="slice">切片 [..., :2]</option>
-        <option value="invert">取反 ~（bool / int64）</option>
+        <option value="invert">取反 ~（bool / 整数）</option>
         <option value="any">any() 归约</option>
       </select>
     </div>

@@ -16,7 +16,10 @@ import { checkHyperparameterName } from '../core/hyperparameters';
 import { parseProject, serializeProject } from '../core/serialization';
 import { registry } from '../modules';
 import { dimensions } from '../modules/math';
-import { copySelection, duplicateSelection } from './clipboard';
+import { copySelection } from './clipboard';
+import { isValueNode, linkedValueNodes, syncValueLinks, valueOwner } from '../core/valueLinks';
+import { createLinkedPaste, removeValueNodes, unlinkValueInGraph } from './valueLinkEditing';
+import type { WireRouteChange } from '../views/sharedWires';
 import { mergeCalculations, splitCalculationGroup } from '../core/calculationGroups';
 const initial = {
   project: {
@@ -47,10 +50,13 @@ interface EditorState {
   selected: string | null;
   selectedIds: string[];
   clipboard: Graph | null;
+  clipboardOrigin: { documentId: string; path: string[]; fragment: Graph } | null;
+  unlinkValue: (id: string) => void;
   pasteCount: number;
   selectMany: (ids: string[]) => void;
   copy: () => void;
-  paste: () => void;
+  paste: (mode?: 'local' | 'requested') => void;
+  duplicateLinked: (id: string) => boolean;
   newProject: () => void;
   setAxis: (id: string, axis: number, name: string) => void;
   setTensorColor: (id: string, color?: string) => void;
@@ -61,7 +67,7 @@ interface EditorState {
   navigate: (path: string[]) => void;
   toast: (message: string) => void;
   edit: (fn: (graph: Graph, project: Project) => void, semantic?: boolean) => boolean;
-  setParam: (id: string, key: string, value: Params[string]) => void;
+  setParam: (id: string, key: string, value: Params[string]) => boolean;
   setHyperparameter: (name: string, value?: Hyperparameter) => boolean;
   setPortSide: (id: string, kind: keyof PortLayout, side: PortSide | 'auto') => void;
   renameNode: (id: string, name: string) => void;
@@ -71,6 +77,8 @@ interface EditorState {
   removeNodes: (ids: string[]) => void;
   removeEdges: (ids: string[]) => void;
   setEdgeWaypoints: (id: string, points?: ModelEdge['waypoints']) => void;
+  setSharedWireWaypoints: (changes: WireRouteChange[]) => boolean;
+  setEdgeLabelPosition: (id: string, position?: number) => void;
   move: (id: string, position: { x: number; y: number }) => void;
   finishNodeDrag: (
     positions: { id: string; position: { x: number; y: number } }[],
@@ -100,6 +108,7 @@ export const useEditor = create<EditorState>((set, get) => ({
   selected: null,
   selectedIds: [],
   clipboard: null,
+  clipboardOrigin: null,
   pasteCount: 0,
   past: [],
   future: [],
@@ -132,19 +141,30 @@ export const useEditor = create<EditorState>((set, get) => ({
         s.selectedIds.length ? s.selectedIds : s.selected ? [s.selected] : [],
       );
     if (!fragment.nodes.length) {
-      set({ notice: '请先选择可复制的模块；子图边界不能复制。' });
+      set({ clipboard: null, clipboardOrigin: null, pasteCount: 0, notice: '请先选择模块。' });
       return;
     }
     set({
       clipboard: fragment,
+      clipboardOrigin: { documentId: s.documentId, path: [...s.path], fragment },
       pasteCount: 0,
       notice: `已复制 ${fragment.nodes.length} 个模块，Ctrl+V 粘贴。`,
     });
   },
-  paste: () => {
-    const { clipboard, pasteCount } = get();
+  paste: (mode = 'local') => {
+    const { clipboard, clipboardOrigin, pasteCount, documentId, path, project } = get();
     if (!clipboard?.nodes.length) return;
-    const fragment = duplicateSelection(clipboard, 32 * (pasteCount + 1));
+    const sameScope =
+      clipboardOrigin?.fragment === clipboard &&
+      clipboardOrigin.documentId === documentId &&
+      JSON.stringify(clipboardOrigin.path) === JSON.stringify(path);
+    const fragment = createLinkedPaste(
+      graphAt(project.graph, path),
+      clipboard,
+      32 * (pasteCount + 1),
+      sameScope,
+      mode,
+    );
     if (
       get().edit((g) => {
         g.nodes.push(...fragment.nodes);
@@ -155,12 +175,37 @@ export const useEditor = create<EditorState>((set, get) => ({
         selected: fragment.nodes[0].id,
         selectedIds: fragment.nodes.map((n) => n.id),
         pasteCount: pasteCount + 1,
-        notice: `已粘贴 ${fragment.nodes.length} 个模块，可一次撤销。`,
+        notice: fragment.nodes.some((node) => node.valueSource !== undefined)
+          ? `已粘贴 ${fragment.nodes.length} 个模块；关联副本共享原值，可在右侧解除链接。`
+          : `已粘贴 ${fragment.nodes.length} 个模块，可一次撤销。`,
       });
+  },
+  duplicateLinked: (id) => {
+    const state = get(),
+      graph = graphAt(state.project.graph, state.path);
+    const node = graph.nodes.find((candidate) => candidate.id === id);
+    if (!node || !isValueNode(node.type)) {
+      set({ notice: '只有输入输出类节点可以创建关联副本。' });
+      return false;
+    }
+    const fragment = createLinkedPaste(graph, copySelection(graph, [id]), 48, true, 'requested');
+    if (
+      !get().edit((g) => {
+        g.nodes.push(...fragment.nodes);
+        g.edges.push(...fragment.edges);
+      })
+    )
+      return false;
+    set({
+      selected: fragment.nodes[0].id,
+      selectedIds: [fragment.nodes[0].id],
+      notice: '已按要求创建关联副本，共享原值；可在右侧解除链接。',
+    });
+    return true;
   },
   setAxis: (id, axis, name) =>
     get().edit((g) => {
-      const node = g.nodes.find((n) => n.id === id)!;
+      const node = valueOwner(g, id);
       if (node.type !== 'Input') throw new Error('请在输入 Tensor 编辑轴含义，后续模块自动推导。');
       const shape = dimensions(node.params.shape);
       if (axis < 0 || axis >= shape.length) throw new Error('轴超出范围。');
@@ -188,6 +233,7 @@ export const useEditor = create<EditorState>((set, get) => ({
     try {
       fn(graphAt(draft.graph, path), draft);
       if (semantic) markAncestors(draft.graph, path);
+      syncValueLinks(draft.graph);
       // Keep every committed edit reloadable, including size and nesting limits.
       parseProject(serializeProject(draft), registry);
       documentId(project, get().documentId);
@@ -212,9 +258,35 @@ export const useEditor = create<EditorState>((set, get) => ({
   setParam: (id, key, value) =>
     get().edit((graph) => {
       if (typeof value === 'number' && !Number.isFinite(value)) throw new Error('请输入有限数值。');
-      const node = graph.nodes.find((n) => n.id === id)!;
+      const node = valueOwner(graph, id);
       if (node.subgraph && node.customized)
         throw new Error('此模块已有内部编辑，请进入子图修改各算子。');
+      if (
+        node.type === 'TensorIndex' &&
+        ((key === 'mode' && value !== 'slice') || (key === 'stopFromInput' && value !== true)) &&
+        graph.edges.some((edge) => edge.target === id && edge.targetPort === 'stop')
+      )
+        throw new Error('请先断开 stop 连线，再切换取值方式或结束位置来源。');
+      if (
+        ['Concat', 'Stack'].includes(node.type) &&
+        key === 'input_count' &&
+        (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > 16)
+      )
+        throw new Error('输入数量请选择 1–16。');
+      if (
+        (['Concat', 'Stack'].includes(node.type) && key === 'input_count') ||
+        (node.type === 'View' && key === 'shape')
+      ) {
+        const changed = { ...node, params: { ...node.params, [key]: value } };
+        const remaining = new Set(ports(changed, registry).inputs.map((port) => port.id));
+        const removed = graph.edges.filter(
+          (edge) => edge.target === node.id && !remaining.has(edge.targetPort),
+        );
+        if (removed.length)
+          throw new Error(
+            `请先断开输入 ${[...new Set(removed.map((edge) => edge.targetPort))].join('、')} 的连线，再修改输入数量或形状。`,
+          );
+      }
       node.params[key] = value;
       if (node.type === 'Input' && key === 'shape') {
         try {
@@ -239,7 +311,7 @@ export const useEditor = create<EditorState>((set, get) => ({
   renameNode: (id, name) => {
     if (name.trim())
       get().edit((g) => {
-        g.nodes.find((n) => n.id === id)!.label = name.trim().slice(0, 200);
+        valueOwner(g, id).label = name.trim().slice(0, 200);
       }, false);
   },
   setPortSide: (id, kind, side) =>
@@ -268,6 +340,18 @@ export const useEditor = create<EditorState>((set, get) => ({
       const node = variant
         ? registry.fromVariant(variant.name, variant.graph)
         : registry.create(type);
+      if (node.type === 'Inlet' || node.type === 'Outlet') {
+        if (!get().path.length) throw new Error('请进入子模块后添加模块输入或模块输出。');
+        const base = node.type === 'Inlet' ? 'in' : 'out';
+        const used = new Set(
+          graph.nodes.filter((n) => n.type === node.type).map((n) => String(n.params.port)),
+        );
+        let port = base,
+          suffix = 2;
+        while (used.has(port)) port = `${base}${suffix++}`;
+        node.params.port = port;
+        node.label = port;
+      }
       const specs = resultAt(inferProject(project, registry), get().path)?.nodes[source?.id ?? '']
         ?.outputs;
       const sourcePort = source ? ports(source, registry).outputs[0]?.id : undefined;
@@ -309,17 +393,13 @@ export const useEditor = create<EditorState>((set, get) => ({
       if (issues.length) throw new Error(issues[0]);
       graph.edges = candidate.edges;
     }),
+  unlinkValue: (id) => {
+    if (get().edit((_, project) => unlinkValueInGraph(project.graph, get().path, id)))
+      set({ notice: '已解除链接；当前输入连线保留，之后可单独修改或重新连接。' });
+  },
   removeNodes: (ids) => {
-    get().edit((graph) => {
-      const removable = new Set(
-        graph.nodes
-          .filter((n) => ids.includes(n.id) && !['Inlet', 'Outlet'].includes(n.type))
-          .map((n) => n.id),
-      );
-      graph.nodes = graph.nodes.filter((n) => !removable.has(n.id));
-      graph.edges = graph.edges.filter((e) => !removable.has(e.source) && !removable.has(e.target));
-    });
-    set({ selected: null, selectedIds: [] });
+    const committed = get().edit((_, project) => removeValueNodes(project.graph, get().path, ids));
+    if (committed) set({ selected: null, selectedIds: [] });
   },
   removeEdges: (ids) =>
     get().edit((graph) => {
@@ -331,6 +411,26 @@ export const useEditor = create<EditorState>((set, get) => ({
       if (!edge) throw new Error('连线已不存在。');
       if (points?.length) edge.waypoints = clone(points);
       else delete edge.waypoints;
+    }, false),
+  setSharedWireWaypoints: (changes) => {
+    if (!changes.length) return false;
+    return get().edit((graph) => {
+      if (new Set(changes.map((change) => change.id)).size !== changes.length)
+        throw new Error('重复的共享连线修改。');
+      for (const change of changes) {
+        const edge = graph.edges.find((candidate) => candidate.id === change.id);
+        if (!edge) throw new Error('连线已不存在。');
+        if (change.waypoints.length) edge.waypoints = clone(change.waypoints);
+        else delete edge.waypoints;
+      }
+    }, false);
+  },
+  setEdgeLabelPosition: (id, position) =>
+    get().edit((graph) => {
+      const edge = graph.edges.find((e) => e.id === id);
+      if (!edge) throw new Error('连线已不存在。');
+      if (position === undefined) delete edge.labelPosition;
+      else edge.labelPosition = position;
     }, false),
   move: (id, position) =>
     get().edit((graph) => {
@@ -371,6 +471,7 @@ export const useEditor = create<EditorState>((set, get) => ({
     get().edit((graph) => {
       const index = graph.nodes.findIndex((n) => n.id === id),
         old = graph.nodes[index];
+      if (linkedValueNodes(graph, id).length > 1) throw new Error('请先解除链接，再替换模块类型。');
       if (['Inlet', 'Outlet', 'Input', 'Output'].includes(old.type) || old.subgraph)
         throw new Error('请在组合模块内选择普通算子进行替换。');
       const fresh = registry.create(type, {}, id),
@@ -405,6 +506,10 @@ export const useEditor = create<EditorState>((set, get) => ({
         : undefined;
     if (!owner?.subgraph) {
       set({ notice: '请选择组合模块，或先进入一个子图。' });
+      return;
+    }
+    if (owner.type === 'Submodule' && !owner.subgraph.nodes.some((n) => n.type === 'Outlet')) {
+      set({ notice: '补充模块输出后可保存为变体。' });
       return;
     }
     const graph = clone(owner.subgraph);

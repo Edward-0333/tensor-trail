@@ -1,6 +1,7 @@
 import type { Graph, ModelNode, ModuleDefinition, Params } from '../core/types';
 import { clone, uid } from '../core/types';
 import { canonicalModuleType } from '../core/inputTypes';
+import { normalizeTensorSelection } from '../core/indexingTypes';
 
 export class ModuleRegistry {
   private definitions = new Map<string, ModuleDefinition>();
@@ -12,13 +13,16 @@ export class ModuleRegistry {
     return this.definitions.get(canonicalModuleType(type));
   }
   list(includeInternal = false) {
-    // DictionaryInput remains readable for older projects; new inputs use ForwardInput.
+    // Legacy definitions remain readable, but the library exposes their unified replacements.
     return [...this.definitions.values()].filter(
-      (d) => d.type !== 'DictionaryInput' && (includeInternal || d.category !== '内部'),
+      (d) =>
+        !['DictionaryInput', 'Slice'].includes(d.type) &&
+        (includeInternal || d.category !== '内部'),
     );
   }
   create(type: string, params: Params = {}, id: string = uid()): ModelNode {
     type = canonicalModuleType(type);
+    ({ type, params } = normalizeTensorSelection(type, params));
     const def = this.get(type);
     if (!def) throw new Error(`未知模块 ${type}`);
     const values = { ...Object.fromEntries(def.fields.map((f) => [f.key, f.default])), ...params };

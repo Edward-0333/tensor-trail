@@ -750,8 +750,8 @@ kbd {
 .react-flow__attribution a {
   color: var(--muted) !important;
 }
-.react-flow__edge.selected path.react-flow__edge-path,
-.react-flow__edge:hover path.react-flow__edge-path {
+.react-flow__edge.selected path.react-flow__edge-path:not(.wire-routed),
+.react-flow__edge:hover path.react-flow__edge-path:not(.wire-routed) {
   stroke: var(--accent) !important;
   stroke-width: 2 !important;
 }
@@ -800,6 +800,9 @@ kbd {
 }
 .tensor-node.forward-input-node {
   --tone: var(--category-purple);
+}
+.tensor-node.module-input-node {
+  --tone: var(--category-teal);
 }
 .tensor-node.tensor-input {
   --tone: var(--category-blue);
@@ -993,6 +996,37 @@ kbd {
   pointer-events: all;
   cursor: grab;
   touch-action: none;
+}
+.edge-junction {
+  position: absolute;
+  top: 0;
+  left: 0;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 1002;
+}
+.edge-segment-hit {
+  pointer-events: stroke;
+  touch-action: none;
+}
+.react-flow__edge-text.edge-side-label {
+  pointer-events: bounding-box;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+.edge-side-label.dragging {
+  cursor: grabbing;
+}
+.edge-segment-hit.horizontal {
+  cursor: ns-resize;
+}
+.edge-segment-hit.vertical {
+  cursor: ew-resize;
+}
+.edge-segment-hit:hover {
+  stroke: var(--accent);
+  stroke-opacity: 0.18;
 }
 .edge-control-point:hover,
 .edge-control-point:active {

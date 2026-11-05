@@ -1,6 +1,7 @@
 import { tensorValue } from '../src/core/types';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { inferGraph } from '../src/core/engine';
+import { ports } from '../src/core/graph';
 import { example } from '../src/modules/examples';
 import { registry } from '../src/modules';
 import { parseProject, serializeProject } from '../src/core/serialization';
@@ -19,6 +20,7 @@ beforeEach(() => {
     selected: 'transformer',
     selectedIds: ['transformer'],
     clipboard: null,
+    clipboardOrigin: null,
     pasteCount: 0,
     past: [],
     future: [],
@@ -108,14 +110,31 @@ describe('编辑与文件序列化事务', () => {
     useEditor.getState().undo();
     expect(useEditor.getState().project).toEqual(before);
   });
-  it('子图边界不复制，可将普通算子跨项目粘贴', () => {
+  it('子图边界默认独立复制，产生新的父模块接口', () => {
+    const before = ports(useEditor.getState().project.graph.nodes[1], registry);
     useEditor.getState().navigate(['transformer']);
     useEditor.getState().selectMany(['input', 'norm1']);
     useEditor.getState().copy();
-    expect(useEditor.getState().clipboard!.nodes.map((n) => n.id)).toEqual(['norm1']);
+    expect(useEditor.getState().clipboard!.nodes.map((n) => n.id)).toEqual(['input', 'norm1']);
+    useEditor.getState().paste();
+    const module = useEditor.getState().project.graph.nodes[1];
+    expect(ports(module, registry).inputs).toHaveLength(before.inputs.length + 1);
+    expect(ports(module, registry).outputs).toEqual(before.outputs);
+    const pasted = module.subgraph!.nodes.slice(-2);
+    expect(pasted[0]).toMatchObject({ type: 'Inlet' });
+    expect(pasted[0].valueSource).toBeUndefined();
+    expect(pasted[1]).toMatchObject({ type: 'LayerNorm' });
+    expect(pasted[1].valueSource).toBeUndefined();
+    expect(projectSnapshot()).toEqual(useEditor.getState().project);
+  });
+  it('普通算子仍可跨项目粘贴为独立模块', () => {
+    useEditor.getState().navigate(['transformer']);
+    useEditor.getState().select('norm1');
+    useEditor.getState().copy();
     useEditor.getState().newProject();
     useEditor.getState().paste();
     expect(useEditor.getState().project.graph.nodes[0].type).toBe('LayerNorm');
+    expect(useEditor.getState().project.graph.nodes[0].valueSource).toBeUndefined();
   });
   it('按轴编辑含义，修改维数时同步输入框数量，背景色可保存恢复', () => {
     useEditor.getState().setParam('input', 'shape', '2, 6');
