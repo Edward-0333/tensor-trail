@@ -4,10 +4,10 @@
 
 - `tensor-trail.svg`：可编辑源图。
 - `tensor-trail.ico`：Windows 窗口图标，包含 16／24／32／48／64／128／256 像素。
-- `tensor-trail.png`：256 像素预览。
+- `tensor-trail.png`：256 像素预览及 Linux 窗口／应用菜单图标。
 - `lucide-LICENSE`：Network 图形沿用项目已有的 Lucide 图标，保留其 ISC／MIT 许可。
 
-已由 `src/main/index.ts` 接入窗口，并为 Windows 设置稳定的 AppUserModelID `io.github.edward0333.tensortrail`。资源路径相对桌面应用目录，生产资源和开发窗口均可读取。
+已由 `src/main/index.ts` 接入窗口，并为 Windows 设置稳定的 AppUserModelID `io.github.edward0333.tensortrail`。Linux 的 desktop ID 为 `io.github.edward0333.tensortrail.desktop`，与用户应用菜单入口保持一致。资源路径相对桌面应用目录，生产资源和开发窗口均可读取。
 
 在项目根目录重新导出：
 

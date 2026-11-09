@@ -23,6 +23,7 @@ import * as check from './validation';
 
 app.setName('Tensor Trail');
 if (process.platform === 'win32') app.setAppUserModelId('io.github.edward0333.tensortrail');
+if (process.platform === 'linux') app.setDesktopName('io.github.edward0333.tensortrail.desktop');
 if (!app.isPackaged && process.env.TENSOR_TRAIL_PROFILE_DIR)
   app.setPath('userData', path.resolve(process.env.TENSOR_TRAIL_PROFILE_DIR));
 protocol.registerSchemesAsPrivileged([
@@ -169,7 +170,7 @@ function menu() {
               void dialog.showMessageBox(window!, {
                 type: 'info',
                 title: 'Tensor Trail',
-                message: 'Tensor Trail Windows 开发版',
+                message: `Tensor Trail ${process.platform === 'linux' ? 'Linux' : process.platform === 'win32' ? 'Windows' : '桌面'} 开发版`,
                 detail: `版本 ${app.getVersion()}\n神经网络架构与 Tensor 形状工作台`,
               });
             },
@@ -301,7 +302,11 @@ async function createWindow() {
     minHeight: Math.min(640, workArea.height),
     show: true,
     title: 'Tensor Trail',
-    icon: path.resolve(__dirname, '../../resources/tensor-trail.ico'),
+    icon: path.resolve(
+      __dirname,
+      '../../resources',
+      process.platform === 'win32' ? 'tensor-trail.ico' : 'tensor-trail.png',
+    ),
     backgroundColor: settings.theme === 'light' ? '#f5f5f7' : '#0f121a',
     webPreferences: {
       preload: path.resolve(__dirname, '../preload/index.cjs'),

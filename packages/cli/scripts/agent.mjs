@@ -65,7 +65,7 @@ try {
     if (internal && command !== 'describe') usage('--internal is only valid for describe.');
     let api;
     try {
-      api = await import('../../../apps/web/dist-agent/tensor-trail-agent.js');
+      api = await import('../../model-core/dist/tensor-trail-agent.js');
     } catch {
       usage('Agent bundle unavailable. Run npm run build:agent first.');
     }

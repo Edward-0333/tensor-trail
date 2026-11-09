@@ -256,6 +256,19 @@ module.exports = async function interactions({
       async () => (await model()).graph.nodes.length === before + 1,
       'Module drop did not add exactly one node',
     );
+    // A dropped node changes the fit-view bounds. On Linux the native pointer can
+    // reach its old handle coordinates before React Flow finishes fitting. Wait
+    // for geometry, not just the model insertion, before measuring drag endpoints.
+    let previousGeometry = '';
+    let stableFrames = 0;
+    await until(async () => {
+      const geometry = await js(
+        `JSON.stringify([...document.querySelectorAll('.react-flow__handle')].map(x=>{const r=x.getBoundingClientRect();return [r.x,r.y,r.width,r.height]}))`,
+      );
+      stableFrames = geometry === previousGeometry ? stableFrames + 1 : 0;
+      previousGeometry = geometry;
+      return stableFrames >= 3;
+    }, 'Port geometry did not settle after module drop');
     return (await model()).graph.nodes.at(-1);
   };
   const output = await dropModule('输出 Tensor');

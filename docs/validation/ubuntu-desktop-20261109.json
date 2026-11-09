@@ -1,0 +1,216 @@
+{
+  "date": "2026-11-09",
+  "platform": "Ubuntu 20.04.6 LTS x86_64 / X11",
+  "node": "22.23.4",
+  "npm": "10.9.9",
+  "electron": "45.2.3",
+  "unitTests": {
+    "files": 53,
+    "passed": 910
+  },
+  "desktopFileFlows": [
+    {
+      "passed": true,
+      "phase": "full",
+      "url": "tensor-trail://app/index.html",
+      "cases": [
+        "local-resources",
+        "blank-start",
+        "isolated-preload",
+        "visible-window",
+        "cancel-open",
+        "invalid-open-preserves-document",
+        "unicode-bom-open",
+        "ctrl-s-single-source-write",
+        "ctrl-s-includes-focused-field",
+        "cancel-save-as-keeps-source",
+        "save-as-switches-only-after-success",
+        "external-conflict-and-recovery",
+        "cancel-new-preserves-edit",
+        "save-before-new",
+        "cancel-close",
+        "discard-before-new-keeps-disk",
+        "undo-restores-file-association",
+        "native-menu-save",
+        "ai-modification-keeps-source",
+        "native-text-undo",
+        "restricted-file-tokens",
+        "native-preferences",
+        "no-vite-server-dependency",
+        "single-instance",
+        "save-on-close"
+      ],
+      "opening": 3,
+      "choosingSave": 3,
+      "confirming": 5,
+      "commits": 13
+    },
+    {
+      "passed": true,
+      "phase": "restart",
+      "url": "tensor-trail://app/index.html",
+      "cases": [
+        "local-resources",
+        "blank-start",
+        "isolated-preload",
+        "visible-window",
+        "persisted-theme",
+        "no-last-project-restoration"
+      ],
+      "opening": 0,
+      "choosingSave": 0,
+      "confirming": 0,
+      "commits": 1
+    },
+    {
+      "passed": true,
+      "phase": "dev",
+      "url": "http://127.0.0.1:5173/",
+      "cases": [
+        "development-renderer",
+        "blank-start",
+        "isolated-preload",
+        "visible-window",
+        "persisted-theme",
+        "no-last-project-restoration"
+      ],
+      "opening": 0,
+      "choosingSave": 0,
+      "confirming": 0,
+      "commits": 2
+    }
+  ],
+  "desktopExperience": {
+    "userFileUnchanged": true,
+    "observations": 69,
+    "scales": [
+      {
+        "scale": 1,
+        "performance": {
+          "loadMs": [
+            615.9,
+            373.7,
+            369.4
+          ],
+          "dragMs": 387,
+          "pointerUpToTwoFrames": 53.90000003576279,
+          "frames": 28,
+          "frameMedian": 16.699999999999818,
+          "frameP95": 33.29999999999973,
+          "longTasks": []
+        },
+        "cases": [
+          "DPI applied",
+          "native open user copy",
+          "layout screenshots",
+          "native node drag",
+          "minimum-900x640-controls-and-status",
+          "user-copy-subgraph-enter-return-without-mutation",
+          "panel-toggle-without-model-change",
+          "automatic-fanout-shared-trunk-different-target-distances",
+          "native-node-wire-snap-preview-and-atomic-undo-redo",
+          "alt-bypasses-node-wire-snap",
+          "manual-endpoint-wire-snap-save-reopen",
+          "native-inward-node-drag-shortens-tail-preview-undo-save",
+          "native-box-selection",
+          "library-drag-add-and-click-no-add",
+          "native-port-connection",
+          "top-bottom-port-layout",
+          "shared-wire-move-atomic-undo-redo",
+          "escape-cancels-wire-preview",
+          "native-edge-label-drag",
+          "native-manual-control-point",
+          "pluto-nat-enter-and-breadcrumb-return",
+          "layout-and-routes-save-reopen",
+          "built-in-pluto-forward-input-example"
+        ]
+      },
+      {
+        "scale": 1.25,
+        "performance": {
+          "loadMs": [
+            539,
+            384.7,
+            370.5
+          ],
+          "dragMs": 381,
+          "pointerUpToTwoFrames": 52.200000047683716,
+          "frames": 26,
+          "frameMedian": 16.699999999999818,
+          "frameP95": 33.30000000000018,
+          "longTasks": []
+        },
+        "cases": [
+          "DPI applied",
+          "native open user copy",
+          "layout screenshots",
+          "native node drag",
+          "minimum-900x640-controls-and-status",
+          "user-copy-subgraph-enter-return-without-mutation",
+          "panel-toggle-without-model-change",
+          "automatic-fanout-shared-trunk-different-target-distances",
+          "native-node-wire-snap-preview-and-atomic-undo-redo",
+          "alt-bypasses-node-wire-snap",
+          "manual-endpoint-wire-snap-save-reopen",
+          "native-inward-node-drag-shortens-tail-preview-undo-save",
+          "native-box-selection",
+          "library-drag-add-and-click-no-add",
+          "native-port-connection",
+          "top-bottom-port-layout",
+          "shared-wire-move-atomic-undo-redo",
+          "escape-cancels-wire-preview",
+          "native-edge-label-drag",
+          "native-manual-control-point",
+          "pluto-nat-enter-and-breadcrumb-return",
+          "layout-and-routes-save-reopen",
+          "built-in-pluto-forward-input-example"
+        ]
+      },
+      {
+        "scale": 1.5,
+        "performance": {
+          "loadMs": [
+            727.5,
+            373,
+            397.9
+          ],
+          "dragMs": 387,
+          "pointerUpToTwoFrames": 54.5,
+          "frames": 29,
+          "frameMedian": 16.699999999999818,
+          "frameP95": 16.800000000000182,
+          "longTasks": []
+        },
+        "cases": [
+          "DPI applied",
+          "native open user copy",
+          "layout screenshots",
+          "native node drag",
+          "minimum-900x640-controls-and-status",
+          "user-copy-subgraph-enter-return-without-mutation",
+          "panel-toggle-without-model-change",
+          "automatic-fanout-shared-trunk-different-target-distances",
+          "native-node-wire-snap-preview-and-atomic-undo-redo",
+          "alt-bypasses-node-wire-snap",
+          "manual-endpoint-wire-snap-save-reopen",
+          "native-inward-node-drag-shortens-tail-preview-undo-save",
+          "native-box-selection",
+          "library-drag-add-and-click-no-add",
+          "native-port-connection",
+          "top-bottom-port-layout",
+          "shared-wire-move-atomic-undo-redo",
+          "escape-cancels-wire-preview",
+          "native-edge-label-drag",
+          "native-manual-control-point",
+          "pluto-nat-enter-and-breadcrumb-return",
+          "layout-and-routes-save-reopen",
+          "built-in-pluto-forward-input-example"
+        ]
+      }
+    ]
+  },
+  "limits": [
+    "File selectors use controlled responses in automated window tests.",
+    "Wayland, ARM64, other Ubuntu releases and installer packages not validated."
+  ]
+}

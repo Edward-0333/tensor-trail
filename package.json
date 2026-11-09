@@ -26,7 +26,9 @@
     "dev:desktop": "npm run setup:desktop && npm run build:main --workspace=@tensor-trail/desktop && node scripts/desktop.cjs --dev",
     "desktop": "npm run setup:desktop && npm run build:desktop && node scripts/desktop.cjs",
     "test:desktop": "npm run build:agent && npm run setup:desktop && npm run build:desktop && node scripts/test-desktop.cjs",
-    "test:desktop:experience": "npm run build:agent && npm run setup:desktop && npm run build:desktop && node scripts/test-desktop-experience.cjs"
+    "test:desktop:experience": "npm run build:agent && npm run setup:desktop && npm run build:desktop && node scripts/test-desktop-experience.cjs",
+    "install:desktop:linux": "node scripts/linux-desktop.cjs --install-launcher",
+    "uninstall:desktop:linux": "node scripts/linux-desktop.cjs --remove-launcher"
   },
   "devDependencies": {
     "@types/node": "24.19.2",

@@ -4,7 +4,7 @@
 
 Tensor Trail 是本地运行的神经网络学习工作台。定义输入 Tensor，手动连接 Transformer、CNN、RNN 和维度操作；修改参数后，即时查看每个节点及连线的形状，定位不兼容的维度。
 
-Windows 桌面开发版已可运行：双击 [start-desktop.cmd](start-desktop.cmd)，构建后打开独立窗口，使用原生 JSON 打开与保存。网页版继续使用 `start.cmd`。D5 的缩放、画布交互与大图验收已完成；安装包进入下一阶段 D6，详见[桌面运行说明](apps/desktop/README.md)。
+Windows / Ubuntu 桌面开发版共用同一套编辑器：Windows 双击 [start-desktop.cmd](start-desktop.cmd)，Ubuntu 在图形桌面终端运行 [./start-desktop.sh](start-desktop.sh)，构建后打开独立窗口，使用原生项目打开与保存。Ubuntu 可用 `./start-desktop.sh --install-launcher` 添加应用菜单入口。网页版继续保留；安装包尚未交付，详见[桌面运行说明](apps/desktop/README.md)。
 
 ![Tensor Trail 架构工作台](docs/assets/ui-current.png)
 
