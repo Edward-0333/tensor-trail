@@ -62,8 +62,16 @@ export function TensorView({ result, outputPorts }: { result?: NodeResult; outpu
       ) : spec && !isTensorSpec(spec) ? (
         <>
           <div className="container-value-kind">{shapeText(spec)}</div>
-          <pre className="container-value-text">{spec.text || '未填写内容说明'}</pre>
-          <p className="microcopy">容器输入不要求具体形状；文字仅用于架构说明。</p>
+          {'text' in spec ? (
+            <>
+              <pre className="container-value-text">{spec.text || '未填写内容说明'}</pre>
+              <p className="microcopy">容器输入不要求具体形状；文字仅用于架构说明。</p>
+            </>
+          ) : (
+            <p className="microcopy">
+              Python {spec.kind === 'none' ? 'None 空值' : '布尔条件'}，不是 Tensor。
+            </p>
+          )}
         </>
       ) : spec ? (
         <>

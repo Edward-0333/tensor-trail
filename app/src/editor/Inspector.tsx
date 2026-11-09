@@ -1,3 +1,5 @@
+import { plutoForwardCode } from '../modules/plutoForwardOps';
+import { plutoCompositeCode } from '../modules/plutoForward';
 import { useEffect, useState } from 'react';
 import {
   ArrowUpRight,
@@ -26,6 +28,12 @@ import { DictionaryPathField, IndexExpressionField } from './IndexingFields';
 import { FunctionFormulaField } from './FunctionFormulaField';
 import { effectiveValueNode, isValueNode, linkedValueNodes, valueOwner } from '../core/valueLinks';
 import { localParameterColors } from '../views/localParameterColors';
+import { sequenceCode } from '../modules/sequenceOps';
+import { natSource } from '../modules/natSequence';
+import { agentCompletionCode } from '../modules/agentCompletion';
+import { mapOperationCode } from '../modules/mapOps';
+import { mapEncoderCode } from '../modules/mapEncoder';
+import { maskedWriteCode } from '../modules/maskedWrite';
 
 const operationHelp: Record<
   string,
@@ -176,12 +184,15 @@ function ParamField({
         </select>
       </label>
     );
-  if (node.type === 'View' && field.key === 'shape')
+  if (
+    (['View', 'Reshape'].includes(node.type) && field.key === 'shape') ||
+    (node.type === 'Repeat' && field.key === 'repeats')
+  )
     return (
       <label className="param-field view-shape-field">
         <span>
           {field.label}
-          <small>shape</small>
+          <small>{field.key}</small>
         </span>
         <input
           aria-label={label}
@@ -189,7 +200,7 @@ function ParamField({
           disabled={disabled}
           defaultValue={String(value ?? '')}
           spellCheck={false}
-          placeholder="d0, d1, -1"
+          placeholder={node.type === 'Repeat' ? '1, d0, 1' : 'd0, d1, -1'}
           onBlur={(event) => {
             if (event.target.value !== value && !update(event.target.value))
               event.target.value = String(value ?? '');
@@ -376,7 +387,19 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
     !fields.some((field) => field.key === 'input_count')
   )
     fields.unshift({ key: 'input_count', label: '输入数量', kind: 'number', default: 2, min: 1 });
+  if (node?.type === 'BooleanAssign' && node.params.allow_broadcast === undefined)
+    fields.push({ key: 'allow_broadcast', label: '允许赋值广播', kind: 'boolean', default: false });
   const help = node ? operationHelp[node.type] : undefined;
+  const code = node
+    ? (plutoForwardCode(node) ??
+      plutoCompositeCode(node) ??
+      mapEncoderCode(node) ??
+      mapOperationCode(node) ??
+      agentCompletionCode(node) ??
+      maskedWriteCode(node) ??
+      sequenceCode(node) ??
+      natSource(node))
+    : undefined;
   const localColor =
     node?.type === 'LocalParameter' ? localParameterColors(graph).get(node.id) : undefined;
   const container = node && isContainerInput(node.type);
@@ -395,6 +418,7 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
       'TensorSize',
       'LocalParameter',
       'TensorVariable',
+      'CodeFunction', // Change its typed template through the operation field instead.
     ].includes(node.type);
   const compatible = replaceable
     ? registry
@@ -541,6 +565,17 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
                   </dl>
                   <p className="microcopy">{help.explanation}</p>
                   {help.expression && <pre>{help.expression}</pre>}
+                </section>
+              )}
+              {code && (
+                <section className="operation-port-help source-code-help" aria-label="函数代码">
+                  <div className="section-label">函数代码</div>
+                  <p className="microcopy">
+                    代码用于阅读，对应当前节点参数；形状由接口规则推导，不在网页执行 Python。
+                  </p>
+                  <pre>
+                    <code>{code}</code>
+                  </pre>
                 </section>
               )}
               {localColor && localColor.count > 1 && (

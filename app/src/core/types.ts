@@ -10,14 +10,28 @@ export interface ContainerSpec {
 }
 export interface DictionarySpec {
   kind: 'dict';
-  fields: Record<string, TensorSpec | DictionarySpec>;
+  fields: Record<string, TensorSpec | DictionarySpec | NoneSpec>;
+}
+/** Python values used by control flow; distinct from scalar tensors. */
+export interface BooleanSpec {
+  kind: 'bool';
+  value: boolean;
+}
+export interface NoneSpec {
+  kind: 'none';
 }
 /** A Python integer size, or an unresolved symbolic integer dimension; never a Tensor. */
 export interface IntegerSpec {
   kind: 'int';
   value: Dim;
 }
-export type ValueSpec = TensorSpec | ContainerSpec | DictionarySpec | IntegerSpec;
+export type ValueSpec =
+  | TensorSpec
+  | ContainerSpec
+  | DictionarySpec
+  | IntegerSpec
+  | BooleanSpec
+  | NoneSpec;
 export const isTensorSpec = (value: ValueSpec): value is TensorSpec => 'shape' in value;
 export const isIntegerSpec = (value: ValueSpec): value is IntegerSpec =>
   !isTensorSpec(value) && value.kind === 'int';
@@ -155,12 +169,16 @@ export const shapeText = (s?: ValueSpec) =>
       ? `[${s.shape.join(', ')}]`
       : isIntegerSpec(s)
         ? `int · ${s.value}${typeof s.value === 'string' ? '（符号）' : ''}`
-        : s.kind === 'forward'
-          ? '网络输入'
-          : s.kind === 'dict'
-            ? isDictionarySpec(s)
-              ? `dict · ${Object.keys(s.fields).length} 个字段`
-              : '字典 dict'
-            : '列表 list';
+        : s.kind === 'none'
+          ? 'None'
+          : s.kind === 'bool'
+            ? `bool · ${s.value ? 'True' : 'False'}`
+            : s.kind === 'forward'
+              ? '网络输入'
+              : s.kind === 'dict'
+                ? isDictionarySpec(s)
+                  ? `dict · ${Object.keys(s.fields).length} 个字段`
+                  : '字典 dict'
+                : '列表 list';
 export const clone = <T>(value: T): T => structuredClone(value);
 export const uid = () => crypto.randomUUID();

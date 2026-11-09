@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import type { DictionarySpec, ModelNode, TensorSpec } from '../core/types';
-import { clone, isDictionarySpec } from '../core/types';
+import { clone, isDictionarySpec, isTensorSpec } from '../core/types';
 import {
   checkDictionaryKey,
   DICTIONARY_DTYPES,
@@ -66,7 +66,7 @@ export function DictionaryInputEditor({ node }: { node: ModelNode }) {
           const updateTensor = (update: (tensor: TensorSpec) => void) =>
             change(path, (parent) => {
               const tensor = parent.fields[key];
-              if (isDictionarySpec(tensor)) throw new Error('当前字段不是 Tensor。');
+              if (!isTensorSpec(tensor)) throw new Error('当前字段不是 Tensor。');
               update(tensor);
             });
           return (
@@ -94,7 +94,7 @@ export function DictionaryInputEditor({ node }: { node: ModelNode }) {
                     });
                   }}
                 />
-                <span>{nested ? 'dict' : 'Tensor'}</span>
+                <span>{nested ? 'dict' : isTensorSpec(value) ? 'Tensor' : 'None'}</span>
                 <button
                   type="button"
                   className="icon-button"
@@ -113,6 +113,8 @@ export function DictionaryInputEditor({ node }: { node: ModelNode }) {
                   <summary>展开 {Object.keys(value.fields).length} 个字段</summary>
                   {fields(value, fieldPath)}
                 </details>
+              ) : !isTensorSpec(value) ? (
+                <code>None</code>
               ) : (
                 <div className="dictionary-tensor-fields">
                   <label>

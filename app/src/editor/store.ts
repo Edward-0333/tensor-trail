@@ -275,7 +275,10 @@ export const useEditor = create<EditorState>((set, get) => ({
         throw new Error('输入数量请选择 1–16。');
       if (
         (['Concat', 'Stack'].includes(node.type) && key === 'input_count') ||
-        (node.type === 'View' && key === 'shape')
+        (['View', 'Reshape', 'Zeros'].includes(node.type) && key === 'shape') ||
+        (node.type === 'Repeat' && key === 'repeats') ||
+        (node.type === 'DictionaryPack' && key === 'keys') ||
+        (node.type === 'PlutoCode' && key === 'operation')
       ) {
         const changed = { ...node, params: { ...node.params, [key]: value } };
         const remaining = new Set(ports(changed, registry).inputs.map((port) => port.id));

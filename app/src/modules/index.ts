@@ -18,10 +18,17 @@ import { elementwiseModules } from './elementwise';
 import { toVector } from './toVector';
 import { joiningModules } from './joining';
 import { featureMathModules } from './featureMath';
+import { sequenceOps } from './sequenceOps';
+import { installAgentCompletion } from './agentCompletion';
+import { mapOps } from './mapOps';
+import { installMapEncoder } from './mapEncoder';
+import { installNAT } from './natSequence';
+import { maskedWriteModules } from './maskedWrite';
 export const registry = new ModuleRegistry();
-primitives.forEach((def) => registry.register(def));
+primitives.filter((def) => def.type !== 'Reshape').forEach((def) => registry.register(def));
 joiningModules.forEach((def) => registry.register(def));
 featureMathModules.forEach((def) => registry.register(def));
+mapOps.forEach((def) => registry.register(def));
 containerInputs.forEach((def) => registry.register(def));
 calculationModules.forEach((def) => registry.register(def));
 indexingModules.forEach((def) => registry.register(def));
@@ -38,3 +45,15 @@ registry.register(toVector);
 registry.register(submodule);
 registry.register(calculationGroup);
 installComposites(registry);
+sequenceOps.forEach((def) => registry.register(def));
+maskedWriteModules.forEach((def) => registry.register(def));
+installNAT(registry);
+
+installAgentCompletion(registry);
+
+installMapEncoder(registry);
+
+import { plutoForwardOps } from './plutoForwardOps';
+import { installPlutoForward } from './plutoForward';
+plutoForwardOps.forEach((def) => registry.register(def));
+installPlutoForward(registry);

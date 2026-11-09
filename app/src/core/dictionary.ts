@@ -1,4 +1,4 @@
-import type { DictionarySpec, Dim, TensorSpec } from './types';
+import type { DictionarySpec, Dim, TensorSpec, NoneSpec } from './types';
 
 export const DICTIONARY_SCHEMA_LIMIT = 64_000;
 export const DICTIONARY_DTYPES = [
@@ -67,9 +67,13 @@ export function parseDictionarySchema(text: unknown): DictionarySpec {
     throw new Error('字典结构描述格式无效。');
   }
   let count = 0;
-  const walk = (value: unknown, depth: number): DictionarySpec | TensorSpec => {
+  const walk = (value: unknown, depth: number): DictionarySpec | TensorSpec | NoneSpec => {
     check(++count <= 256 && depth <= 8, '字典最多 256 个条目、8 层嵌套。');
     check(record(value), '字段必须是字典或 Tensor 描述。');
+    if (value.kind === 'none') {
+      check(Object.keys(value).length === 1, 'None 描述只包含 kind="none"。');
+      return { kind: 'none' };
+    }
     if (value.kind === 'dict') {
       check(
         Object.keys(value).every((key) => ['kind', 'fields'].includes(key)) && record(value.fields),

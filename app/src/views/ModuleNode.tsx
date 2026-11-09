@@ -1,3 +1,5 @@
+import { plutoCodeTypes, plutoOperationLabel } from '../modules/plutoForwardOps';
+import { plutoCompositeTypes } from '../modules/plutoForward';
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { useUpdateNodeInternals, type Node, type NodeProps } from '@xyflow/react';
 import { ChevronRight, AlertCircle, ArrowUpRight } from 'lucide-react';
@@ -13,9 +15,11 @@ import { orderGraph } from '../core/graph';
 import { unsqueezeLabel } from '../modules/unsqueeze';
 import { anyLabel } from '../modules/logical';
 import { castLabel } from '../modules/cast';
-import { viewLabel } from '../modules/featureMath';
 import { functionTitle } from '../core/hierarchy';
 import type { LocalParameterColor } from './localParameterColors';
+import { agentCompositeTypes, agentCodeTypes } from '../modules/agentCompletion';
+import { mapCompositeTypes } from '../modules/mapEncoder';
+import { natCompositeTypes } from '../modules/natSequence';
 
 export type TrailNode = Node<
   {
@@ -52,7 +56,7 @@ export const tone = (category: string) =>
 export const categoryColor = (category: string) => `var(--category-${tone(category)})`;
 
 export const isTensorNode = (type: string) =>
-  ['Input', 'Output', 'Inlet', 'Outlet', 'TensorVariable'].includes(type);
+  ['Input', 'Output', 'Inlet', 'Outlet', 'TensorVariable', 'ValueVariable'].includes(type);
 
 const elementwiseLabels: Record<string, string> = {
   BitwiseAnd: '&',
@@ -61,15 +65,48 @@ const elementwiseLabels: Record<string, string> = {
   ZerosLike: 'zeros_like',
   AlignTrailingDims: '尾部补维',
 };
-const featureOperations = ['Cos', 'Sin', 'IntegerMultiply', 'View', 'Flatten'];
+const featureOperations = [
+  'IntegerGreater',
+  'Squeeze',
+  'Cos',
+  'Sin',
+  'IntegerMultiply',
+  'View',
+  'Permute',
+  'Flatten',
+  'BooleanIndex',
+  'Contiguous',
+  'Zeros',
+  'BooleanAssign',
+  'IndexAssign',
+  'RepeatBatch',
+  'Repeat',
+  'Reshape',
+  'ReduceMax',
+  'ReduceSum',
+];
 
 function operationText(node: ModelNode): string {
   try {
+    const plutoLabel = plutoOperationLabel(node);
+    if (plutoLabel) return plutoLabel;
     if (elementwiseLabels[node.type]) return elementwiseLabels[node.type];
     if (node.type === 'Cos') return 'cos()';
     if (node.type === 'Sin') return 'sin()';
     if (node.type === 'IntegerMultiply') return '× int';
-    if (node.type === 'View') return viewLabel(node.params);
+    if (node.type === 'View') return 'view()';
+    if (node.type === 'Permute') return 'permute()';
+    if (node.type === 'BooleanIndex') return 'x[mask]';
+    if (node.type === 'Contiguous') return 'contiguous()';
+    if (node.type === 'Repeat') return 'repeat()';
+    if (node.type === 'Reshape') return 'reshape()';
+    if (node.type === 'ReduceMax') return 'max()';
+    if (node.type === 'ReduceSum') return 'sum()';
+    if (node.type === 'RepeatBatch') return 'repeat(B)';
+    if (node.type === 'IndexAssign')
+      return node.params.dim === 1 ? `x[:, ${node.params.index}] = v` : 'index_put()';
+    if (node.type === 'Zeros') return 'zeros()';
+    if (node.type === 'BooleanAssign') return 'x[mask] = v';
     if (node.type === 'Flatten')
       return `flatten(${node.params.start_dim ?? 1}, ${node.params.end_dim ?? -1})`;
     if (node.type === 'ToVector') return functionTitle(node.label);
@@ -83,7 +120,7 @@ function operationText(node: ModelNode): string {
     if (node.type === 'Any') return anyLabel(node.params);
     if (node.type === 'Invert') return '~';
     if (node.type === 'Cast') return castLabel(node.params);
-    if (node.type === 'TensorSize') return `shape · 读取轴 ${node.params.axes}`;
+    if (node.type === 'TensorSize') return 'size()';
     if (node.type === 'Compute')
       return parseCalculations(node.params.operations).map(calculationLabel).join(' › ');
   } catch {
@@ -264,17 +301,20 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
   if (isTensorNode(model.type)) {
     const spec = result?.outputs.out ?? result?.inputs.in;
     const shape = spec ? shapeText(spec) : bad ? '待修正' : '等待输入';
-    const tensorRole =
-      model.type === 'TensorVariable'
-        ? 'tensor-variable'
-        : ['Input', 'Inlet'].includes(model.type)
-          ? 'tensor-input'
-          : 'tensor-output';
+    const tensorRole = ['TensorVariable', 'ValueVariable'].includes(model.type)
+      ? 'tensor-variable'
+      : ['Input', 'Inlet'].includes(model.type)
+        ? 'tensor-input'
+        : 'tensor-output';
     return (
       <div
         className={`tensor-node ${spec && isIntegerSpec(spec) ? 'integer-value-node' : ''} ${tensorRole} ${data.reverse ? 'flow-left' : ''} ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
         data-testid={`node-${model.id}`}
-        aria-label={model.type === 'TensorVariable' ? `张量变量 ${model.label}` : undefined}
+        aria-label={
+          ['TensorVariable', 'ValueVariable'].includes(model.type)
+            ? `张量变量 ${model.label}`
+            : undefined
+        }
         style={
           background
             ? ({ '--tensor-bg': background, '--tensor-ink': ink } as CSSProperties)
@@ -332,7 +372,13 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
     );
   }
 
-  if (model.type === 'Submodule') {
+  if (
+    model.type === 'Submodule' ||
+    natCompositeTypes.has(model.type) ||
+    agentCompositeTypes.has(model.type) ||
+    mapCompositeTypes.has(model.type) ||
+    plutoCompositeTypes.has(model.type)
+  ) {
     const pending = outputs.length === 0;
     const bodyHeight = Math.max(48, Math.max(inputs.length, outputs.length) * 24 + 24);
     const hasTop = inputSide === 'top' || (outputs.length > 0 && outputSide === 'top');
@@ -354,7 +400,19 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
           className={`submodule-body ${pending ? 'pending' : ''}`}
           style={{ minHeight: bodyHeight }}
         >
-          {bad ? '查看输入或内部提示' : pending ? '内部流程待完善' : '子模块 · forward()'}
+          {bad
+            ? '查看输入或内部提示'
+            : pending
+              ? '内部流程待完善'
+              : model.type === 'EgoHistoryBranch'
+                ? model.params.use_ego_history
+                  ? '条件为假 · 保留历史编码'
+                  : '条件为真 · 替换自车编码'
+                : model.type === 'ReferencePlanningBranch'
+                  ? model.params.available
+                    ? 'R > 0 · 规划解码'
+                    : 'R = 0 · 返回 None'
+                  : '子模块 · forward()'}
         </div>
         <PortHandles
           inputs={inputs}
@@ -430,13 +488,18 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
     );
   }
 
-  if (model.type === 'Function') {
+  if (
+    model.type === 'Function' ||
+    model.type === 'CodeFunction' ||
+    agentCodeTypes.has(model.type) ||
+    plutoCodeTypes.has(model.type)
+  ) {
     return (
       <div
         className={`compact-operation-node function-node tone-${tone(data.category)} ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
         data-testid={`node-${model.id}`}
         aria-label={`函数：${model.label}`}
-        title={`${model.label} · 在右侧查看和编辑数学公式`}
+        title={`${model.label} · ${model.type === 'CodeFunction' || agentCodeTypes.has(model.type) || plutoCodeTypes.has(model.type) ? '在右侧查看函数代码与参数' : '在右侧查看和编辑数学公式'}`}
       >
         <PortHandles
           inputs={inputs}
@@ -471,7 +534,7 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
           ),
         }}
       >
-        <code title={`读取轴 ${model.params.axes}`}>Size · 轴 {model.params.axes}</code>
+        <code>{operationText(model)}</code>
         <PortHandles
           inputs={inputs}
           outputs={outputs}

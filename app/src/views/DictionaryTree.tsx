@@ -1,5 +1,5 @@
 import type { DictionarySpec } from '../core/types';
-import { isDictionarySpec, shapeText } from '../core/types';
+import { isDictionarySpec, isTensorSpec, shapeText } from '../core/types';
 
 export function DictionaryTree({ value }: { value: DictionarySpec }) {
   return (
@@ -17,7 +17,8 @@ export function DictionaryTree({ value }: { value: DictionarySpec }) {
             <>
               <code>{key}</code>
               <span>
-                {shapeText(child)} · {child.dtype}
+                {shapeText(child)}
+                {isTensorSpec(child) ? ` · ${child.dtype}` : ''}
               </span>
             </>
           )}
