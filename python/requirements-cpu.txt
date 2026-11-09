@@ -1,0 +1,13 @@
+# Core packages matched to the verified local CPU PyTorch environment.
+--extra-index-url https://download.pytorch.org/whl/cpu
+filelock==3.29.0
+fsspec==2026.9.0
+Jinja2==3.1.6
+MarkupSafe==3.0.3
+mpmath==1.3.0
+networkx==3.6.1
+numpy==1.26.4
+setuptools==70.2.0
+sympy==1.14.0
+torch==2.11.0+cpu
+typing_extensions==4.15.0

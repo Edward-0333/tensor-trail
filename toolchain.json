@@ -1,0 +1,8 @@
+{
+  "node": "24.22.2",
+  "npm": "11.19.1",
+  "electron": "45.2.3",
+  "electronBuilder": "26.18.0",
+  "windowsNodeArchiveSha256": "ca1bff5d8ead13c9f2ea404a176db46bd430704d5b5113734049fa365e7799e2",
+  "note": "Versions checked on 2026-11-09. Electron 45.2.3 Windows runtime installed and D3/D4 verified; electron-builder is reserved for D6."
+}

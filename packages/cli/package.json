@@ -1,0 +1,15 @@
+{
+  "name": "@tensor-trail/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "tensor-trail-agent": "scripts/agent.mjs"
+  },
+  "scripts": {
+    "test": "node scripts/test-cli.mjs"
+  },
+  "dependencies": {
+    "@tensor-trail/model-core": "0.1.0"
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "name": "tensor-trail",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "packageManager": "npm@11.19.1",
+  "scripts": {
+    "dev:web": "npm run dev --workspace=@tensor-trail/web --",
+    "build": "npm run build:web && npm run build:agent",
+    "build:web": "npm run typecheck && npm run build --workspace=@tensor-trail/web",
+    "build:agent": "npm run build --workspace=@tensor-trail/model-core",
+    "agent": "node packages/cli/scripts/agent.mjs",
+    "test": "npm run build:agent && vitest run",
+    "test:cli": "npm run build:agent && npm test --workspace=@tensor-trail/cli",
+    "preview": "npm run preview --workspace=@tensor-trail/web --",
+    "typecheck": "tsc -p tsconfig.json && tsc -p packages/model-core/tsconfig.json",
+    "setup:desktop": "node scripts/ensure-electron.cjs",
+    "build:desktop": "npm run typecheck && npm run build --workspace=@tensor-trail/desktop",
+    "dev:desktop": "npm run setup:desktop && npm run build:main --workspace=@tensor-trail/desktop && node scripts/desktop.cjs --dev",
+    "desktop": "npm run setup:desktop && npm run build:desktop && node scripts/desktop.cjs",
+    "test:desktop": "npm run build:agent && npm run setup:desktop && npm run build:desktop && node scripts/test-desktop.cjs",
+    "test:desktop:experience": "npm run build:agent && npm run setup:desktop && npm run build:desktop && node scripts/test-desktop-experience.cjs"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "4.7.0",
+    "electron": "45.2.3",
+    "prettier": "3.6.2",
+    "typescript": "5.7.3",
+    "vite": "6.4.4",
+    "vitest": "3.2.7"
+  }
+}

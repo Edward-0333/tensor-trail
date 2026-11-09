@@ -34,7 +34,7 @@ class RuntimeInputTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             snap = export_input_snapshot({'position': torch.zeros(2, 4)}, root/'snapshot.json')
-            self.assertEqual(json.loads((root/'snapshot.json').read_text()), snap)
+            self.assertEqual(json.loads((root/'snapshot.json').read_text(encoding='utf-8')), snap)
             project = {'schemaVersion': 1, 'name': 'pluto', 'variants': [], 'graph': {
                 'nodes': [
                     {'id': 'input1', 'type': 'DictionaryInput', 'definitionVersion': 1,
@@ -48,11 +48,11 @@ class RuntimeInputTests(unittest.TestCase):
                 'edges': [{'id': 'edge', 'source': 'input1', 'sourcePort': 'out', 'target': 'output', 'targetPort': 'in'}],
             }}
             path = root/'project.json'
-            path.write_text(json.dumps(project))
+            path.write_text(json.dumps(project), encoding='utf-8')
             original = path.read_bytes()
             result = update_project(snap, path)
             self.assertEqual(Path(result['backup']).read_bytes(), original)
-            updated = json.loads(path.read_text())
+            updated = json.loads(path.read_text(encoding='utf-8'))
             self.assertEqual(updated['graph']['nodes'][0]['type'], 'ForwardInput')
             self.assertEqual(updated['graph']['edges'], project['graph']['edges'])
             self.assertEqual(updated['graph']['nodes'][1], project['graph']['nodes'][1])
@@ -67,14 +67,14 @@ class RuntimeInputTests(unittest.TestCase):
             path = Path(temporary)/'project.json'
             snapshot = export_input_snapshot({'x': torch.zeros(2)}, Path(temporary)/'input.json')
             project = {'schemaVersion': 1, 'name': 'pluto', 'variants': [], 'graph': {'nodes': [], 'edges': []}}
-            path.write_text(json.dumps(project))
+            path.write_text(json.dumps(project), encoding='utf-8')
             update_project(snapshot, path)
-            self.assertEqual(json.loads(path.read_text())['graph']['nodes'][0]['type'], 'ForwardInput')
+            self.assertEqual(json.loads(path.read_text(encoding='utf-8'))['graph']['nodes'][0]['type'], 'ForwardInput')
             project['graph']['nodes'] = [
                 {'id': 'a', 'type': 'ForwardInput', 'label': 'first'},
                 {'id': 'b', 'type': 'ForwardInput', 'label': 'second'},
             ]
-            path.write_text(json.dumps(project))
+            path.write_text(json.dumps(project), encoding='utf-8')
             before = path.read_bytes()
             with self.assertRaisesRegex(ValueError, 'Multiple inputs'):
                 update_project(snapshot, path)
@@ -88,10 +88,10 @@ class RuntimeInputTests(unittest.TestCase):
                     'label': 'data', 'position': {'x': 420, 'y': 200},
                     'params': {'text': '保留的备注', 'schema': ''}}
             project = {'schemaVersion': 1, 'name': 'pluto', 'variants': [], 'graph': {'nodes': [node], 'edges': []}}
-            path.write_text(json.dumps(project))
+            path.write_text(json.dumps(project), encoding='utf-8')
             for _ in range(2):
                 update_project(snapshot, path, node_id='network')
-                updated = json.loads(path.read_text())['graph']['nodes'][0]
+                updated = json.loads(path.read_text(encoding='utf-8'))['graph']['nodes'][0]
                 self.assertEqual(updated['type'], 'ForwardInput')
                 self.assertEqual(updated['params']['text'], '保留的备注')
                 self.assertEqual(updated['position'], node['position'])
@@ -108,9 +108,9 @@ class RuntimeInputTests(unittest.TestCase):
             project = {'schemaVersion': 1, 'name': 'test', 'variants': [],
                        'hyperparameters': {'history_steps': {'type': 'int', 'value': 10}},
                        'graph': {'nodes': [], 'edges': []}}
-            path.write_text(json.dumps(project))
+            path.write_text(json.dumps(project), encoding='utf-8')
             update_project(snapshot, path)
-            parameters = json.loads(path.read_text())['hyperparameters']
+            parameters = json.loads(path.read_text(encoding='utf-8'))['hyperparameters']
             self.assertEqual(parameters['history_steps']['value'], 10)
             self.assertEqual(parameters['dropout']['type'], 'float')
             self.assertEqual(parameters['enabled']['value'], False)

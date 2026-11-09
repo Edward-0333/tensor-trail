@@ -10,9 +10,9 @@ contributions:
   human: ["提出让 AI 阅读架构并搭建模型的需求"]
   ai: ["实现协议、API、CLI 与画布接入，编写说明"]
 source_files:
-  - "app/src/agent/index.ts"
-  - "app/src/agent/canvas.ts"
-  - "app/scripts/agent.mjs"
+  - "projects/neural-network-visualizer/packages/model-core/src/agent/index.ts"
+  - "projects/neural-network-visualizer/packages/model-core/src/agent/canvas.ts"
+  - "projects/neural-network-visualizer/packages/cli/scripts/agent.mjs"
 review_status: "unreviewed"
 tags: [项目, Tensor, AI, API]
 ---
@@ -25,16 +25,16 @@ tags: [项目, Tensor, AI, API]
 
 ## 快速开始
 
-在 app/ 中执行。已安装依赖可跳过 npm ci。
+在项目根目录执行。依赖统一从根锁文件安装；本机也可用 `node scripts/npm.cjs` 替代 npm。
 
 ```sh
 npm ci
 npm run build:agent
-node scripts/agent.mjs describe
-node scripts/agent.mjs schema recipe
-node scripts/agent.mjs build examples/cnn-transformer.recipe.json --out model.json
-node scripts/agent.mjs validate model.json
-node scripts/agent.mjs patch model.json examples/swiglu.patch.json --out swiglu-model.json
+node packages/cli/scripts/agent.mjs describe
+node packages/cli/scripts/agent.mjs schema recipe
+node packages/cli/scripts/agent.mjs build examples/cnn-transformer.recipe.json --out model.json
+node packages/cli/scripts/agent.mjs validate model.json
+node packages/cli/scripts/agent.mjs patch model.json examples/swiglu.patch.json --out swiglu-model.json
 ```
 
 用网页“打开”按钮打开生成的 model.json；或点击 **AI 构建**，粘贴 Recipe，依次“检查形状”“应用到画布”。“修改当前模型”接收 Patch，整批作为一次操作，可一次撤销。面板新建时保留“我的变体”。
@@ -64,7 +64,7 @@ node scripts/agent.mjs patch model.json examples/swiglu.patch.json --out swiglu-
 - params 可省略，缺失值取注册表默认值并列入 defaultsApplied；不会根据上游尺寸自动改通道数或 d_model。未知字段、未知参数、非法类型/范围/枚举会被拒绝。
 - 自动生成位置和组合模块内部子图，输出完整项目仍为 schemaVersion: 1。顶层至少一个输入（Input 或 ForwardInput）和 Output；必需输入必须连接，禁止环路、悬空端点和同一输入端口多条边。
 - Input.shape 是逗号分隔文本。默认 axes 适用于三维 [batch, sequence, feature]；其他维度明确指定 axes，或设 `axes: ""` 自动命名。符号尺寸如 `B, T, 64` 可能产生尚不能确认的约束警告。
-- Transformer 默认 [B,T,D]，Conv1d 为 [B,C,L]，通常用 Permute 转换。完整示例见 app/examples/cnn-transformer.recipe.json。
+- Transformer 默认 [B,T,D]，Conv1d 为 [B,C,L]，通常用 Permute 转换。完整示例见 examples/cnn-transformer.recipe.json。
 
 ### Q/K/V 三输入注意力
 
@@ -72,25 +72,25 @@ node scripts/agent.mjs patch model.json examples/swiglu.patch.json --out swiglu-
 
 Q `[B,Tq,d_model]`、K `[B,Tk,kdim]`、V `[B,Tk,vdim]`，输出 `[B,Tq,d_model]`；三路 batch 和浮点 dtype 必须一致，K/V 序列长度必须相同。Q 长度可独立变化。连接相同来源可做自注意力，连接不同来源可做交叉注意力。`causal` 标记按序列索引屏蔽未来位置，未实现外部 mask 或 KV Cache 位置偏移。
 
-示例 `app/examples/cross-attention.recipe.json` 展示不同序列长度与 K/V 特征宽度：
+示例 `examples/cross-attention.recipe.json` 展示不同序列长度与 K/V 特征宽度：
 
 ```sh
-node scripts/agent.mjs describe MultiheadAttention
-node scripts/agent.mjs build examples/cross-attention.recipe.json --out cross-attention.json
-node scripts/agent.mjs validate cross-attention.json
+node packages/cli/scripts/agent.mjs describe MultiheadAttention
+node packages/cli/scripts/agent.mjs build examples/cross-attention.recipe.json --out cross-attention.json
+node packages/cli/scripts/agent.mjs validate cross-attention.json
 ```
 
 配方中的连接为 `query.out → attention.q`、`key.out → attention.k`、`value.out → attention.v`、`attention.out → output.in`。展开诊断路径 `attention/q_heads`、`attention/k_heads`、`attention/v_heads` 和 `attention/scores` 可观察多头与矩形注意力分数形状。缺失任一路输入或尺寸不兼容会阻断输出。
 
 ## Forward 输入
 
-`ForwardInput` 无输入端口，输出端口为 `out`。画布以简单矩形显示 `label`，默认“Forward输入”；无需填写形状。参数 `text` 是可选备注（默认空字符串，最多 1999 字符），保存在右侧属性中，不在画布另加内容框。示例为 `app/examples/structured-input.recipe.json`。
+`ForwardInput` 无输入端口，输出端口为 `out`。画布以简单矩形显示 `label`，默认“Forward输入”；无需填写形状。参数 `text` 是可选备注（默认空字符串，最多 1999 字符），保存在右侧属性中，不在画布另加内容框。示例为 `examples/structured-input.recipe.json`。
 
 结果中的 `ValueSpec`：Tensor 保持 `{shape, axes, dtype}`；Forward 输入为 `{kind: "forward", text}`。读取形状前需判断 `"shape" in value`。Forward 输入可通过 Identity、Output 和自定义子图边界传递，直接连接张量算子会报告类型错误。
 
 旧项目和旧 Recipe 中的 `DictInput`、`ListInput` 兼容转换为 `ForwardInput`，模块目录和新 Schema 只公开 ForwardInput。转换保留自定义名称、备注与连线；旧默认名称改为“Forward输入”。
 
-`node scripts/agent.mjs build examples/structured-input.recipe.json --out forward-input.json`
+`node packages/cli/scripts/agent.mjs build examples/structured-input.recipe.json --out forward-input.json`
 
 ## 切片与计算模块
 
@@ -101,15 +101,15 @@ node scripts/agent.mjs validate cross-attention.json
 - `invert` 只接受 bool/int64，保持形状；`any` 输出 bool，dim=null 归约全部轴，dim 为整数则只归约指定轴。keepdim=true 将被归约轴保留为长度 1，否则删除这些轴，全部删除后形状为标量 `[]`。
 - 所有运算仍为形状和类型推导，不执行 PyTorch 或数值计算。组合中的错误会注明失败步骤；原模型和画布在应用前保持不变。
 
-完整示例为 `app/examples/calculation.recipe.json`，可以直接 build、validate 并在网页导入；其中输出应为 `[2,3]`、dtype 为 bool。网页逐轴编辑仍序列化为 Input.params.axes 的逗号分隔文本，旧 Recipe 保持兼容。
+完整示例为 `examples/calculation.recipe.json`，可以直接 build、validate 并在网页导入；其中输出应为 `[2,3]`、dtype 为 bool。网页逐轴编辑仍序列化为 Input.params.axes 的逗号分隔文本，旧 Recipe 保持兼容。
 
 ## API 与返回结果
 
-源码入口 app/src/agent/index.ts，构建后的 ESM 入口 app/dist-agent/tensor-trail-agent.js，不依赖 React、DOM 或 localStorage。修改注册表后重新 build:agent；构建产物不提交。
+源码入口 packages/model-core/src/agent/index.ts，构建后的 ESM 入口 packages/model-core/dist/tensor-trail-agent.js，不依赖 React、DOM 或 localStorage。修改注册表后重新 build:agent；构建产物不提交。
 
 ```js
 import { describeModules, getSchemas, buildModel, validateModel, patchModel }
-  from './dist-agent/tensor-trail-agent.js';
+  from './packages/model-core/dist/tensor-trail-agent.js';
 const catalog = describeModules();   // 默认不含内部边界模块
 const all = describeModules(true);   // 包括 Block、Inlet、Outlet
 const schemas = getSchemas();        // recipe / patch，Draft 2020-12

@@ -1,17 +1,29 @@
+# 用户资料和参考源码仅在本地保存。
+/data/
+/references/
+/docs/local/
+/.tools/
+/release/
+
+# 本地开发环境及产物
 node_modules/
-.npm-cache/
+.venv/
+.conda/
+__pycache__/
 dist/
 dist-agent/
 build/
 coverage/
+.npm-cache/
 *.tsbuildinfo
-*.log
+test-results/
+playwright-report/
 .env
+.env.local
 .env.*
 !.env.example
-.DS_Store
-Thumbs.db
-references/
-.publish/
-__pycache__/
+*.log
+
+# 迁移前的 Git 副本与恢复备份。
+/.publish/
 *.py[cod]

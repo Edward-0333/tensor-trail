@@ -1,0 +1,252 @@
+{
+  "date": "2026-11-09",
+  "scope": "D5 Windows development build, Electron process DPI override; system-wide display settings unchanged",
+  "machine": {
+    "platform": "win32",
+    "release": "10.0.22000",
+    "cpu": "12th Gen Intel(R) Core(TM) i9-12900H",
+    "cores": 20,
+    "memoryGiB": 16
+  },
+  "runtime": {
+    "node": "24.22.2",
+    "electron": "45.2.3"
+  },
+  "fixture": {
+    "bytes": 851124,
+    "rootNodes": 66,
+    "rootEdges": 83,
+    "recursiveNodes": 1031,
+    "recursiveEdges": 1151,
+    "originalSha256": "06c753de4c77c76e5b9c0eb41ff2d5eb56105bdd06e401f6697043feb311c955",
+    "originalUnchanged": true
+  },
+  "method": {
+    "baselineSource": "D5 entry backup; only Canvas.tsx, EdgeJunctions.tsx and main/files.ts replaced for baseline build, then restored",
+    "baselineArtifact": "experience-baseline-1794206224047",
+    "verifiedArtifact": "experience-verified-1794206448825",
+    "open": "native open click to expected public revision and rendered node count plus two requestAnimationFrame callbacks; includes polling and IPC overhead",
+    "drag": "20 native mouse moves with leftbuttondown; pointer-up to two animation frames; rAF intervals observed through 100ms after model movement",
+    "dpi": "force-device-scale-factor with real devicePixelRatio assertion at 1, 1.25, 1.5",
+    "repetitions": "one initial open and two warm opens per scale; local samples only"
+  },
+  "cases": [
+    "DPI applied",
+    "native open user copy",
+    "layout screenshots",
+    "native node drag",
+    "minimum-900x640-controls-and-status",
+    "user-copy-subgraph-enter-return-without-mutation",
+    "panel-toggle-without-model-change",
+    "native-box-selection",
+    "library-drag-add-and-click-no-add",
+    "native-port-connection",
+    "top-bottom-port-layout",
+    "shared-wire-move-atomic-undo-redo",
+    "escape-cancels-wire-preview",
+    "native-edge-label-drag",
+    "native-manual-control-point",
+    "pluto-nat-enter-and-breadcrumb-return",
+    "layout-and-routes-save-reopen",
+    "built-in-pluto-forward-input-example"
+  ],
+  "results": [
+    {
+      "scale": 1,
+      "layout": [
+        {
+          "width": 1424,
+          "height": 835,
+          "dpr": 1,
+          "issues": [],
+          "headerOverflow": false,
+          "bodyOverflow": false,
+          "nativeWidth": 1440,
+          "title": "用于验证窗口状态的长项目文件名称用于验证窗口状态的长项目文件名称用于验证窗口状态的长项目文件名称用于验证窗口状态的长项目文件名称.tensor-trail.json — Tensor Trail"
+        },
+        {
+          "width": 1084,
+          "height": 835,
+          "dpr": 1,
+          "issues": [],
+          "headerOverflow": false,
+          "bodyOverflow": false,
+          "nativeWidth": 1100,
+          "title": "用于验证窗口状态的长项目文件名称用于验证窗口状态的长项目文件名称用于验证窗口状态的长项目文件名称用于验证窗口状态的长项目文件名称.tensor-trail.json — Tensor Trail"
+        },
+        {
+          "width": 884,
+          "height": 835,
+          "dpr": 1,
+          "issues": [],
+          "headerOverflow": false,
+          "bodyOverflow": false,
+          "nativeWidth": 900,
+          "title": "用于验证窗口状态的长项目文件名称用于验证窗口状态的长项目文件名称用于验证窗口状态的长项目文件名称用于验证窗口状态的长项目文件名称.tensor-trail.json — Tensor Trail"
+        }
+      ],
+      "minimumWindow": {
+        "width": 884,
+        "height": 575,
+        "overflow": false,
+        "blocked": []
+      },
+      "before": {
+        "loadMs": [861.3, 651.4, 565],
+        "dragMs": 657,
+        "pointerUpToTwoFrames": 70.80000000074506,
+        "frames": 51,
+        "frameMedian": 13.300000000000182,
+        "frameP95": 13.5,
+        "longTasks": []
+      },
+      "after": {
+        "loadMs": [837.4, 534.3, 543.9],
+        "dragMs": 670,
+        "pointerUpToTwoFrames": 69.10000000149012,
+        "frames": 52,
+        "frameMedian": 13.300000000000182,
+        "frameP95": 13.600000000000364,
+        "longTasks": []
+      },
+      "caseCount": 18,
+      "childProcessesExited": true
+    },
+    {
+      "scale": 1.25,
+      "layout": [
+        {
+          "width": 1428,
+          "height": 844,
+          "dpr": 1.25,
+          "issues": [],
+          "headerOverflow": false,
+          "bodyOverflow": false,
+          "nativeWidth": 1440,
+          "title": "用于验证窗口状态的长项目文件名称用于验证窗口状态的长项目文件名称用于验证窗口状态的长项目文件名称用于验证窗口状态的长项目文件名称.tensor-trail.json — Tensor Trail"
+        },
+        {
+          "width": 1088,
+          "height": 844,
+          "dpr": 1.25,
+          "issues": [],
+          "headerOverflow": false,
+          "bodyOverflow": false,
+          "nativeWidth": 1100,
+          "title": "用于验证窗口状态的长项目文件名称用于验证窗口状态的长项目文件名称用于验证窗口状态的长项目文件名称用于验证窗口状态的长项目文件名称.tensor-trail.json — Tensor Trail"
+        },
+        {
+          "width": 888,
+          "height": 844,
+          "dpr": 1.25,
+          "issues": [],
+          "headerOverflow": false,
+          "bodyOverflow": false,
+          "nativeWidth": 900,
+          "title": "用于验证窗口状态的长项目文件名称用于验证窗口状态的长项目文件名称用于验证窗口状态的长项目文件名称用于验证窗口状态的长项目文件名称.tensor-trail.json — Tensor Trail"
+        }
+      ],
+      "minimumWindow": {
+        "width": 888,
+        "height": 586,
+        "overflow": false,
+        "blocked": []
+      },
+      "before": {
+        "loadMs": [892.5, 548.2, 563],
+        "dragMs": 672,
+        "pointerUpToTwoFrames": 67.30000000074506,
+        "frames": 53,
+        "frameMedian": 13.300000000000182,
+        "frameP95": 14.099999999999909,
+        "longTasks": []
+      },
+      "after": {
+        "loadMs": [813.7, 541.2, 534.6],
+        "dragMs": 662,
+        "pointerUpToTwoFrames": 65.80000000074506,
+        "frames": 53,
+        "frameMedian": 13.300000000000182,
+        "frameP95": 13.700000000000273,
+        "longTasks": []
+      },
+      "caseCount": 18,
+      "childProcessesExited": true
+    },
+    {
+      "scale": 1.5,
+      "layout": [
+        {
+          "width": 1431,
+          "height": 848,
+          "dpr": 1.5,
+          "issues": [],
+          "headerOverflow": false,
+          "bodyOverflow": false,
+          "nativeWidth": 1441,
+          "title": "用于验证窗口状态的长项目文件名称用于验证窗口状态的长项目文件名称用于验证窗口状态的长项目文件名称用于验证窗口状态的长项目文件名称.tensor-trail.json — Tensor Trail"
+        },
+        {
+          "width": 1090,
+          "height": 848,
+          "dpr": 1.5,
+          "issues": [],
+          "headerOverflow": false,
+          "bodyOverflow": false,
+          "nativeWidth": 1100,
+          "title": "用于验证窗口状态的长项目文件名称用于验证窗口状态的长项目文件名称用于验证窗口状态的长项目文件名称用于验证窗口状态的长项目文件名称.tensor-trail.json — Tensor Trail"
+        },
+        {
+          "width": 890,
+          "height": 848,
+          "dpr": 1.5,
+          "issues": [],
+          "headerOverflow": false,
+          "bodyOverflow": false,
+          "nativeWidth": 900,
+          "title": "用于验证窗口状态的长项目文件名称用于验证窗口状态的长项目文件名称用于验证窗口状态的长项目文件名称用于验证窗口状态的长项目文件名称.tensor-trail.json — Tensor Trail"
+        }
+      ],
+      "minimumWindow": {
+        "width": 890,
+        "height": 588,
+        "overflow": false,
+        "blocked": []
+      },
+      "before": {
+        "loadMs": [818, 569.1, 536.8],
+        "dragMs": 657,
+        "pointerUpToTwoFrames": 76.19999999925494,
+        "frames": 51,
+        "frameMedian": 13.300000000000182,
+        "frameP95": 13.599999999999909,
+        "longTasks": []
+      },
+      "after": {
+        "loadMs": [843.3, 525.1, 518.4],
+        "dragMs": 668,
+        "pointerUpToTwoFrames": 64.89999999850988,
+        "frames": 53,
+        "frameMedian": 13.399999999999636,
+        "frameP95": 14,
+        "longTasks": []
+      },
+      "caseCount": 18,
+      "childProcessesExited": true
+    }
+  ],
+  "regression": {
+    "unitTestFiles": 49,
+    "unitTests": 872,
+    "desktopFileFlowObservations": 37,
+    "webBuild": true,
+    "desktopBuild": true,
+    "cli": true
+  },
+  "limitations": [
+    "Per-process DPI cases on this Windows computer; no physical multi-monitor DPI transition or system settings change.",
+    "Native dialog answers are controlled by the harness; real picker visual layout and subjective mouse feel are not certified.",
+    "Web shared code tested and built; no independent browser mouse performance comparison.",
+    "Installation, signing, auto-update and Python worker remain outside D5."
+  ]
+}
