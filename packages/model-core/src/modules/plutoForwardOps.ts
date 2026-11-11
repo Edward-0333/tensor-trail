@@ -47,7 +47,7 @@ function dictionaryKeys(p: Params): string[] {
     keys.length >= 1 && keys.length <= 32 && new Set(keys).size === keys.length,
     '需要 1–32 个不重复的字段名。',
   );
-  keys.forEach(checkDictionaryKey);
+  keys.forEach((key) => checkDictionaryKey(key));
   requireThat(
     keys.every((k) => /^[A-Za-z][A-Za-z0-9_]*$/.test(k)),
     '字段名需要字母开头，由字母、数字和下划线组成。',
@@ -97,7 +97,7 @@ export const plutoForwardOps: ModuleDefinition[] = [
     type: 'ValueVariable',
     label: '值变量',
     category: '输入输出',
-    description: '命名并传递 Tensor、字典、Python bool 或 None；保留实际类型。',
+    description: '命名并传递 Tensor、模块引用、tuple/list、容器说明、整数、torch.Size、Python bool 或 None；保留实际类型。',
     fields: [],
     inputs: input,
     outputs: output,

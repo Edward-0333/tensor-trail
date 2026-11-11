@@ -10,6 +10,7 @@ const api: DesktopApi = {
   pickOpen: (state) => ipcRenderer.invoke(CHANNEL.open, state),
   pickSave: (name, state) => ipcRenderer.invoke(CHANNEL.saveAs, name, state),
   readFile: (key) => ipcRenderer.invoke(CHANNEL.read, key),
+  readRelatedFile: (key, relativePath) => ipcRenderer.invoke(CHANNEL.readRelated, key, relativePath),
   writeFile: (key, text, state) => ipcRenderer.invoke(CHANNEL.write, key, text, state),
   confirmDiscard: () => ipcRenderer.invoke(CHANNEL.discard),
   closeResponse: (requestId, state, approved) =>

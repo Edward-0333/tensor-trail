@@ -51,8 +51,59 @@ try {
   assert.equal(run(['validate', '-'], 0, unchanged).ok, true);
   run(['validate', '-'], 2, '{');
   run(['unknown'], 2);
+  const draftFile = path.join(temp, 'draft.json');
+  const draftNext = path.join(temp, 'draft-next.json');
+  const partial = {
+    name: 'partial',
+    nodes: [{ id: 'x', type: 'Input', position: { x: 71.5, y: -20 } }],
+    connections: [],
+  };
+  run(['build', '-', '--out', draftFile], 1, JSON.stringify(partial));
+  await assert.rejects(fs.access(draftFile));
+  const builtDraft = run(['build', '-', '--draft', '--out', draftFile], 0, JSON.stringify(partial));
+  assert.equal(builtDraft.mode, 'draft');
+  run(['validate', draftFile], 1);
+  assert.equal(run(['validate', draftFile, '--draft']).ok, true);
+  const addition = {
+    operations: [
+      { op: 'add_node', node: { id: 'new', type: 'Identity' } },
+      { op: 'connect', from: 'x.out', to: 'new.in' },
+    ],
+  };
+  const nextDraft = run(
+    ['patch', draftFile, '-', '--draft', '--out', draftNext],
+    0,
+    JSON.stringify(addition),
+  );
+  assert.deepEqual(nextDraft.project.graph.nodes[0].position, { x: 71.5, y: -20 });
+  assert.equal(nextDraft.mode, 'draft');
+  const auto = run(
+    ['patch', draftFile, '-', '--draft', '--layout', 'auto'],
+    0,
+    JSON.stringify(addition),
+  );
+  assert.notDeepEqual(auto.project.graph.nodes[0].position, { x: 71.5, y: -20 });
+  const protectedBytes = await fs.readFile(draftNext, 'utf8');
+  run(
+    ['patch', draftNext, '-', '--draft', '--out', draftNext, '--force'],
+    1,
+    JSON.stringify({ operations: [{ op: 'connect', from: 'missing.out', to: 'new.in' }] }),
+  );
+  assert.equal(await fs.readFile(draftNext, 'utf8'), protectedBytes);
+  const sidecar = structuredClone(builtDraft.project);
+  sidecar.runtime = {
+    active: 'run',
+    snapshots: [{ id: 'run', name: 'run', file: 'runs/run.json' }],
+  };
+  const unloaded = run(['validate', '-', '--draft'], 0, JSON.stringify(sidecar));
+  assert.ok(unloaded.diagnostics.some((d) => d.code === 'RUNTIME_NOT_LOADED'));
+  assert.deepEqual(unloaded.project.runtime, sidecar.runtime);
+  run(['schema', 'patchOptions']);
+  run(['validate', model, '--layout', 'preserve'], 2);
+  run(['describe', '--draft'], 2);
+  run(['patch', draftFile, '-', '--layout', 'bad'], 2, JSON.stringify(addition));
   console.log(
-    'CLI smoke passed: catalogue, schema, build, structured inputs, validate, patch, stdin, error exits and output preservation.',
+    'CLI smoke passed: catalogue, schema, build, structured inputs, validate, patch, drafts, preserved/automatic layout, sidecar warnings, stdin, error exits and output preservation.',
   );
 } finally {
   // Delete only the unique directory created by this test, within the OS temp folder.

@@ -7,6 +7,9 @@ const valueTypes = new Set([
   'DictionaryInput',
   'LocalParameter',
   'TensorVariable',
+  'ValueVariable',
+  'DeviceVariable',
+  'BufferSource',
   'IntegerParameter',
   'Inlet',
   'Outlet',
@@ -39,7 +42,10 @@ export function linkedValueNodes(graph: Graph, id: string): ModelNode[] {
 export function effectiveValueNode(graph: Graph, node: ModelNode): ModelNode {
   if (node.valueSource === undefined) return node;
   const owner = valueOwner(graph, node);
-  return { ...node, params: owner.params, label: owner.label };
+  const effective = { ...node, params: owner.params, label: owner.label };
+  if (owner.tensorAutograd) effective.tensorAutograd = owner.tensorAutograd;
+  else delete effective.tensorAutograd;
+  return effective;
 }
 
 /** Keep serialized alias metadata useful without making it a second source of truth. */
@@ -49,6 +55,8 @@ export function syncValueLinks(graph: Graph): void {
       const owner = valueOwner(graph, node);
       node.params = clone(owner.params);
       node.label = owner.label;
+      if (owner.tensorAutograd) node.tensorAutograd = clone(owner.tensorAutograd);
+      else delete node.tensorAutograd;
     }
     if (node.subgraph) syncValueLinks(node.subgraph);
   }

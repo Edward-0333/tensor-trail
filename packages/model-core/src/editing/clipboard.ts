@@ -3,6 +3,7 @@ import { clone, uid } from '../core/types';
 import { parseProject } from '../core/serialization';
 import { registry } from '../modules/index';
 import { effectiveValueNode } from '../core/valueLinks';
+import { ifRegionMembers, pruneIfRegions } from '../core/ifRegions';
 
 const prefix = 'tensor-trail-fragment-v1\n';
 export const clipboardText = (fragment: Graph) => prefix + JSON.stringify(fragment);
@@ -57,6 +58,9 @@ export function readClipboard(text: string): Graph | null {
 
 export function copySelection(graph: Graph, ids: string[]): Graph {
   const chosen = new Set(ids);
+  for (const node of graph.nodes)
+    if (chosen.has(node.id) && node.type === 'IfRegion')
+      for (const member of ifRegionMembers(node)) chosen.add(member);
   const nodes = graph.nodes
     .filter((node) => chosen.has(node.id))
     .map((node) => {
@@ -84,6 +88,7 @@ export function copySelection(graph: Graph, ids: string[]): Graph {
     }
   }
   const kept = new Set(nodes.map((n) => n.id));
+  pruneIfRegions({ nodes, edges: [] });
   return clone({
     nodes,
     edges: graph.edges.filter((e) => kept.has(e.source) && kept.has(e.target)),
@@ -94,6 +99,8 @@ export function duplicateSelection(fragment: Graph, offset: number): Graph {
   const copy = clone(fragment),
     ids = new Map(copy.nodes.map((n) => [n.id, uid()]));
   for (const node of copy.nodes) {
+    if (node.type === 'IfRegion')
+      node.params.members = ifRegionMembers(node).map(id => ids.get(id) ?? id).join(',');
     node.id = ids.get(node.id)!;
     if (node.valueSource !== undefined && ids.has(node.valueSource))
       node.valueSource = ids.get(node.valueSource)!;

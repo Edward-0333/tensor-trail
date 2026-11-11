@@ -5,6 +5,8 @@ export interface ProjectFile {
   readonly key?: string;
   readonly name: string;
   readText(): Promise<string>;
+  /** Read-only, project-relative runtime metadata; native host validates the reference. */
+  readRelatedText?(relativePath: string): Promise<string>;
   /** Return false if the caller's document changed before the write could start. */
   writeText(text: string, stillCurrent: () => boolean, version?: DocumentVersion): Promise<boolean>;
 }

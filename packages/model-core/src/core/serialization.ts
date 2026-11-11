@@ -1,9 +1,15 @@
 import type { Graph, ModelNode, Project, Registry } from './types';
-import { graphIssues } from './graph';
+import { graphIssues, orderGraph } from './graph';
+import { planAttributes } from './attributes';
 import { canonicalModuleType } from './inputTypes';
 import { validateHyperparameters } from './hyperparameters';
 import { migrateTensorSelection } from './indexingTypes';
 import { syncValueLinks } from './valueLinks';
+import { isHexColor, validateAutograd } from './tensorAppearance';
+import { parseDictionarySchema } from './dictionary';
+import { validateRuntimeReferences } from './runtimeSnapshot';
+import { checkForEachBody } from './forEach';
+import { checkWhileBody } from './whileLoop';
 function requireThat(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
@@ -19,7 +25,31 @@ const label = (value: unknown): value is string =>
 
 export function parseProject(text: string, registry: Registry): Project {
   requireThat(text.length <= 3_000_000, '项目文件超过 3 MB，第一版暂不支持如此大的项目。');
-  const value: unknown = JSON.parse(text);
+  return validateProjectObject(JSON.parse(text), registry);
+}
+
+/** Validate a private draft directly, avoiding a stringify/parse clone on every edit. */
+export function validateProjectObject(value: unknown, registry: Registry): Project {
+  // Count pretty-printed JSON without allocating a project-sized string or parsing it again.
+  let size = 0;
+  const ancestors = new Set<object>();
+  const count = (item: unknown, depth = 0): void => {
+    requireThat(depth <= 80, 'JSON 嵌套过深。');
+    if (item && typeof item === 'object') {
+      requireThat(!ancestors.has(item), '项目不能包含循环引用。'); ancestors.add(item);
+      const entries = Array.isArray(item) ? item.map(child=>[undefined,child] as const)
+        : Object.entries(item).filter(([,child])=>child!==undefined);
+      size += 2;
+      for (const [key,child] of entries) {
+        size += 2 + (depth+1)*2 + (key === undefined ? 0 : JSON.stringify(key).length+2);
+        count(child,depth+1);
+      }
+      if(entries.length) size += depth*2;
+      ancestors.delete(item);
+    } else size += (JSON.stringify(item) ?? 'null').length;
+    requireThat(size <= 3_000_000, '项目文件超过 3 MB。');
+  };
+  count(value);
   requireThat(
     record(value) && value.schemaVersion === 1,
     '项目格式版本不受支持；需要 schemaVersion=1。',
@@ -30,6 +60,12 @@ export function parseProject(text: string, registry: Registry): Project {
   );
   let total = 0;
   if (value.hyperparameters !== undefined) validateHyperparameters(value.hyperparameters);
+  if (value.runtime !== undefined) validateRuntimeReferences(value.runtime);
+  if (value.tensorPalette !== undefined)
+    requireThat(record(value.tensorPalette) &&
+      Object.keys(value.tensorPalette).length === 3 &&
+      ['on', 'off', 'unknown'].every((key) => isHexColor((value.tensorPalette as Record<string, unknown>)[key])),
+      'Tensor 统一背景色需要 on、off、unknown 三个六位十六进制颜色。');
   const inspect = (candidate: unknown, depth = 0, ownerType?: string): void => {
     requireThat(depth <= 12, '子图嵌套超过 12 层。');
     requireThat(
@@ -59,10 +95,17 @@ export function parseProject(text: string, registry: Registry): Project {
       }
       const def = registry.get(type);
       requireThat(def, `尚未注册模块 ${node.type}。`);
+      if (record(node.params) && ['ForwardInput', 'DictionaryInput'].includes(type) &&
+          node.params.schema !== undefined && node.params.schema !== '') {
+        // Keep malformed legacy text editable; a valid schema is always stored as an object.
+        try { node.params.schema = parseDictionarySchema(node.params.schema); }
+        catch (error) { if (typeof node.params.schema !== 'string') throw error; }
+      }
       requireThat(
         record(node.params) &&
           Object.entries(node.params).every(
             ([key, p]) =>
+              (key === 'schema' && ['ForwardInput', 'DictionaryInput'].includes(type) && record(p)) ||
               (typeof p === 'number' && Number.isFinite(p)) ||
               typeof p === 'boolean' ||
               (typeof p === 'string' &&
@@ -87,10 +130,16 @@ export function parseProject(text: string, registry: Registry): Project {
       );
       const layout = node.portLayout;
       requireThat(
-        node.tensorColor === undefined ||
-          (typeof node.tensorColor === 'string' && /^#[0-9a-fA-F]{6}$/.test(node.tensorColor)),
-        'Tensor 背景色必须为六位十六进制颜色。',
+        (node.tensorColor === undefined || isHexColor(node.tensorColor)) &&
+          (node.tensorBorderColor === undefined || isHexColor(node.tensorBorderColor)),
+        'Tensor 边框色必须为六位十六进制颜色。',
       );
+      if (node.tensorColor !== undefined) {
+        node.tensorBorderColor ??= node.tensorColor;
+        delete node.tensorColor;
+      }
+      if (node.tensorAutograd !== undefined)
+        validateAutograd(node.tensorAutograd, node.type === 'Input' ? String(node.params.dtype) : undefined);
       requireThat(
         layout === undefined ||
           (record(layout) &&
@@ -104,6 +153,8 @@ export function parseProject(text: string, registry: Registry): Project {
       if (def.composite) {
         requireThat(node.subgraph, '组合模块缺少子图。');
         inspect(node.subgraph, depth + 1, type);
+        if (type === 'ForEachTensor') checkForEachBody(node.subgraph as Graph);
+        if (type === 'WhileLoop') checkWhileBody(node as unknown as ModelNode);
       } else requireThat(node.subgraph === undefined, '普通算子不能携带子图。');
       if (node.type === 'Inlet' || node.type === 'Outlet') {
         requireThat(depth > 0, '根图不能使用子图边界节点。');
@@ -115,7 +166,11 @@ export function parseProject(text: string, registry: Registry): Project {
         }
       }
     }
-    if (depth > 0)
+    // Constructor provenance has no forward inputs, but must expose one result.
+    if (depth > 0 && ['EmbeddingXYZInit', 'EmbeddingXYZModuleInit'].includes(ownerType ?? ''))
+      requireThat(inlet.size === 0 && outlet.size === 1 && outlet.has('out'),
+        'Embedding 初始化子图不能接收 forward 输入，且必须有唯一 out 出口。');
+    else if (depth > 0)
       requireThat(
         inlet.size > 0 && (outlet.size > 0 || ownerType === 'Submodule'),
         ownerType === 'Submodule'
@@ -154,7 +209,17 @@ export function parseProject(text: string, registry: Registry): Project {
     requireThat(!issues.length, issues.join('\n'));
     syncValueLinks(candidate as unknown as Graph);
   };
+  const checkAttributeCycles = (graph: Graph) => {
+    const plan = planAttributes(graph);
+    requireThat(!plan.issues.length, plan.issues.join('\n'));
+    const visit = (g: Graph, path: string[] = []) => {
+      orderGraph(g, plan.dependencies.get(JSON.stringify(path)));
+      for (const node of g.nodes) if (node.subgraph) visit(node.subgraph, [...path, node.id]);
+    };
+    visit(graph);
+  };
   inspect(value.graph);
+  checkAttributeCycles(value.graph as Graph);
   const ids = new Set<string>();
   for (const variant of value.variants) {
     requireThat(
@@ -163,6 +228,7 @@ export function parseProject(text: string, registry: Registry): Project {
     );
     ids.add(variant.id);
     inspect(variant.graph, 1);
+    checkAttributeCycles(variant.graph as Graph);
   }
   return value as unknown as Project;
 }

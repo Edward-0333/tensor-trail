@@ -44,14 +44,14 @@ const selectionFields: Field[] = [
     key: 'step',
     label: '步长',
     kind: 'number',
-    default: tensorIndexDefaults.step,
+    default: Number(tensorIndexDefaults.step),
     min: 1,
     help: '切片模式使用；必须为正整数。',
   },
 ];
 
 /** Python notation remains compact and preserves the user's parameter expressions. */
-export function tensorIndexLabel(params: Params): string {
+export function tensorIndexLabel(params: Params, inputRank?: number): string {
   const dim = String(params.dim ?? '').trim();
   const index = String(params.index ?? '').trim();
   const slice = params.mode === 'slice';
@@ -62,14 +62,16 @@ export function tensorIndexLabel(params: Params): string {
     : index;
   if (!/^[+-]?\d+$/.test(dim) || Math.abs(Number(dim)) > 8) return `[轴 ${dim}: ${selection}]`;
   const axis = Number(dim);
+  const validRank = Number.isInteger(inputRank) && Number(inputRank) > 0;
+  // An ellipsis that covers zero axes is valid Python, but obscures the actual slice.
   const entries =
     axis < 0
-      ? ['...', selection, ...Array(-axis - 1).fill(':')]
-      : [...Array(axis).fill(':'), selection, '...'];
+      ? [...(validRank && -axis === inputRank ? [] : ['...']), selection, ...Array(-axis - 1).fill(':')]
+      : [...Array(axis).fill(':'), selection, ...(validRank && axis === Number(inputRank) - 1 ? [] : ['...'])];
   return `[${entries.join(', ')}]`;
 }
 
-export function parseFieldPath(value: unknown): string[] {
+export function parseFieldPath(value: unknown): (string | number)[] {
   requireThat(typeof value === 'string' && value.length <= 1999, '请填写字段路径。');
   const trimmed = value.trim();
   let path: unknown;
@@ -84,11 +86,13 @@ export function parseFieldPath(value: unknown): string[] {
     Array.isArray(path) &&
       path.length > 0 &&
       path.length <= 8 &&
-      path.every((key) => typeof key === 'string'),
-    '字段路径需要 1–8 个键。',
+      path.every(
+        (key) => typeof key === 'string' || (typeof key === 'number' && Number.isSafeInteger(key)),
+      ),
+    '字段路径需要 1–8 个字符串或安全整数键。',
   );
-  path.forEach(checkDictionaryKey);
-  return path as string[];
+  path.forEach((key) => checkDictionaryKey(String(key), typeof key === 'number' ? 'int' : 'str'));
+  return path as (string | number)[];
 }
 
 const inferTensorSelection: NonNullable<ModuleDefinition['infer']> = (
@@ -115,7 +119,7 @@ const inferTensorSelection: NonNullable<ModuleDefinition['infer']> = (
     });
     return {
       outputs: { out },
-      notes: [tensorIndexLabel(params), '切片保留操作轴，结束位置不包含在结果中。'],
+      notes: [tensorIndexLabel(params, x.shape.length), '切片保留操作轴，结束位置不包含在结果中。'],
       warnings: out.shape.some((d) => typeof d === 'string' && d.startsWith('slice('))
         ? ['符号维度的切片长度需要具体尺寸验证。']
         : [],
@@ -152,7 +156,8 @@ export const indexingModules: ModuleDefinition[] = [
     type: 'DictionaryGet',
     label: '字典字段读取',
     category: '索引与切片',
-    description: '从字典中读取嵌套字段，例如 agent.position；输出可以是 Tensor 或子字典。',
+    description:
+      '从字典中读取嵌套字段，例如 agent.position 或 ["temporal_ego_states", 0]；区分整数键与字符串键，不执行张量切片。',
     inputs: input,
     outputs: output,
     fields: [text('path', '字段路径', '')],
@@ -163,6 +168,10 @@ export const indexingModules: ModuleDefinition[] = [
         requireThat(
           value && isDictionarySpec(value),
           `读取 ${key} 时需要字典，当前为${shapeText(value)}。`,
+        );
+        requireThat(
+          value.keyType === 'int' ? typeof key === 'number' : typeof key === 'string',
+          `字典需要${value.keyType === 'int' ? '整数' : '字符串'}键，不能用 ${JSON.stringify(key)} 读取；0 与 "0" 不等价。`,
         );
         requireThat(Object.hasOwn(value.fields, key), `字典中不存在字段：${key}`);
         value = value.fields[key];

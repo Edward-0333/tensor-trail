@@ -219,6 +219,7 @@ function registerIpc() {
     return files.issue(picked.filePath, 'save', version);
   });
   handle(CHANNEL.read, 1, (key) => files.read(check.text(key)));
+  handle(CHANNEL.readRelated, 2, (key, relativePath) => files.readRelated(check.text(key), check.text(relativePath,500)));
   handle(CHANNEL.write, 3, (key, text, state) =>
     files.write(check.text(key), check.text(text, 3_000_000), check.version(state)),
   );

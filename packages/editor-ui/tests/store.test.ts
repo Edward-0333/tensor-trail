@@ -136,17 +136,17 @@ describe('编辑与文件序列化事务', () => {
     expect(useEditor.getState().project.graph.nodes[0].type).toBe('LayerNorm');
     expect(useEditor.getState().project.graph.nodes[0].valueSource).toBeUndefined();
   });
-  it('按轴编辑含义，修改维数时同步输入框数量，背景色可保存恢复', () => {
+  it('按轴编辑含义，修改维数时同步输入框数量，边框色可保存恢复', () => {
     useEditor.getState().setParam('input', 'shape', '2, 6');
     useEditor.getState().setAxis('input', 1, '特征');
     useEditor.getState().setTensorColor('input', '#ede9fe');
     const project = useEditor.getState().project;
     expect(project.graph.nodes[0].params.axes).toBe('batch, 特征');
-    expect(projectSnapshot().graph.nodes[0].tensorColor).toBe('#ede9fe');
+    expect(projectSnapshot().graph.nodes[0].tensorBorderColor).toBe('#ede9fe');
     useEditor.getState().setTensorColor('input', 'url(unsafe)');
     expect(useEditor.getState().project).toBe(project);
     useEditor.getState().setTensorColor('input');
-    expect(useEditor.getState().project.graph.nodes[0].tensorColor).toBeUndefined();
+    expect(useEditor.getState().project.graph.nodes[0].tensorBorderColor).toBeUndefined();
   });
   it('手动调整子图连线只保存布局，一次拖动可一次撤销重做', () => {
     const before = useEditor.getState().project;

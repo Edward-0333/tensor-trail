@@ -3,6 +3,12 @@ import { clone } from '../core/types';
 import { floating, rank, requireThat, same, tensor } from './math';
 import { maskedSelection } from './masking';
 import { input, output, num, select, text } from './primitives';
+import {
+  imageNormalizationCode,
+  imageNormalizationFields,
+  inferImageNormalization,
+} from './imageNormalization';
+import { inferResNet50Backbone, resnet50Code, resnet50Ports } from './resnet50Backbone';
 
 export function probability(value: unknown): number {
   requireThat(typeof value === 'string' && value.trim() !== '', '概率需要填写 0–1 之间的数。');
@@ -19,6 +25,10 @@ const codeFields = [
     'NeighborhoodAttention1D',
     'DropPath',
     'Interpolate1D',
+    'Interpolate2DNearest',
+    'GpuPhotoMetricDistortion',
+    'ImageNormalize',
+    'ResNet50Backbone',
   ]),
   num('dim', '特征维度', 32),
   num('num_heads', '注意力头数', 2),
@@ -26,13 +36,20 @@ const codeFields = [
   probabilityField('attn_drop', '注意力 dropout'),
   probabilityField('proj_drop', '投影 dropout'),
   probabilityField('p', 'DropPath 概率'),
+  ...imageNormalizationFields,
 ];
 const codePorts = (params: Params) => ({
   inputs:
-    params.operation === 'Interpolate1D'
-      ? [...input, { id: 'like', label: '目标长度参考' }]
+    params.operation === 'Interpolate1D' || params.operation === 'Interpolate2DNearest'
+      ? [
+          ...input,
+          {
+            id: 'like',
+            label: params.operation === 'Interpolate2DNearest' ? '目标高宽参考' : '目标长度参考',
+          },
+        ]
       : input,
-  outputs: output,
+  outputs: params.operation === 'ResNet50Backbone' ? resnet50Ports : output,
 });
 
 /** Fixed, typed function templates. Python is shown for reading, never eval'd. */
@@ -44,12 +61,36 @@ export function sequenceCode(node: ModelNode): string | undefined {
   if (node.type === 'Dropout')
     return `# 初始化\nself.drop = nn.Dropout(p=${p.p})\n\ndef forward(self, x):\n    return self.drop(x)`;
   if (node.type !== 'CodeFunction') return;
+  if (p.operation === 'ImageNormalize') return imageNormalizationCode(p);
+  if (p.operation === 'ResNet50Backbone') return resnet50Code;
   if (p.operation === 'NeighborhoodAttention1D')
     return `# 初始化：使用 PLUTO 依赖的 natten.NeighborhoodAttention1D\nself.attn = NeighborhoodAttention1D(\n    dim=${p.dim}, num_heads=${p.num_heads}, kernel_size=${p.kernel_size},\n    dilation=None, qkv_bias=True, qk_scale=None,\n    attn_drop=${p.attn_drop}, proj_drop=${p.proj_drop},\n)\n\ndef forward(self, x):\n    # x: [N_valid, L, C]\n    # 内部：Q/K/V 投影 → 局部 QK + 相对位置偏置\n    #      → softmax → attention dropout → 邻域加权 V → 输出投影\n    # 短序列由 NATTEN 补齐到窗口长度，输出裁回原长度。\n    return self.attn(x)`;
   if (p.operation === 'DropPath')
     return `# 初始化：与 PLUTO 的训练/推理开关一致\nself.drop_path = DropPath(${p.p}) if ${p.p} > 0.0 else nn.Identity()\n\ndef forward(self, x):\n    # 训练时按样本随机丢弃整条残差分支；eval 时保持输入。\n    return self.drop_path(x)`;
   if (p.operation === 'Interpolate1D')
     return 'def forward(self, x, like):\n    # 与 NATSequenceEncoder 的 FPN 对齐操作一致\n    return F.interpolate(\n        x, scale_factor=like.shape[-1] / x.shape[-1],\n        mode="linear", align_corners=False,\n    )';
+  if (p.operation === 'Interpolate2DNearest')
+    return 'def forward(self, x, like):\n    # MMDetection FPN：参考目标层高宽，不假设尺寸总是恰好翻倍。\n    return F.interpolate(x, size=like.shape[2:], mode="nearest")\n# like 只提供 H/W，不读取其特征数值；N/C 与 dtype 保留自 x。\n# 无可训练参数；这里只推导尺寸，不执行 Python。';
+  if (p.operation === 'GpuPhotoMetricDistortion')
+    return `# SparseWorld: mmdet3d/models/sparsedetectors/utils.py
+# 固定默认参数；这里只展示调用和内部步骤，不执行随机增强。
+self.color_aug = GpuPhotoMetricDistortion(
+    brightness_delta=32, contrast_range=(0.5, 1.5),
+    saturation_range=(0.5, 1.5), hue_delta=18,
+)
+
+# OPUS.extract_feat (opus.py:81-84)：当前图展示此条件成立的分支。
+if self.data_aug is not None:
+    if 'img_color_aug' in self.data_aug and self.data_aug['img_color_aug'] and self.training:
+        img = self.color_aug(img)
+
+# 输入/输出：浮点 NCHW，3 通道 BGR，shape / dtype 不变。
+# 内部：BGR -> RGB；逐图随机亮度、前置或后置对比度；
+# RGB -> HSV；逐图随机饱和度、色相（角度单位为度）；
+# HSV -> RGB；后置对比度、随机通道排列；RGB -> BGR。
+# 对比度位置随机二选一，各随机增强操作以 0.5 概率触发。
+# 仅改变像素值，无可训练参数；不是归一化，不保证值域为 [0, 255]。
+# 条件不成立时跳过调用；此函数块不推测随机结果或运行时梯度。`;
 }
 
 export const sequenceOps: ModuleDefinition[] = [
@@ -110,7 +151,7 @@ export const sequenceOps: ModuleDefinition[] = [
     label: '函数代码块',
     category: '组合计算',
     description:
-      '为邻域注意力、DropPath 和一维线性插值提供有明确接口的函数模板。代码在右侧阅读，画布只显示名称；不执行 Python 或 CUDA。',
+      '为邻域注意力、DropPath、一维线性/二维最近邻插值、SparseWorld 图像预处理及 ResNet-50 骨干网络提供明确接口的函数模板。代码在右侧阅读，画布只显示名称；不执行 Python 或 CUDA。',
     fields: codeFields,
     getFields: (p) =>
       codeFields.filter(
@@ -119,14 +160,56 @@ export const sequenceOps: ModuleDefinition[] = [
           (p.operation === 'DropPath'
             ? f.key === 'p'
             : p.operation === 'NeighborhoodAttention1D'
-              ? f.key !== 'p'
-              : false),
+              ? ['dim', 'num_heads', 'kernel_size', 'attn_drop', 'proj_drop'].includes(f.key)
+              : p.operation === 'ImageNormalize'
+                ? ['mean', 'std', 'to_rgb'].includes(f.key)
+                : false),
       ),
     inputs: input,
     outputs: output,
     getPorts: codePorts,
     infer: ({ in: x, like }, p) => {
+      if (p.operation === 'ImageNormalize') return inferImageNormalization({ in: x }, p);
+      if (p.operation === 'ResNet50Backbone') return inferResNet50Backbone(x);
       floating(x);
+      if (p.operation === 'Interpolate2DNearest') {
+        rank(x, 4);
+        rank(like, 4);
+        for (const size of [...x.shape.slice(2), ...like.shape.slice(2)])
+          requireThat(
+            typeof size !== 'number' || (Number.isSafeInteger(size) && size > 0),
+            '二维插值的源与目标高宽必须为正整数或符号尺寸。',
+          );
+        return {
+          outputs: {
+            out: tensor(
+              [x.shape[0], x.shape[1], ...like.shape.slice(2)],
+              [x.axes[0], x.axes[1], ...like.axes.slice(2)],
+              x.dtype,
+            ),
+          },
+          notes: [
+            'F.interpolate(x, size=like.shape[2:], mode="nearest")：只对齐高宽，保持源 N/C/dtype。',
+            'like 只作为尺寸参考，不参与数值融合；逐元素相加应使用独立 Add 节点。',
+            '目标尺寸来自参考层，适用于非整数倍缩放和奇数高宽；无可训练参数，不推测运行时梯度状态。',
+          ],
+        };
+      }
+      if (p.operation === 'GpuPhotoMetricDistortion') {
+        rank(x, 4);
+        const warnings: string[] = [];
+        same(x.shape[1], 3, '颜色增强需要 NCHW 布局的 3 通道图像', warnings);
+        return {
+          outputs: { out: clone(x) },
+          warnings,
+          notes: [
+            '对应 OPUS.extract_feat 的 self.color_aug(img)，输入/输出为浮点 BGR 图像，shape 与 dtype 不变，但像素值可能改变。',
+            '调用条件：data_aug 非 None、包含且启用 img_color_aug、self.training=True；此节点表示条件成立时的调用，未模拟分支控制。',
+            '固定源码默认值：brightness_delta=32、contrast_range=(0.5,1.5)、saturation_range=(0.5,1.5)、hue_delta=18。含 RGB/HSV 转换和随机通道排列，无可训练参数。',
+            '只推导张量元数据，不执行随机增强或归一化，不保证输出像素在 [0,255]，不伪造运行时快照。',
+          ],
+        };
+      }
       if (p.operation === 'DropPath') {
         probability(p.p);
         requireThat(x.shape.length >= 1, 'DropPath 需要 batch 轴。');

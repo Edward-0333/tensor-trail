@@ -71,9 +71,9 @@ describe('同画布共享值副本的编辑', () => {
     state().move(alias, { x: 480, y: 210 });
     state().setTensorColor(alias, '#123456');
     state().setPortSide(alias, 'output', 'bottom');
-    expect(node(alias)).toMatchObject({ position: { x: 480, y: 210 }, tensorColor: '#123456', portLayout: { output: 'bottom' } });
+    expect(node(alias)).toMatchObject({ position: { x: 480, y: 210 }, tensorBorderColor: '#123456', portLayout: { output: 'bottom' } });
     expect(node('x').position).toEqual(originalPosition);
-    expect(node('x').tensorColor).toBeUndefined();
+    expect(node('x').tensorBorderColor).toBeUndefined();
     expect(node('x').portLayout).toBeUndefined();
     state().setParam('x', 'shape', '5,9');
     expect(inferred(alias)).toMatchObject({ shape: [5, 9] });

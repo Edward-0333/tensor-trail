@@ -1,8 +1,26 @@
 export type Dim = number | string;
+export interface TensorAutograd {
+  requiresGrad: boolean;
+  source: 'manual' | 'runtime' | 'inferred';
+}
+export type TensorGradState = 'on' | 'off' | 'unknown';
+export type TensorPalette = Record<TensorGradState, string>;
 export interface TensorSpec {
   shape: Dim[];
   axes: string[];
   dtype: string;
+  autograd?: TensorAutograd;
+  /** Registered parameter reference, not inherited by derived Tensor operations. */
+  parameterRef?: { module: string; name: string };
+  /** Registration role of a held module buffer, not a Tensor subclass. */
+  bufferRef?: { reference: string; persistent: boolean };
+}
+/** Static reference to a Python nn.Module; the object itself is not a Tensor. */
+export interface ModuleSpec {
+  kind: 'module';
+  reference: string;
+  moduleType: string;
+  parameters: Record<string, TensorSpec>;
 }
 export interface ContainerSpec {
   kind: 'forward' | 'dict' | 'list';
@@ -10,6 +28,8 @@ export interface ContainerSpec {
 }
 export interface DictionarySpec {
   kind: 'dict';
+  /** JSON field names stay strings; this preserves the original Python key type. */
+  keyType?: 'str' | 'int';
   fields: Record<string, TensorSpec | DictionarySpec | NoneSpec>;
 }
 /** Python values used by control flow; distinct from scalar tensors. */
@@ -25,16 +45,60 @@ export interface IntegerSpec {
   kind: 'int';
   value: Dim;
 }
+/** Python list of integers, not a Tensor list or a Tensor with shape [length]. */
+export interface IntegerListSpec {
+  kind: 'int-list';
+  values: number[];
+}
+/** Static control dependency; never an observed Boolean branch decision. */
+export interface ControlSpec {
+  kind: 'control';
+  expression: string;
+  branch?: boolean;
+}
+/** Tuple-like torch.Size metadata, not a Tensor with a shape. */
+export interface SizeSpec {
+  kind: 'size';
+  dims: Dim[];
+}
+/** A symbolic torch.device read, not a Tensor or an observed CUDA/CPU placement. */
+export interface DeviceSpec {
+  kind: 'device';
+  reference: string;
+}
+/** Ordered Tensor references with independent shapes; not a stacked Tensor. */
+export interface TensorSequenceSpec {
+  kind: 'tuple' | 'list';
+  items: TensorSpec[];
+}
 export type ValueSpec =
   | TensorSpec
   | ContainerSpec
   | DictionarySpec
   | IntegerSpec
+  | IntegerListSpec
+  | ControlSpec
+  | SizeSpec
+  | DeviceSpec
+  | TensorSequenceSpec
+  | ModuleSpec
   | BooleanSpec
   | NoneSpec;
 export const isTensorSpec = (value: ValueSpec): value is TensorSpec => 'shape' in value;
+export const isModuleSpec = (value: ValueSpec): value is ModuleSpec =>
+  !isTensorSpec(value) && value.kind === 'module';
 export const isIntegerSpec = (value: ValueSpec): value is IntegerSpec =>
   !isTensorSpec(value) && value.kind === 'int';
+export const isIntegerListSpec = (value: ValueSpec): value is IntegerListSpec =>
+  !isTensorSpec(value) && value.kind === 'int-list';
+export const isControlSpec = (value: ValueSpec): value is ControlSpec =>
+  !isTensorSpec(value) && value.kind === 'control';
+export const isSizeSpec = (value: ValueSpec): value is SizeSpec =>
+  !isTensorSpec(value) && value.kind === 'size';
+export const isDeviceSpec = (value: ValueSpec): value is DeviceSpec =>
+  !isTensorSpec(value) && value.kind === 'device';
+export const isTensorSequenceSpec = (value: ValueSpec): value is TensorSequenceSpec =>
+  !isTensorSpec(value) && (value.kind === 'tuple' || value.kind === 'list') && 'items' in value;
 export const isDictionarySpec = (value: ValueSpec): value is DictionarySpec =>
   !isTensorSpec(value) && value.kind === 'dict' && 'fields' in value;
 export function tensorValue(value: ValueSpec | undefined): TensorSpec {
@@ -42,7 +106,7 @@ export function tensorValue(value: ValueSpec | undefined): TensorSpec {
   if (!isTensorSpec(value)) throw new Error(`需要 Tensor，当前为${shapeText(value)}。`);
   return value;
 }
-export type Params = Record<string, string | number | boolean>;
+export type Params = Record<string, string | number | boolean | DictionarySpec>;
 export interface Hyperparameter {
   type: 'int' | 'float' | 'bool' | 'string';
   value: number | boolean | string;
@@ -79,7 +143,11 @@ export interface ModelNode {
   params: Params;
   position: { x: number; y: number };
   portLayout?: PortLayout;
+  /** Legacy background color; migrated to tensorBorderColor on load. */
   tensorColor?: string;
+  tensorBorderColor?: string;
+  /** Explicit annotation for the single out Tensor, not an executed backward. */
+  tensorAutograd?: TensorAutograd;
   /** Another placement of the same value, owned by a canonical node in this graph. */
   valueSource?: string;
   /** Called module's forward, a helper function body, or an explicitly merged calculation group. */
@@ -141,6 +209,8 @@ export interface NodeResult {
   notes: string[];
   messages: string[];
   child?: GraphResult;
+  /** ForEach body results in input order; child is the first iteration for legacy readers. */
+  iterations?: GraphResult[];
 }
 export interface GraphResult {
   order: string[];
@@ -157,9 +227,35 @@ export interface Project {
   schemaVersion: 1;
   name: string;
   hyperparameters?: Hyperparameters;
+  tensorPalette?: TensorPalette;
+  runtime?: {
+    active?: string;
+    snapshots: RuntimeReference[];
+    /** Only portable exports embed the selected snapshot. Normal projects use references. */
+    embedded?: RuntimeSnapshot;
+  };
   /** Main model's forward body, displayed directly as the initial/root view. */
   graph: Graph;
   variants: Variant[];
+}
+
+export interface RuntimeReference {
+  id: string;
+  name: string;
+  file: string;
+}
+export interface RuntimeSnapshot {
+  format: 'tensor-trail.runtime-snapshot';
+  version: 1;
+  id: string;
+  name: string;
+  capturedAt: string;
+  context: Record<string, unknown>;
+  bindings: {
+    nodePath: string[];
+    nodeType: 'Input' | 'ForwardInput' | 'DictionaryInput';
+    value: TensorSpec | DictionarySpec;
+  }[];
 }
 
 export const shapeText = (s?: ValueSpec) =>
@@ -167,18 +263,30 @@ export const shapeText = (s?: ValueSpec) =>
     ? '待连接'
     : isTensorSpec(s)
       ? `[${s.shape.join(', ')}]`
-      : isIntegerSpec(s)
-        ? `int · ${s.value}${typeof s.value === 'string' ? '（符号）' : ''}`
-        : s.kind === 'none'
-          ? 'None'
-          : s.kind === 'bool'
-            ? `bool · ${s.value ? 'True' : 'False'}`
-            : s.kind === 'forward'
-              ? '网络输入'
-              : s.kind === 'dict'
-                ? isDictionarySpec(s)
-                  ? `dict · ${Object.keys(s.fields).length} 个字段`
-                  : '字典 dict'
-                : '列表 list';
+      : isControlSpec(s)
+        ? `${s.branch === undefined ? '条件' : s.branch ? 'True' : 'False'} · ${s.expression}（未执行）`
+      : isIntegerListSpec(s)
+        ? `list[int] · [${s.values.join(', ')}]`
+      : isDeviceSpec(s)
+        ? `Device · ${s.reference}`
+      : isModuleSpec(s)
+        ? `Module · ${s.moduleType}`
+        : isTensorSequenceSpec(s)
+          ? `${s.kind} · ${s.items.length} 个 Tensor${s.items.length === 0 ? (s.kind === 'list' ? ' []' : ' ()') : ''}`
+          : isSizeSpec(s)
+            ? `torch.Size([${s.dims.join(', ')}])`
+            : isIntegerSpec(s)
+              ? `int · ${s.value}${typeof s.value === 'string' ? '（符号）' : ''}`
+              : s.kind === 'none'
+                ? 'None'
+                : s.kind === 'bool'
+                  ? `bool · ${s.value ? 'True' : 'False'}`
+                  : s.kind === 'forward'
+                    ? '网络输入'
+                    : s.kind === 'dict'
+                      ? isDictionarySpec(s)
+                        ? `dict${s.keyType === 'int' ? '[int]' : ''} · ${Object.keys(s.fields).length} 个字段`
+                        : '字典 dict'
+                      : '列表 list';
 export const clone = <T>(value: T): T => structuredClone(value);
 export const uid = () => crypto.randomUUID();

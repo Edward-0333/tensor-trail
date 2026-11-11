@@ -7,15 +7,19 @@ import type {
   PortSide,
   Project,
   Hyperparameter,
+  TensorGradState,
+  RuntimeSnapshot,
 } from '@tensor-trail/model-core/core/types';
 import { clone, uid, isTensorSpec } from '@tensor-trail/model-core/core/types';
 import { graphAt, graphIssues, markAncestors, ports } from '@tensor-trail/model-core/core/graph';
 import { resolveForwardView } from '@tensor-trail/model-core/core/hierarchy';
 import { inferProject, resultAt } from '@tensor-trail/model-core/core/engine';
 import { checkHyperparameterName } from '@tensor-trail/model-core/core/hyperparameters';
-import { parseProject, serializeProject } from '@tensor-trail/model-core/core/serialization';
+import { parseProject, validateProjectObject } from '@tensor-trail/model-core/core/serialization';
+import { checkSnapshotBindings, parseRuntimeSnapshot } from '@tensor-trail/model-core/core/runtimeSnapshot';
 import { registry } from '@tensor-trail/model-core/modules/index';
 import { dimensions } from '@tensor-trail/model-core/modules/math';
+import { DEFAULT_TENSOR_PALETTE, validateAutograd } from '@tensor-trail/model-core/core/tensorAppearance';
 import { copySelection } from '@tensor-trail/model-core/editing/clipboard';
 import {
   isValueNode,
@@ -54,11 +58,17 @@ function documentId(project: Project, id: string = uid()): string {
 }
 interface EditorState {
   project: Project;
+  runtimeSnapshot?: RuntimeSnapshot;
+  runtimeError?: string;
+  setRuntimeSnapshot: (snapshot?: RuntimeSnapshot) => void;
+  selectRuntime: (id?: string) => void;
   hasProject: boolean;
   documentId: string;
   startNewDocument: () => void;
   canvasVersion: number;
   path: string[];
+  loopSelections: Record<string, number>;
+  selectLoopIteration: (path: string[], index: number) => void;
   selected: string | null;
   selectedIds: string[];
   clipboard: Graph | null;
@@ -72,6 +82,10 @@ interface EditorState {
   newProject: () => void;
   setAxis: (id: string, axis: number, name: string) => void;
   setTensorColor: (id: string, color?: string) => void;
+  setTensorBorderColor: (id: string, color?: string) => void;
+  setTensorPaletteColor: (state: TensorGradState, color: string) => void;
+  resetTensorPalette: () => void;
+  setTensorAutograd: (id: string, requiresGrad?: boolean) => void;
   past: Project[];
   future: Project[];
   notice: string;
@@ -109,6 +123,23 @@ interface EditorState {
 export const useEditor = create<EditorState>((set, get) => ({
   ...initial,
   hasProject: false,
+  setRuntimeSnapshot: (snapshot) => {
+    try {
+      const checked = snapshot && parseRuntimeSnapshot(snapshot);
+      if (checked) {
+        if (checked.id !== get().project.runtime?.active) throw Error('快照与当前选中的运行不匹配。');
+        checkSnapshotBindings(get().project, checked);
+      }
+      set({runtimeSnapshot:checked,runtimeError:undefined});
+    } catch(error) { set({runtimeSnapshot:undefined,runtimeError:(error as Error).message,notice:(error as Error).message}); }
+  },
+  selectRuntime: (id) => {
+    if (get().edit((_,project)=>{
+      if (!project.runtime) { if (id) throw Error('没有运行快照引用。'); return; }
+      if (id && !project.runtime.snapshots.some(ref=>ref.id===id)) throw Error('快照不存在。');
+      if (id) project.runtime.active = id; else delete project.runtime.active;
+    },false)) set({runtimeSnapshot:undefined,runtimeError:undefined});
+  },
   documentId: documentId(initial.project, initial.documentId),
   startNewDocument: () => {
     const id = uid();
@@ -118,6 +149,11 @@ export const useEditor = create<EditorState>((set, get) => ({
   },
   canvasVersion: 0,
   path: [],
+  loopSelections: {},
+  selectLoopIteration: (path, index) => {
+    if (!Number.isSafeInteger(index) || index < 0) return;
+    set(s => ({ loopSelections: { ...s.loopSelections, [JSON.stringify(path)]: index } }));
+  },
   selected: null,
   selectedIds: [],
   clipboard: null,
@@ -229,11 +265,28 @@ export const useEditor = create<EditorState>((set, get) => ({
       axes[axis] = name.trim().replaceAll(',', '，').slice(0, 120) || `axis${axis}`;
       node.params.axes = axes.join(', ');
     }),
-  setTensorColor: (id, color) =>
+  setTensorColor: (id, color) => get().setTensorBorderColor(id, color),
+  setTensorBorderColor: (id, color) =>
     get().edit((g) => {
       const node = g.nodes.find((n) => n.id === id)!;
-      if (color) node.tensorColor = color;
-      else delete node.tensorColor;
+      delete node.tensorColor;
+      if (color) node.tensorBorderColor = color;
+      else delete node.tensorBorderColor;
+    }, false),
+  setTensorPaletteColor: (state, color) =>
+    get().edit((_, project) => {
+      project.tensorPalette = { ...DEFAULT_TENSOR_PALETTE, ...project.tensorPalette, [state]: color };
+    }, false),
+  resetTensorPalette: () => get().edit((_, project) => { delete project.tensorPalette; }, false),
+  setTensorAutograd: (id, requiresGrad) =>
+    get().edit((g, project) => {
+      const node = valueOwner(g, id);
+      if (requiresGrad === undefined) { delete node.tensorAutograd; return; }
+      const spec = resultAt(inferProject(project, registry, get().runtimeSnapshot), get().path, get().loopSelections)?.nodes[node.id]?.outputs.out;
+      if (!spec || !isTensorSpec(spec)) throw new Error('请先连接有效的 out Tensor，再标注自动求导状态。');
+      const annotation = { requiresGrad, source: 'manual' as const };
+      validateAutograd(annotation, spec.dtype);
+      node.tensorAutograd = annotation;
     }, false),
   toast: (notice) => set({ notice }),
   edit: (fn, semantic = true) => {
@@ -242,13 +295,13 @@ export const useEditor = create<EditorState>((set, get) => ({
       return false;
     }
     const { project, path, past } = get();
-    const draft = clone(project);
+    let draft = clone(project);
     try {
       fn(graphAt(draft.graph, path), draft);
       if (semantic) markAncestors(draft.graph, path);
       syncValueLinks(draft.graph);
       // Keep every committed edit reloadable, including size and nesting limits.
-      parseProject(serializeProject(draft), registry);
+      draft = validateProjectObject(draft, registry);
       documentId(project, get().documentId);
       documentId(draft, get().documentId);
       activeDocuments.add(project);
@@ -368,7 +421,7 @@ export const useEditor = create<EditorState>((set, get) => ({
         node.params.port = port;
         node.label = port;
       }
-      const specs = resultAt(inferProject(project, registry), get().path)?.nodes[source?.id ?? '']
+      const specs = resultAt(inferProject(project, registry, get().runtimeSnapshot), get().path, get().loopSelections)?.nodes[source?.id ?? '']
         ?.outputs;
       const sourcePort = source ? ports(source, registry).outputs[0]?.id : undefined;
       const spec = specs?.[sourcePort ?? ''];
@@ -532,6 +585,14 @@ export const useEditor = create<EditorState>((set, get) => ({
       set({ notice: '请选择组合模块，或先进入一个子图。' });
       return;
     }
+    if (owner.type === 'ForEachTensor') {
+      set({ notice: 'ForEach 具有循环收集语义，请复制整个循环模块；不能将循环体单独保存为普通模块变体。' });
+      return;
+    }
+    if (owner.type === 'WhileLoop') {
+      set({ notice: 'WhileLoop 具有状态反馈语义，请复制整个循环模块；不能把循环体保存为普通模块变体。' });
+      return;
+    }
     if (owner.type === 'Submodule' && !owner.subgraph.nodes.some((n) => n.type === 'Outlet')) {
       set({ notice: '补充模块输出后可保存为变体。' });
       return;
@@ -547,6 +608,8 @@ export const useEditor = create<EditorState>((set, get) => ({
     if (past.length)
       set({
         project: past.at(-1)!,
+        runtimeSnapshot: documentId(past.at(-1)!) === get().documentId ? get().runtimeSnapshot : undefined,
+        runtimeError: undefined,
         hasProject: activeDocuments.has(past.at(-1)!),
         documentId: documentId(past.at(-1)!),
         canvasVersion: get().canvasVersion + 1,
@@ -563,6 +626,8 @@ export const useEditor = create<EditorState>((set, get) => ({
     if (future.length)
       set({
         project: future[0],
+        runtimeSnapshot: documentId(future[0]) === get().documentId ? get().runtimeSnapshot : undefined,
+        runtimeError: undefined,
         hasProject: activeDocuments.has(future[0]),
         documentId: documentId(future[0]),
         canvasVersion: get().canvasVersion + 1,
@@ -578,10 +643,13 @@ export const useEditor = create<EditorState>((set, get) => ({
     const { past, project: previous, documentId: previousId } = get();
     documentId(previous, previousId);
     if (get().hasProject) activeDocuments.add(previous);
-    const loaded = clone(project);
+    const loaded = validateProjectObject(clone(project), registry);
     activeDocuments.add(loaded);
     set({
       project: loaded,
+      loopSelections: {},
+      runtimeSnapshot: undefined,
+      runtimeError: undefined,
       hasProject: true,
       documentId: documentId(loaded, preserveDocument ? previousId : uid()),
       canvasVersion: get().canvasVersion + 1,

@@ -24,6 +24,8 @@ export function AgentPanel({ onClose }: { onClose: () => void }) {
   const [revision, setRevision] = useState('');
   const [message, setMessage] = useState('');
   const [allowWarnings, setAllowWarnings] = useState(false);
+  const [draft, setDraft] = useState(false);
+  const [preserveLayout, setPreserveLayout] = useState(true);
   useEffect(() => {
     const element = dialog.current!;
     element.showModal();
@@ -57,13 +59,20 @@ export function AgentPanel({ onClose }: { onClose: () => void }) {
       if (new TextEncoder().encode(text).length > 3_000_000) throw new Error('JSON 超过 3 MB。');
       const value = JSON.parse(text),
         snapshot = canvasApi.getModel();
+      const options = { mode: draft ? ('draft' as const) : ('strict' as const) };
       let next =
         mode === 'build'
-          ? canvasApi.buildModel(value)
-          : canvasApi.patchModel(snapshot.project, value);
+          ? canvasApi.buildModel(value, options)
+          : canvasApi.patchModel(snapshot.project, value, {
+              ...options,
+              layout: preserveLayout ? 'preserve' : 'auto',
+            });
       if (mode === 'build' && next.project) {
         next.project.variants = snapshot.project.variants;
-        next = { ...canvasApi.validateModel(next.project), defaultsApplied: next.defaultsApplied };
+        next = {
+          ...canvasApi.validateModel(next.project, options),
+          defaultsApplied: next.defaultsApplied,
+        };
       }
       setRevision(snapshot.revision);
       setResult(next);
@@ -122,6 +131,34 @@ export function AgentPanel({ onClose }: { onClose: () => void }) {
       </div>
       <div className="agent-body">
         <div className="agent-source">
+          <div className="agent-options">
+            <label>
+              <input
+                type="checkbox"
+                aria-label="草稿模式"
+                checked={draft}
+                onChange={(e) => {
+                  setDraft(e.target.checked);
+                  reset(text);
+                }}
+              />
+              草稿模式（允许未连完，不放行尺寸错误）
+            </label>
+            {mode === 'patch' && (
+              <label>
+                <input
+                  type="checkbox"
+                  aria-label="保留已有布局"
+                  checked={preserveLayout}
+                  onChange={(e) => {
+                    setPreserveLayout(e.target.checked);
+                    reset(text);
+                  }}
+                />
+                保留已有布局（显式 layout 操作除外）
+              </label>
+            )}
+          </div>
           <label htmlFor="agent-json">
             {mode === 'build' ? '架构配方 · Recipe v1' : '批量修改 · Patch v1'}
           </label>
@@ -155,7 +192,11 @@ export function AgentPanel({ onClose }: { onClose: () => void }) {
           ) : (
             <>
               <h3 className={result.ok ? 'agent-success' : 'agent-error'}>
-                {result.ok ? '模型校验通过' : '模型需要修正'}
+                {result.ok
+                  ? result.mode === 'draft'
+                    ? '草稿可应用（不代表模型完整）'
+                    : '模型校验通过'
+                  : '模型需要修正'}
               </h3>
               <p>
                 {result.nodes.length} 个展开节点 · 补全 {result.defaultsApplied.length} 项默认参数
@@ -222,7 +263,7 @@ export function AgentPanel({ onClose }: { onClose: () => void }) {
                 checked={allowWarnings}
                 onChange={(e) => setAllowWarnings(e.target.checked)}
               />
-              我已检查形状警告
+              我已检查草稿与形状提示
             </label>
           ) : (
             <span>应用前不更改画布 · 应用后可撤销</span>
@@ -248,6 +289,7 @@ export function AgentPanel({ onClose }: { onClose: () => void }) {
               project: result?.project,
               expectedRevision: revision,
               allowWarnings,
+              mode: result?.mode,
             });
             if (applied.ok) {
               if (mode === 'build') useEditor.getState().startNewDocument();

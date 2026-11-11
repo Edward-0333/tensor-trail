@@ -2,6 +2,7 @@ import { graphAt } from '../core/graph';
 import { clone, uid, type Graph, type ModelEdge, type ModelNode } from '../core/types';
 import { isValueNode, linkedValueNodes, valueOwner } from '../core/valueLinks';
 import { duplicateSelection } from './clipboard';
+import { pruneIfRegions } from '../core/ifRegions';
 
 const isBoundary = (node: ModelNode) => ['Inlet', 'Outlet'].includes(node.type);
 
@@ -141,6 +142,7 @@ export function removeValueNodes(root: Graph, path: string[], ids: string[]): vo
     });
   }
   graph.nodes = graph.nodes.filter((node) => !removed.has(node.id));
+  pruneIfRegions(graph);
   graph.edges = graph.edges.filter(
     (edge) => !removed.has(edge.source) && !removed.has(edge.target),
   );

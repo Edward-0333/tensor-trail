@@ -23,6 +23,28 @@ if (!fs.existsSync(original))
 const bytes = fs.readFileSync(original);
 const digest = (data) => crypto.createHash('sha256').update(data).digest('hex');
 fs.writeFileSync(path.join(directory, 'fixtures/user-project.json'), bytes);
+// Keep external snapshots beside the isolated project, never edit the user's files.
+const project = JSON.parse(bytes.toString('utf8').replace(/^\uFEFF/, ''));
+if (!project.runtime?.embedded) {
+  for (const ref of project.runtime?.snapshots ?? []) {
+    if (
+      typeof ref.file !== 'string' ||
+      !ref.file.endsWith('.json') ||
+      /[\\:\x00-\x1f]/.test(ref.file) ||
+      ref.file.split('/').some((p) => !p || p === '.' || p === '..')
+    )
+      throw Error('Unsafe runtime snapshot fixture path');
+    let source = path.dirname(original);
+    for (const part of ref.file.split('/')) {
+      source = path.join(source, part);
+      if (fs.lstatSync(source).isSymbolicLink())
+        throw Error('Snapshot fixtures cannot use symlinks');
+    }
+    const target = path.join(directory, 'fixtures', ref.file);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.copyFileSync(source, target);
+  }
+}
 const results = [];
 try {
   for (const scale of [1, 1.25, 1.5]) {

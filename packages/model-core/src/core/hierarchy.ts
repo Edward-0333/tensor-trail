@@ -27,9 +27,15 @@ export function resolveForwardView(root: Graph, path: readonly string[] = []) {
     levels.push({
       path: path.slice(0, index + 1),
       title:
-        owner.type === 'CalculationGroup'
+        ['EmbeddingXYZInit', 'EmbeddingXYZModuleInit'].includes(owner.type)
+          ? `${owner.label} · 参数初始化（非 forward）`
+          : owner.type === 'ForEachTensor'
+          ? `${owner.label} · 循环体`
+          : owner.type === 'WhileLoop'
+          ? `${owner.label} · 一轮符号模板`
+          : owner.type === 'CalculationGroup'
           ? `${owner.label} · 内部计算`
-          : owner.type === 'ToVector'
+          : ['ToVector', 'Reweight'].includes(owner.type)
             ? functionTitle(owner.label)
             : forwardTitle(owner.label),
     });

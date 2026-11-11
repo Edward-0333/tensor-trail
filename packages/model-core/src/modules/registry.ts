@@ -2,6 +2,7 @@ import type { Graph, ModelNode, ModuleDefinition, Params } from '../core/types';
 import { clone, uid } from '../core/types';
 import { canonicalModuleType } from '../core/inputTypes';
 import { normalizeTensorSelection } from '../core/indexingTypes';
+import { parseDictionarySchema } from '../core/dictionary';
 
 export class ModuleRegistry {
   private definitions = new Map<string, ModuleDefinition>();
@@ -26,6 +27,10 @@ export class ModuleRegistry {
     const def = this.get(type);
     if (!def) throw new Error(`未知模块 ${type}`);
     const values = { ...Object.fromEntries(def.fields.map((f) => [f.key, f.default])), ...params };
+    if (['ForwardInput','DictionaryInput'].includes(type) && values.schema !== undefined && values.schema !== '') {
+      try { values.schema = parseDictionarySchema(values.schema); }
+      catch { /* Invalid legacy text remains editable and reports an inference error. */ }
+    }
     return {
       id,
       type,

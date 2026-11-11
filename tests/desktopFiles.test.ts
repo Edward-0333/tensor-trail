@@ -34,6 +34,27 @@ afterEach(async () => {
 });
 
 describe('桌面主进程文件会话', () => {
+  it('only reads declared, project-local snapshots for the owning document', async()=>{
+    const p=example('mixed');
+    p.runtime={active:'r',snapshots:[{id:'r',name:'run',file:'runs/r.json'}]};
+    const source=path.join(directory,'project.json');
+    await fs.writeFile(source,serializeProject(p));
+    await fs.mkdir(path.join(directory,'runs'));
+    const snapshot={format:'tensor-trail.runtime-snapshot',version:1,id:'r',name:'run',capturedAt:'2026-11-10T00:00:00Z',context:{},bindings:[{nodePath:['input'],nodeType:'Input',value:{shape:[2],dtype:'float32'}}]};
+    await fs.writeFile(path.join(directory,'runs/r.json'),JSON.stringify(snapshot));
+    const files=new DocumentFiles();files.update(state());
+    const token=await files.issue(source,'open',state());
+    await expect(files.readRelated(token.key,'runs/r.json')).rejects.toMatchObject({code:'DOCUMENT_OWNER'});
+    files.update(state('opened',1));files.update({...state('opened',1),fileKey:token.key});
+    expect(JSON.parse(await files.readRelated(token.key,'runs/r.json')).id).toBe('r');
+    await expect(files.readRelated(token.key,'../outside.json')).rejects.toMatchObject({code:'SNAPSHOT_PATH'});
+    await expect(files.readRelated(token.key,'other.json')).rejects.toMatchObject({code:'SNAPSHOT_REFERENCE'});
+    await fs.unlink(path.join(directory,'runs/r.json'));
+    await fs.symlink(source,path.join(directory,'runs/r.json'));
+    await expect(files.readRelated(token.key,'runs/r.json')).rejects.toMatchObject({code:'SNAPSHOT_PATH'});
+    files.update(state('other',2));
+    await expect(files.readRelated(token.key,'runs/r.json')).rejects.toMatchObject({code:'DOCUMENT_OWNER'});
+  });
   it('已验证的打开文件若内容改变，不能复用旧的格式校验结论', async () => {
     const files = new DocumentFiles();
     files.update(state());

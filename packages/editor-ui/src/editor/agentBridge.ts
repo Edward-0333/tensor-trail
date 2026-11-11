@@ -3,10 +3,20 @@ import { useEditor } from './store';
 
 const bridge = createCanvasApi({
   read: () => useEditor.getState().project,
-  commit: (project) => useEditor.getState().load(project, true),
+  readRuntime: () => useEditor.getState().runtimeSnapshot,
+  commit: (project) => {
+    const previous = useEditor.getState();
+    const runtime =
+      JSON.stringify(previous.project.runtime) === JSON.stringify(project.runtime)
+        ? previous.runtimeSnapshot
+        : undefined;
+    previous.load(project, true);
+    if (runtime) useEditor.getState().setRuntimeSnapshot(runtime);
+  },
   subscribe: (changed) =>
     useEditor.subscribe((state, previous) => {
-      if (state.project !== previous.project) changed();
+      if (state.project !== previous.project || state.runtimeSnapshot !== previous.runtimeSnapshot)
+        changed();
     }),
 });
 export const canvasApi = bridge.api;

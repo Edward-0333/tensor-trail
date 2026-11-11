@@ -274,6 +274,16 @@ function diagram(type: string): { label: string; content: ReactNode } {
           </>
         ),
       };
+    case 'Tanh':
+      return {
+        label: 'Tanh 双曲正切曲线，值域 -1 到 1',
+        content: (
+          <>
+            <path d="M8 24H88M48 44V4" opacity="0.3" />
+            <path d="M10 38H22C36 38 40 34 48 24S60 10 74 10H86" />
+          </>
+        ),
+      };
     case 'Identity':
       return { label: '直接传递输入', content: <path d="M12 24H84M76 16L84 24L76 32" /> };
     case 'SplitHeads':

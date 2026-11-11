@@ -13,6 +13,7 @@ export const CHANNEL = {
   open: 'tt:open',
   saveAs: 'tt:save-as',
   read: 'tt:read',
+  readRelated: 'tt:read-related',
   write: 'tt:write',
   discard: 'tt:discard',
   close: 'tt:close-response',
@@ -32,6 +33,7 @@ export interface DesktopApi {
   pickOpen(version: DocumentVersion): Promise<Reply<FileToken | undefined>>;
   pickSave(name: string, version: DocumentVersion): Promise<Reply<FileToken | undefined>>;
   readFile(key: string): Promise<Reply<string>>;
+  readRelatedFile(key: string, relativePath: string): Promise<Reply<string>>;
   writeFile(key: string, text: string, version: DocumentVersion): Promise<Reply<void>>;
   confirmDiscard(): Promise<Reply<DiscardDecision>>;
   closeResponse(requestId: string, state: DocumentState, approved: boolean): Promise<Reply<void>>;

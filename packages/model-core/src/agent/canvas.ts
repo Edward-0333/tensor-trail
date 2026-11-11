@@ -1,11 +1,13 @@
-import type { Project } from '../core/types';
+import type { Project, RuntimeSnapshot } from '../core/types';
 import { clone } from '../core/types';
 import { describeModules, getSchemas } from './catalog';
 import { applicationError, buildModel, patchModel, validateModel } from './model';
+import type { ValidationOptions, PatchOptions, ValidationMode } from './types';
 
 /** Host adapter keeps the same API usable without React or a browser. */
 export function createCanvasApi(host: {
   read: () => Project;
+  readRuntime?: () => RuntimeSnapshot | undefined;
   commit: (project: Project) => void;
   subscribe: (changed: () => void) => () => void;
 }) {
@@ -20,8 +22,10 @@ export function createCanvasApi(host: {
     describeModules,
     getSchemas,
     buildModel,
-    validateModel,
-    patchModel,
+    validateModel: (project: unknown, options: ValidationOptions = {}) =>
+      validateModel(project, { runtimeSnapshot: host.readRuntime?.(), ...options }),
+    patchModel: (project: unknown, patch: unknown, options: PatchOptions = {}) =>
+      patchModel(project, patch, { runtimeSnapshot: host.readRuntime?.(), ...options }),
     getModel: () => ({
       apiVersion: 1 as const,
       revision: currentRevision(),
@@ -31,8 +35,12 @@ export function createCanvasApi(host: {
       project: unknown;
       expectedRevision: string;
       allowWarnings?: boolean;
+      mode?: ValidationMode;
     }) => {
-      const response = validateModel(request?.project);
+      const response = validateModel(request?.project, {
+        mode: request?.mode,
+        runtimeSnapshot: host.readRuntime?.(),
+      });
       if (request?.expectedRevision !== currentRevision()) {
         response.ok = false;
         response.diagnostics.push(

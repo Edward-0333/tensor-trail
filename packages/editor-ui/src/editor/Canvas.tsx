@@ -15,7 +15,9 @@ import {
   useViewport,
 } from '@xyflow/react';
 import type { Graph, GraphResult } from '@tensor-trail/model-core/core/types';
-import { shapeText } from '@tensor-trail/model-core/core/types';
+import { canvasValueLabel } from '../views/canvasValueLabel';
+import { layoutIfRegions } from '../views/ifRegionLayout';
+import { valueEdgeStyle } from '../views/valueEdgeStyle';
 import { ports } from '@tensor-trail/model-core/core/graph';
 import { registry } from '@tensor-trail/model-core/modules/index';
 import { categoryColor, ModuleNode, type TrailNode } from '../views/ModuleNode';
@@ -160,6 +162,7 @@ export function Canvas({
         selected: model.id === selected,
         deletable: !!stored.valueSource || !['Inlet', 'Outlet'].includes(model.type),
         className: [
+          model.type === 'IfRegion' ? 'if-region-flow' : '',
           linked.has(model.id) ? 'value-linked' : '',
           highlighted.has(model.id) ? 'value-link-highlight' : '',
         ]
@@ -229,14 +232,9 @@ export function Canvas({
             useEditor.getState().setEdgeLabelPosition(edge.id, position),
           select: () => useEditor.getState().select(null),
         },
-        label: result?.nodes[edge.source]?.outputs[edge.sourcePort]
-          ? shapeText(result.nodes[edge.source].outputs[edge.sourcePort])
-          : '待推导',
+        label: canvasValueLabel(result?.nodes[edge.source]?.outputs[edge.sourcePort]),
         animated: step >= 0 && result?.order[step] === edge.source,
-        style: {
-          stroke: result?.nodes[edge.source]?.status === 'error' ? 'var(--danger)' : 'var(--edge)',
-          strokeWidth: 1.5,
-        },
+        style: valueEdgeStyle(result?.nodes[edge.source]?.outputs[edge.sourcePort], result?.nodes[edge.source]?.status === 'error'),
         labelStyle: {
           fill: 'var(--text-secondary)',
           fontSize: 10,
@@ -260,7 +258,7 @@ export function Canvas({
         className={dropActive ? 'module-drop-active' : undefined}
         colorMode={theme}
         ariaLabelConfig={ariaLabelConfig}
-        nodes={nodes.map((node) => ({
+        nodes={layoutIfRegions(nodes).map((node) => ({
           ...node,
           className: [
             node.className,
@@ -447,7 +445,7 @@ export function Canvas({
         <Controls showInteractive={false} />
         <MiniMap
           style={{ width: 124, height: 84 }}
-          nodeColor={(node) => categoryColor(String(node.data.category))}
+          nodeColor={(node) => node.className?.includes('if-region-flow') ? 'transparent' : categoryColor(String(node.data.category))}
           maskColor="var(--minimap-mask)"
           pannable
           zoomable

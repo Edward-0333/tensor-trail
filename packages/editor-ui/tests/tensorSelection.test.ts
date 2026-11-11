@@ -231,4 +231,17 @@ describe('统一索引与切片', () => {
       '[:, :, self.history_steps - 1, ...]',
     );
   });
+
+  it('已知输入维数时省略覆盖零个轴的省略号，其余情况保留', () => {
+    const params = { dim: '1', mode: 'slice', start: '', stop: '-1', step: 1 };
+    expect(tensorIndexLabel(params, 2)).toBe('[:, :-1]');
+    expect(tensorIndexLabel(params, 3)).toBe('[:, :-1, ...]');
+    expect(tensorIndexLabel(params)).toBe('[:, :-1, ...]');
+    expect(tensorIndexLabel({ ...params, dim: '-2' }, 2)).toBe('[:-1, :]');
+    expect(tensorIndexLabel({ ...params, dim: '-1' }, 2)).toBe('[..., :-1]');
+    expect(tensorIndexLabel({ ...params, dim: '-1' }, 1)).toBe('[:-1]');
+    expect(tensorIndexLabel({ dim: '0', mode: 'index', index: '-1' }, 1)).toBe('[-1]');
+    expect(tensorIndexLabel({ ...params, dim: 'self.axis' }, 2)).toBe('[轴 self.axis: :-1]');
+    expect(tensorIndexLabel({ ...params, stopFromInput: true, stopLabel: 'T' }, 2)).toBe('[:, :T]');
+  });
 });

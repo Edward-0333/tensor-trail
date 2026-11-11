@@ -72,6 +72,26 @@ export function viewLabel(params: Params): string {
 }
 
 export const featureMathModules: ModuleDefinition[] = [
+  {
+    type: 'IntegerTruncDivide',
+    label: 'int(a / b)',
+    category: '数学运算',
+    description: '两个局部整数相除后向零截断，对应 int(a / b)，不是 Tensor 运算或 floor 除法。',
+    fields: [],
+    inputs: [{ id: 'a', label: 'a' }, { id: 'b', label: 'b' }],
+    outputs: output,
+    inferValue: ({ a, b }) => {
+      const left = integerValue(a, 'a'), right = integerValue(b, 'b');
+      requireThat(right !== 0, 'int(a / b) 的除数不能为 0。');
+      const numeric = typeof left === 'number' && typeof right === 'number';
+      const value = numeric ? Math.trunc(left / right) || 0 : `int((${left})/(${right}))`;
+      return {
+        outputs: { out: { kind: 'int', value } },
+        warnings: numeric ? [] : ['符号除法需验证除数非零，结果按 int 向零截断。'],
+        notes: [`int(${left} / ${right}) = ${value}；读取尺寸并计算整数，不参与梯度。`],
+      };
+    },
+  },
   ...['Cos', 'Sin'].map(
     (type): ModuleDefinition => ({
       type,

@@ -1,7 +1,7 @@
-import type { ModuleDefinition, TensorSpec } from '../core/types';
+import type { ModelNode, ModuleDefinition, TensorSpec } from '../core/types';
 import { tensorValue } from '../core/types';
 import { broadcast, requireThat, tensor } from './math';
-import { input, output } from './primitives';
+import { input, output, select } from './primitives';
 
 const integers = ['uint8', 'int8', 'int16', 'int32', 'int64'];
 const floats = ['float16', 'bfloat16', 'float32', 'float64'];
@@ -46,7 +46,28 @@ const binaryInputs = [
   { id: 'b', label: 'b' },
 ];
 
+export function divideCode(node: ModelNode): string | undefined {
+  if (node.type !== 'Divide') return;
+  return 'out = a / b\n# 逐元素广播真除法，不是整除或 Softmax。\n# 不原地修改输入，不自动添加 epsilon/clamp；分母为零时保留 PyTorch 的 inf/nan 语义。\n# 这里只推导形状与 dtype，不声称已执行数值运算或验证分母非零。';
+}
+
 export const elementwiseModules: ModuleDefinition[] = [
+  {
+    type: 'Divide', label: '逐元素真除法 /', category: '数学运算',
+    description: '对应 a / b，支持 Tensor 广播和实数类型提升，不是矩阵运算或整除。不会自动添加 epsilon/clamp，也不会原地修改输入。',
+    fields: [select('default_dtype', '整数真除法的默认浮点类型', 'float32', ['float32','float64'])],
+    inputs: binaryInputs, outputs: output,
+    infer: ({ a, b }, params) => {
+      const left = checked(a), right = checked(b), warnings: string[] = [];
+      requireThat(['float32','float64'].includes(String(params.default_dtype)), '默认浮点 dtype 无效。');
+      const promoted = resultDtype(left, right);
+      const dtype = category(promoted) < 2 ? String(params.default_dtype) : promoted;
+      return { outputs: { out: broadcast({ ...left, dtype }, { ...right, dtype }, warnings) }, warnings,
+        notes: ['逐元素真除法，从最后一维对齐并广播；不修改输入或注册 buffer。',
+          '画布不执行数值计算，不能证明分母非零；不添加源码没有的 epsilon/clamp。',
+          '整数/bool 真除法使用本节点记录的 torch 默认浮点类型；浮点输入按类型提升规则输出。'] };
+    },
+  },
   {
     type: 'BitwiseAnd',
     label: '按位与 &',

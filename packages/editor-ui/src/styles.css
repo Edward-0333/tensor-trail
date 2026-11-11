@@ -790,7 +790,7 @@ kbd {
   max-width: 340px;
   padding: 8px 10px;
   background: var(--tensor-bg, transparent);
-  border: 1px solid var(--tone);
+  border: 1px solid var(--tensor-border, var(--tone));
   border-radius: 6px;
   position: relative;
   transition:

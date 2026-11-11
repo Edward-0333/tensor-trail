@@ -45,7 +45,7 @@ describe('嵌套字典输入', () => {
     expect(restored.graph.nodes[0]).toMatchObject({
       type: 'ForwardInput',
       label: 'data',
-      params: { schema, text: '训练输入' },
+      params: { schema: plutoInputSchema(), text: '训练输入' },
     });
     expect(inferGraph(restored.graph, registry).nodes.output.outputs.out).toEqual(
       plutoInputSchema(),
@@ -163,12 +163,12 @@ describe('嵌套字典输入', () => {
 
   it('大于旧短文本限制的结构支持项目保存、复制、API 构建和 Schema', () => {
     const project = projectWithOutput();
-    const schema = String(project.graph.nodes[0].params.schema);
-    expect(schema.length).toBeGreaterThan(1999);
+    const schema = project.graph.nodes[0].params.schema;
+    expect(JSON.stringify(schema).length).toBeGreaterThan(1999);
     expect(parseProject(serializeProject(project), registry)).toEqual(project);
     expect(validateModel(project).ok).toBe(true);
     const copied = duplicateSelection(copySelection(project.graph, ['data', 'output']), 32);
-    expect(copied.nodes[0].params.schema).toBe(schema);
+    expect(copied.nodes[0].params.schema).toEqual(schema);
     expect(copied.nodes[0].id).not.toBe('data');
     expect(inferGraph(copied, registry).nodes[copied.nodes[1].id].outputs.out).toEqual(
       plutoInputSchema(),

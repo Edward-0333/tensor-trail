@@ -11,10 +11,21 @@ import {
 import { graphAt, markAncestors, orderGraph } from '../core/graph';
 import { inferProject } from '../core/engine';
 import { parseProject, serializeProject } from '../core/serialization';
-import { syncValueLinks, valueOwner } from '../core/valueLinks';
+import { isValueNode, syncValueLinks, valueOwner } from '../core/valueLinks';
 import { removeValueNodes } from '../editing/valueLinkEditing';
 import { identifierPattern } from './catalog';
-import type { DefaultApplied, Diagnostic, ModelResponse } from './types';
+import { parseDictionarySchema } from '../core/dictionary';
+import { activeRuntimeSnapshot, parseRuntimeSnapshot } from '../core/runtimeSnapshot';
+import { incompleteNodes } from './draft';
+import { placeNewNodes, preserveGeneratedLayout } from './layout';
+import { isHexColor } from '../core/tensorAppearance';
+import type {
+  DefaultApplied,
+  Diagnostic,
+  ModelResponse,
+  ValidationOptions,
+  PatchOptions,
+} from './types';
 
 class AgentError extends Error {
   constructor(
@@ -52,6 +63,36 @@ function bounded(v: unknown) {
   if (!text || new TextEncoder().encode(text).length > 3_000_000)
     fail('LIMIT_EXCEEDED', 'JSON 不得超过 3 MB。');
 }
+function options(value: ValidationOptions | PatchOptions, patch = false): PatchOptions {
+  const v = record(value, 'options');
+  keys(v, ['mode', 'runtimeSnapshot', ...(patch ? ['layout'] : [])]);
+  if (v.mode !== undefined && (typeof v.mode !== 'string' || !['strict', 'draft'].includes(v.mode)))
+    fail('INVALID_ARGUMENT', 'mode 必须为 strict 或 draft。');
+  if (
+    v.layout !== undefined &&
+    (typeof v.layout !== 'string' || !['preserve', 'auto'].includes(v.layout))
+  )
+    fail('INVALID_ARGUMENT', 'layout 必须为 preserve 或 auto。');
+  return {
+    mode: (v.mode ?? 'strict') as PatchOptions['mode'],
+    layout: (v.layout ?? 'preserve') as PatchOptions['layout'],
+    ...(v.runtimeSnapshot !== undefined
+      ? { runtimeSnapshot: parseRuntimeSnapshot(v.runtimeSnapshot) }
+      : {}),
+  };
+}
+function position(value: unknown): ModelNode['position'] {
+  const p = record(value, 'position');
+  keys(p, ['x', 'y']);
+  if (
+    typeof p.x !== 'number' ||
+    !Number.isFinite(p.x) ||
+    typeof p.y !== 'number' ||
+    !Number.isFinite(p.y)
+  )
+    fail('INVALID_ARGUMENT', 'position.x/y 必须是有限数值。');
+  return { x: p.x, y: p.y };
+}
 function params(type: string, value: unknown, path: string[]): Params {
   const d = registry.get(type);
   if (!d) fail('UNKNOWN_MODULE', `未知模块 ${type}；请先调用 describeModules。`, path);
@@ -64,6 +105,18 @@ function params(type: string, value: unknown, path: string[]): Params {
   for (const [k, v] of Object.entries(p)) {
     const f = d.fields.find((field) => field.key === k);
     if (!f) fail('UNKNOWN_PARAMETER', `${type} 没有参数 ${k}。`, path, k);
+    if (
+      k === 'schema' &&
+      ['ForwardInput', 'DictionaryInput'].includes(type) &&
+      typeof v === 'object'
+    ) {
+      try {
+        p[k] = parseDictionarySchema(v);
+      } catch (error) {
+        fail('INVALID_PARAMETER', (error as Error).message, path, k);
+      }
+      continue;
+    }
     const valid =
       f.kind === 'number'
         ? typeof v === 'number' && Number.isSafeInteger(v) && (!active.has(k) || v >= (f.min ?? 1))
@@ -108,7 +161,7 @@ function edge(from: unknown, to: unknown, edgeId: string) {
 function makeNode(value: unknown, path: string[], defaults: DefaultApplied[]): ModelNode {
   if (path.length > 12) fail('LIMIT_EXCEEDED', '子图嵌套不能超过 12 层。', path);
   const v = record(value, 'node');
-  keys(v, ['id', 'type', 'label', 'params', 'subgraph']);
+  keys(v, ['id', 'type', 'label', 'params', 'subgraph', 'position']);
   const key = id(v.id),
     type = name(v.type),
     at = [...path, key];
@@ -120,6 +173,7 @@ function makeNode(value: unknown, path: string[], defaults: DefaultApplied[]): M
   for (const f of d.fields)
     if (!(f.key in p)) defaults.push({ path: at, parameter: f.key, value: f.default });
   const node = registry.create(type, p, key);
+  if (v.position !== undefined) node.position = position(v.position);
   if (v.label !== undefined) node.label = name(v.label);
   if (v.subgraph !== undefined) {
     node.subgraph = makeGraph(v.subgraph, at, defaults);
@@ -152,23 +206,29 @@ function makeGraph(value: unknown, path: string[], defaults: DefaultApplied[]): 
       fail('INVALID_ENDPOINT', '连接必须是 [source.port, target.port]。', path);
     return edge(c[0], c[1], `edge_${i}`);
   });
-  // Structural validation happens before layout, including cycles and duplicate IDs.
+  // orderGraph checks cycles before placement; checkedProject validates the full structure next.
+  placeNewNodes(
+    g,
+    new Set(
+      g.nodes
+        .filter((_, i) => (v.nodes as Record<string, unknown>[])[i].position === undefined)
+        .map((n) => n.id),
+    ),
+  );
   return g;
-}
-function layoutTree(g: Graph) {
-  layoutGraph(g);
-  for (const n of g.nodes) if (n.subgraph && n.customized) layoutTree(n.subgraph);
 }
 const empty = (): ModelResponse => ({
   apiVersion: 1,
+  mode: 'strict',
   ok: false,
   diagnostics: [],
   nodes: [],
   outputs: {},
   defaultsApplied: [],
 });
-function errorResponse(e: unknown): ModelResponse {
+function errorResponse(e: unknown, mode: ModelResponse['mode'] = 'strict'): ModelResponse {
   const r = empty();
+  r.mode = mode;
   r.diagnostics.push({
     code: e instanceof AgentError ? e.code : 'STRUCTURE_ERROR',
     severity: 'error',
@@ -178,9 +238,12 @@ function errorResponse(e: unknown): ModelResponse {
   });
   return r;
 }
-function inspect(project: Project): ModelResponse {
+function inspect(project: Project, settings: ValidationOptions): ModelResponse {
   const response = empty();
+  const draft = settings.mode === 'draft';
+  response.mode = draft ? 'draft' : 'strict';
   const walk = (g: Graph, result: GraphResult, path: string[]) => {
+    const incomplete = draft ? incompleteNodes(g, result) : new Set<string>();
     result.issues.forEach((message) =>
       response.diagnostics.push({ code: 'STRUCTURE_ERROR', severity: 'error', path, message }),
     );
@@ -193,16 +256,18 @@ function inspect(project: Project): ModelResponse {
       response.nodes.push({
         path: at,
         type: n.type,
-        status: r.status,
+        status: incomplete.has(n.id) ? 'incomplete' : r.status,
         inputs: r.inputs,
         outputs: r.outputs,
+        ...(r.iterations ? { iterations: r.iterations.map((iteration, index) => ({ index, outputs: iteration.outputs })) } : {}),
       });
-      const severity = r.status === 'warning' ? 'warning' : 'error';
+      const severity = r.status === 'warning' || incomplete.has(n.id) ? 'warning' : 'error';
       if (r.status !== 'ok')
         for (const message of r.messages)
           response.diagnostics.push({
-            code:
-              r.status === 'blocked'
+            code: incomplete.has(n.id)
+              ? 'INCOMPLETE_NODE'
+              : r.status === 'blocked'
                 ? 'UPSTREAM_BLOCKED'
                 : r.status === 'warning'
                   ? 'SHAPE_WARNING'
@@ -216,7 +281,22 @@ function inspect(project: Project): ModelResponse {
         response.outputs[n.id] = r.inputs.in;
     }
   };
-  walk(project.graph, inferProject(project, registry), []);
+  let inferenceProject = project;
+  if (
+    draft &&
+    project.runtime?.active &&
+    !activeRuntimeSnapshot(project, settings.runtimeSnapshot)
+  ) {
+    inferenceProject = clone(project);
+    delete inferenceProject.runtime!.active;
+    response.diagnostics.push({
+      code: 'RUNTIME_NOT_LOADED',
+      severity: 'warning',
+      path: [],
+      message: '运行快照未加载：草稿仅校验静态图，保留原快照引用，不代表运行时结果。',
+    });
+  }
+  walk(project.graph, inferProject(inferenceProject, registry, settings.runtimeSnapshot), []);
   for (const type of ['Input', 'Output'])
     if (
       !project.graph.nodes.some(
@@ -225,7 +305,7 @@ function inspect(project: Project): ModelResponse {
     ) {
       response.diagnostics.push({
         code: `MISSING_${type.toUpperCase()}`,
-        severity: 'error',
+        severity: draft ? 'warning' : 'error',
         path: [],
         message:
           type === 'Input'
@@ -243,8 +323,9 @@ function checkedProject(value: unknown): Project {
 }
 
 /** Build a draft; no UI, storage or network side effects. */
-export function buildModel(recipe: unknown): ModelResponse {
+export function buildModel(recipe: unknown, settings: ValidationOptions = {}): ModelResponse {
   try {
+    const opts = options(settings);
     bounded(recipe);
     const v = record(recipe, 'recipe');
     keys(v, ['recipeVersion', 'name', 'nodes', 'connections', 'hyperparameters']);
@@ -258,26 +339,31 @@ export function buildModel(recipe: unknown): ModelResponse {
       graph: makeGraph({ nodes: v.nodes, connections: v.connections }, [], defaults),
       variants: [],
     });
-    layoutTree(project.graph);
-    return { ...inspect(project), defaultsApplied: defaults };
+    return { ...inspect(project, opts), defaultsApplied: defaults };
   } catch (e) {
-    return errorResponse(e);
+    return errorResponse(e, settings?.mode === 'draft' ? 'draft' : 'strict');
   }
 }
 
 /** Accept either a recipe or a full schemaVersion:1 project. */
-export function validateModel(value: unknown): ModelResponse {
+export function validateModel(value: unknown, settings: ValidationOptions = {}): ModelResponse {
   try {
+    const opts = options(settings);
     const v = record(value, 'model');
-    return 'schemaVersion' in v ? inspect(checkedProject(v)) : buildModel(v);
+    return 'schemaVersion' in v ? inspect(checkedProject(v), opts) : buildModel(v, settings);
   } catch (e) {
-    return errorResponse(e);
+    return errorResponse(e, settings?.mode === 'draft' ? 'draft' : 'strict');
   }
 }
 
 /** Apply a whole patch to a clone. A failed response never mutates the source. */
-export function patchModel(value: unknown, patch: unknown): ModelResponse {
+export function patchModel(
+  value: unknown,
+  patch: unknown,
+  settings: PatchOptions = {},
+): ModelResponse {
   try {
+    const opts = options(settings, true);
     const project = checkedProject(value),
       v = record(patch, 'patch');
     bounded(patch);
@@ -288,11 +374,16 @@ export function patchModel(value: unknown, patch: unknown): ModelResponse {
       fail('LIMIT_EXCEEDED', 'operations 需要 1–500 个操作。');
     const defaults: DefaultApplied[] = [];
     const layouts = new Map<string, string[]>();
+    const unplaced = new Map<string, { path: string[]; ids: Set<string> }>();
     const fields: Record<string, string[]> = {
       add_node: ['node'],
+      replace_node: ['id', 'node'],
+      duplicate_linked: ['source', 'id', 'position'],
       remove_node: ['id'],
       set_params: ['id', 'params'],
       rename_node: ['id', 'label'],
+      set_position: ['id', 'position'],
+      set_tensor_border: ['id', 'color'],
       connect: ['from', 'to'],
       disconnect: ['from', 'to'],
       layout: [],
@@ -318,8 +409,41 @@ export function patchModel(value: unknown, patch: unknown): ModelResponse {
         return node;
       };
       if (op.op === 'add_node') {
-        g.nodes.push(makeNode(op.node, path, defaults));
-        layouts.set(JSON.stringify(path), path);
+        const node = makeNode(op.node, path, defaults);
+        g.nodes.push(node);
+        const key = JSON.stringify(path);
+        if (opts.layout === 'auto') layouts.set(key, path);
+        else if (record(op.node, 'node').position === undefined) {
+          if (!unplaced.has(key)) unplaced.set(key, { path, ids: new Set() });
+          unplaced.get(key)!.ids.add(node.id);
+        }
+      } else if (op.op === 'replace_node') {
+        const previous = find(), replacement = record(op.node, 'node');
+        if (replacement.id !== previous.id)
+          fail('INVALID_ID', '替换节点必须保留同一 id。', [...path, previous.id]);
+        if (previous.valueSource !== undefined || g.nodes.some(n => n.valueSource === previous.id))
+          fail('INVALID_MODULE', '有关联副本的节点不能直接替换，请先解除链接或移除副本。', [...path, previous.id]);
+        const node = makeNode({ ...replacement, position: replacement.position ?? previous.position }, path, defaults);
+        if (previous.portLayout) node.portLayout = clone(previous.portLayout);
+        if (previous.tensorBorderColor) node.tensorBorderColor = previous.tensorBorderColor;
+        g.nodes[g.nodes.indexOf(previous)] = node;
+        if (opts.layout === 'auto') layouts.set(JSON.stringify(path), path);
+      } else if (op.op === 'duplicate_linked') {
+        const sourceId = id(op.source), newId = id(op.id);
+        const source = g.nodes.find(n => n.id === sourceId);
+        if (!source) fail('UNKNOWN_NODE', `节点 ${sourceId} 不存在于当前画布。`, [...path, sourceId]);
+        if (!isValueNode(source.type)) fail('INVALID_MODULE', '只有值节点可以创建关联副本，算子不能共享执行结果。', [...path, sourceId]);
+        if (g.nodes.some(n => n.id === newId)) fail('DUPLICATE_ID', `节点 ${newId} 已存在。`, [...path, newId]);
+        const owner = valueOwner(g, source);
+        const copy = { ...clone(source), id: newId, valueSource: owner.id,
+          position: op.position === undefined ? { x: source.position.x + 48, y: source.position.y + 48 } : position(op.position) };
+        g.nodes.push(copy);
+        const key = JSON.stringify(path);
+        if (opts.layout === 'auto') layouts.set(key, path);
+        else if (op.position === undefined) {
+          if (!unplaced.has(key)) unplaced.set(key, { path, ids: new Set() });
+          unplaced.get(key)!.ids.add(copy.id);
+        }
       } else if (op.op === 'remove_node') {
         const node = find();
         if (!node.valueSource && ['Inlet', 'Outlet'].includes(node.type))
@@ -333,9 +457,24 @@ export function patchModel(value: unknown, patch: unknown): ModelResponse {
           fail('CUSTOMIZED_COMPOSITE', '此组合模块已手动修改，请用 path 修改内部算子。', at);
         Object.assign(node.params, params(node.type, op.params, at));
         const def = registry.get(node.type)!;
-        if (def.build) node.subgraph = def.build(node.params);
+        if (def.build) {
+          const generated = def.build(node.params);
+          if (opts.layout === 'preserve' && node.subgraph)
+            preserveGeneratedLayout(node.subgraph, generated);
+          node.subgraph = generated;
+        }
+      } else if (op.op === 'set_tensor_border') {
+        const node = find();
+        if (op.color !== null && !isHexColor(op.color))
+          fail('INVALID_ARGUMENT', '边框颜色需要 #RRGGBB，或使用 null 恢复默认。', [...path, node.id]);
+        delete node.tensorColor;
+        if (op.color === null) delete node.tensorBorderColor;
+        else node.tensorBorderColor = op.color as string;
       } else if (op.op === 'rename_node') valueOwner(g, find()).label = name(op.label);
-      else if (op.op === 'connect' || op.op === 'disconnect') {
+      else if (op.op === 'set_position') {
+        find().position = position(op.position);
+        unplaced.get(JSON.stringify(path))?.ids.delete(String(op.id));
+      } else if (op.op === 'connect' || op.op === 'disconnect') {
         let i = 0;
         while (g.edges.some((e) => e.id === `edge_${i}`)) i++;
         const e = edge(op.from, op.to, `edge_${i}`);
@@ -350,16 +489,19 @@ export function patchModel(value: unknown, patch: unknown): ModelResponse {
           g.edges = g.edges.filter((old) => !matches(old));
         }
       } else if (op.op === 'layout') layouts.set(JSON.stringify(path), path);
-      if (!['rename_node', 'layout'].includes(op.op)) markAncestors(project.graph, path);
+      if (!['rename_node', 'layout', 'set_position', 'set_tensor_border'].includes(op.op))
+        markAncestors(project.graph, path);
       if (countNodes(project.graph) > 2000) fail('LIMIT_EXCEEDED', '展开后的节点数不能超过 2000。');
     }
     // Validate only the complete transaction: disconnect + reconnect may be temporarily incomplete.
     syncValueLinks(project.graph);
     const checked = checkedProject(project);
+    for (const { path, ids } of unplaced.values())
+      if (!layouts.has(JSON.stringify(path))) placeNewNodes(graphAt(checked.graph, path), ids);
     for (const path of layouts.values()) layoutGraph(graphAt(checked.graph, path));
-    return { ...inspect(checked), defaultsApplied: defaults };
+    return { ...inspect(checked, opts), defaultsApplied: defaults };
   } catch (e) {
-    return errorResponse(e);
+    return errorResponse(e, settings?.mode === 'draft' ? 'draft' : 'strict');
   }
 }
 

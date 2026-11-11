@@ -7,10 +7,16 @@ import type {
   ValueSpec,
   Hyperparameters,
   Project,
+  RuntimeSnapshot,
 } from './types';
 import { clone, isTensorSpec, shapeText } from './types';
 import { graphIssues, orderGraph, ports } from './graph';
 import { normalizeTensorSelection } from './indexingTypes';
+import { annotateTensorOutputs } from './tensorAppearance';
+import { activeRuntimeSnapshot, checkSnapshotBindings } from './runtimeSnapshot';
+import { inferForEach, loopIteration, type LoopSelections } from './forEach';
+import { inferWhile } from './whileLoop';
+import { planAttributes, type AttributeContext } from './attributes';
 
 export function inferGraph(
   graph: Graph,
@@ -18,15 +24,26 @@ export function inferGraph(
   external: Record<string, ValueSpec> = {},
   depth = 0,
   hyperparameters: Hyperparameters = {},
+  runtime?: RuntimeSnapshot,
+  path: string[] = [],
+  budget = { remaining: 20000 },
+  attributeContext?: AttributeContext,
 ): GraphResult {
   const result: GraphResult = { order: [], nodes: {}, outputs: {}, issues: [] };
   if (depth > 12) {
     result.issues.push('子图嵌套超过 12 层。');
     return result;
   }
-  result.issues = graphIssues(graph, registry);
+  budget.remaining -= graph.nodes.length;
+  if (budget.remaining < 0) {
+    result.issues.push('静态推导超过 20000 次节点访问，请减少嵌套循环或元素数量。');
+    return result;
+  }
+  const attributes = attributeContext ?? { plan: planAttributes(graph), values: new Map<string, TensorSpec>() };
+  const implicit = attributes.plan.dependencies.get(JSON.stringify(path)) ?? [];
+  result.issues = [...attributes.plan.issues, ...graphIssues(graph, registry, implicit)];
   if (result.issues.length) return result;
-  result.order = orderGraph(graph);
+  result.order = orderGraph(graph, implicit);
   const byId = new Map(graph.nodes.map((n) => [n.id, n]));
   for (const id of result.order) {
     const stored = byId.get(id)!;
@@ -34,6 +51,13 @@ export function inferGraph(
     const node = { ...stored, ...normalizeTensorSelection(stored.type, stored.params) };
     const r: NodeResult = { status: 'ok', inputs: {}, outputs: {}, messages: [], notes: [] };
     result.nodes[id] = r;
+    const attributePath = JSON.stringify([...path, id]);
+    const attributeError = attributes.plan.errors.get(attributePath);
+    if (attributeError) {
+      r.status = 'error';
+      r.messages.push(attributeError);
+      continue;
+    }
     const def = registry.get(node.type);
     if (!def) {
       r.status = 'error';
@@ -80,6 +104,8 @@ export function inferGraph(
         // Customized composites derive their semantics solely from their concrete child graph.
         if (node.customized && node.subgraph) break;
         const value = node.params[f.key];
+        // Projects predating assignment versions have one unversioned attribute write.
+        if (f.key === 'version' && ['SetAttribute', 'GetAttribute'].includes(node.type) && value === undefined) continue;
         // Older network inputs have only a name and remarks; their schema is optional.
         if (def.type === 'ForwardInput' && f.key === 'schema' && value === undefined) continue;
         if (
@@ -91,7 +117,8 @@ export function inferGraph(
           throw new Error(`${f.label} 的选项无效。`);
         if (f.kind === 'boolean' && typeof value !== 'boolean')
           throw new Error(`${f.label} 必须为开关值。`);
-        if (f.kind === 'text' && typeof value !== 'string')
+        const objectSchema = f.key === 'schema' && ['ForwardInput','DictionaryInput'].includes(node.type) && value && typeof value === 'object';
+        if (f.kind === 'text' && typeof value !== 'string' && !objectSchema)
           throw new Error(`${f.label} 必须为文本。`);
       }
       const passthrough = ['Output', 'Outlet', 'Identity'].includes(node.type);
@@ -114,8 +141,20 @@ export function inferGraph(
         if (!value) throw new Error(`子图输入 ${node.params.port} 没有外部数据。`);
         r.outputs = { out: value };
         r.notes = ['从上一级模块接收输入，保留其数据类型。'];
+      } else if (node.type === 'GetAttribute') {
+        const binding = attributes.plan.bindings.get(attributePath)!;
+        const value = attributes.values.get(binding.key);
+        if (!value) throw new Error(`属性 ${binding.name} 尚无有效写入结果；请检查对应 SET 的上游数据。`);
+        r.outputs = { out: clone(value) };
+        r.notes = [`从属性 ${JSON.stringify(binding.owner)}.${binding.name} 的唯一 SET 读取同一个 Tensor 引用。`, '只复制规格以隔离编辑，不代表 Python 中 clone；保留上游形状和梯度标注，不新增 forward 参数。'];
+      } else if (node.type === 'WhileLoop' && node.subgraph) {
+        Object.assign(r, inferWhile(node, r.inputs, external =>
+          inferGraph(node.subgraph!, registry, external, depth + 1, hyperparameters, runtime, [...path, id], budget, attributes)));
+      } else if (node.type === 'ForEachTensor' && node.subgraph) {
+        Object.assign(r, inferForEach(node.subgraph, r.inputs, external =>
+          inferGraph(node.subgraph!, registry, external, depth + 1, hyperparameters, runtime, [...path, id], budget, attributes)));
       } else if (node.subgraph) {
-        r.child = inferGraph(node.subgraph, registry, r.inputs, depth + 1, hyperparameters);
+        r.child = inferGraph(node.subgraph, registry, r.inputs, depth + 1, hyperparameters, runtime, [...path,id], budget, attributes);
         const failures = Object.entries(r.child.nodes).filter(
           ([, v]) => v.status === 'error' || v.status === 'blocked',
         );
@@ -154,6 +193,15 @@ export function inferGraph(
         r.notes = inference.notes ?? [];
         r.messages.push(...(inference.warnings ?? []));
       } else throw new Error('该模块尚无形状推导实现。');
+      const observed = runtime?.bindings.find(binding => JSON.stringify(binding.nodePath) === JSON.stringify([...path,id]));
+      if (observed) {
+        r.outputs = { out: clone(observed.value) };
+        r.notes.push(`运行快照：${runtime!.name} · ${runtime!.capturedAt}；不修改静态图。`);
+      } else r.outputs = annotateTensorOutputs(node, r.inputs, r.outputs);
+      if (node.type === 'SetAttribute') {
+        const binding = attributes.plan.bindings.get(attributePath)!;
+        attributes.values.set(binding.key, clone(tensorInputs.in));
+      }
       if (r.status === 'ok' && r.messages.length) r.status = 'warning';
       if (node.type === 'Outlet' && r.outputs.out)
         result.outputs[String(node.params.port)] = r.outputs.out;
@@ -166,12 +214,24 @@ export function inferGraph(
   return result;
 }
 
-export function inferProject(project: Project, registry: Registry): GraphResult {
-  return inferGraph(project.graph, registry, {}, 0, project.hyperparameters ?? {});
+export function inferProject(project: Project, registry: Registry, loaded?: RuntimeSnapshot): GraphResult {
+  const runtime = activeRuntimeSnapshot(project, loaded);
+  if (runtime) {
+    try { checkSnapshotBindings(project,runtime); }
+    catch(error) { return {order:[],nodes:{},outputs:{},issues:[(error as Error).message]}; }
+  }
+  const result = inferGraph(project.graph, registry, {}, 0, project.hyperparameters ?? {}, runtime);
+  if (project.runtime?.active && !runtime) result.issues.push('选中的运行快照尚未加载；当前仅有静态图信息，请在“运行数据”中加载快照或切换为静态图。');
+  return result;
 }
 
-export function resultAt(result: GraphResult, path: string[]): GraphResult | undefined {
+export function resultAt(result: GraphResult, path: string[], selections: LoopSelections = {}): GraphResult | undefined {
   let current: GraphResult | undefined = result;
-  for (const id of path) current = current?.nodes[id]?.child;
+  for (const [index, id] of path.entries()) {
+    const node: NodeResult | undefined = current?.nodes[id];
+    current = node?.iterations
+      ? node.iterations[loopIteration(node, selections[JSON.stringify(path.slice(0, index + 1))])]
+      : node?.child;
+  }
   return current;
 }

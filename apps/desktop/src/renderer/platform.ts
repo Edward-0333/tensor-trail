@@ -19,6 +19,7 @@ export async function desktopPlatform(api = window.tensorTrailDesktop): Promise<
     name: token.name,
     key: token.key,
     readText: () => value(api.readFile(token.key)),
+    readRelatedText: (relativePath) => value(api.readRelatedFile(token.key, relativePath)),
     async writeText(text, stillCurrent, version) {
       if (!stillCurrent()) return false;
       if (!version) throw new Error('缺少文档版本，请重新打开项目。');

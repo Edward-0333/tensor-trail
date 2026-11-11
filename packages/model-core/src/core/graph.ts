@@ -1,7 +1,12 @@
 import type { Graph, ModelNode, Port, Registry } from './types';
 import { valueLinkIssues } from './valueLinks';
+import { forEachPorts } from './forEach';
+import { whilePorts } from './whileLoop';
+import { ifRegionIssues } from './ifRegions';
 
 export function ports(node: ModelNode, registry: Registry): { inputs: Port[]; outputs: Port[] } {
+  if (node.type === 'ForEachTensor') return forEachPorts(node);
+  if (node.type === 'WhileLoop') return whilePorts(node);
   if (node.subgraph) {
     const boundary = (type: string) =>
       node
@@ -17,11 +22,12 @@ export function ports(node: ModelNode, registry: Registry): { inputs: Port[]; ou
   return node.valueSource === undefined ? declared : { ...declared, inputs: [] };
 }
 
-export function orderGraph(graph: Graph): string[] {
+export function orderGraph(graph: Graph, implicit: { source: string; target: string }[] = []): string[] {
   const degree = new Map(graph.nodes.map((n) => [n.id, 0]));
   const next = new Map<string, string[]>();
   const dependencies = [
     ...graph.edges,
+    ...implicit,
     ...graph.nodes.flatMap((node) =>
       node.valueSource === undefined ? [] : [{ source: node.valueSource, target: node.id }],
     ),
@@ -46,8 +52,8 @@ export function orderGraph(graph: Graph): string[] {
   return order;
 }
 
-export function graphIssues(graph: Graph, registry: Registry): string[] {
-  const issues: string[] = valueLinkIssues(graph);
+export function graphIssues(graph: Graph, registry: Registry, implicit: { source: string; target: string }[] = []): string[] {
+  const issues: string[] = [...valueLinkIssues(graph), ...ifRegionIssues(graph)];
   const nodes = new Map(graph.nodes.map((n) => [n.id, n]));
   if (nodes.size !== graph.nodes.length) issues.push('节点 ID 重复。');
   const occupied = new Set<string>();
@@ -70,7 +76,7 @@ export function graphIssues(graph: Graph, registry: Registry): string[] {
     occupied.add(key);
   }
   try {
-    orderGraph(graph);
+    orderGraph(graph, implicit);
   } catch (e) {
     issues.push((e as Error).message);
   }

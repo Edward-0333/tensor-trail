@@ -1,0 +1,21 @@
+{
+  "patchVersion": 1,
+  "operations": [
+    {
+      "op": "add_node",
+      "path": ["extract_feat"],
+      "node": {
+        "id": "img_normalized_copy",
+        "type": "TensorVariable",
+        "label": "img (API view example)",
+        "position": { "x": 3600, "y": 350 }
+      }
+    },
+    {
+      "op": "connect",
+      "path": ["extract_feat"],
+      "from": "img_after_normalize.out",
+      "to": "img_normalized_copy.in"
+    }
+  ]
+}

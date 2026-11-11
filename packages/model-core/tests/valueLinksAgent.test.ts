@@ -9,7 +9,7 @@ const alias = (source: ModelNode, id: string): ModelNode => ({
   id,
   valueSource: source.id,
   position: { x: 400, y: 240 },
-  tensorColor: '#dbeafe',
+  tensorBorderColor: '#dbeafe',
   portLayout: { output: 'bottom' },
 });
 
@@ -111,7 +111,7 @@ describe('关联值的代理编辑', () => {
       expect(member.label).toBe('共享数据');
       const stored = before.graph.nodes.find((node) => node.id === member.id)!;
       expect(member.position).toEqual(stored.position);
-      expect(member.tensorColor).toEqual(stored.tensorColor);
+      expect(member.tensorBorderColor).toEqual(stored.tensorBorderColor);
       expect(member.portLayout).toEqual(stored.portLayout);
     }
     expect(tensorValue(result.outputs.output)).toEqual({

@@ -3,6 +3,7 @@ import type { Field, ModelNode, ValueSpec } from '@tensor-trail/model-core/core/
 import { isDictionarySpec, shapeText } from '@tensor-trail/model-core/core/types';
 import { resolveIntegerExpression } from '@tensor-trail/model-core/core/hyperparameters';
 import { parseFieldPath } from '@tensor-trail/model-core/modules/indexing';
+import { dictionaryFieldKey } from '@tensor-trail/model-core/core/dictionary';
 import { useEditor } from './store';
 
 export function IndexExpressionField({ node, field }: { node: ModelNode; field: Field }) {
@@ -58,15 +59,17 @@ export function IndexExpressionField({ node, field }: { node: ModelNode; field: 
 }
 
 export function DictionaryPathField({ node, input }: { node: ModelNode; input?: ValueSpec }) {
-  const options: { path: string[]; label: string }[] = [];
-  function walk(value: ValueSpec, path: string[]) {
+  const options: { path: (string | number)[]; label: string }[] = [];
+  function walk(value: ValueSpec, path: (string | number)[]) {
     if (path.length)
       options.push({
         path,
         label: `${path.map((key) => `[${JSON.stringify(key)}]`).join('')} · ${shapeText(value)}`,
       });
     if (isDictionarySpec(value))
-      Object.entries(value.fields).forEach(([key, child]) => walk(child, [...path, key]));
+      Object.entries(value.fields).forEach(([key, child]) =>
+        walk(child, [...path, dictionaryFieldKey(value, key)]),
+      );
   }
   if (input && isDictionarySpec(input)) walk(input, []);
   let chosen = '';
@@ -107,7 +110,8 @@ export function DictionaryPathField({ node, input }: { node: ModelNode; input?: 
         </select>
       </label>
       <p className="microcopy">
-        支持 agent.position 或 ["agent", "position"]。键名含点号时使用数组格式。
+        支持 agent.position 或 ["agent", "position"]。整数键使用数组格式，如 ["temporal_ego_states",
+        0]；0 与 "0" 不等价。
       </p>
     </div>
   );

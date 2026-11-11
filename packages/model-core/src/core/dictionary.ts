@@ -1,4 +1,5 @@
 import type { DictionarySpec, Dim, TensorSpec, NoneSpec } from './types';
+import { validateAutograd } from './tensorAppearance';
 
 export const DICTIONARY_SCHEMA_LIMIT = 64_000;
 export const DICTIONARY_DTYPES = [
@@ -21,9 +22,20 @@ function check(condition: unknown, message: string): asserts condition {
 const record = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
 
-export function checkDictionaryKey(key: string) {
+export function checkDictionaryKey(key: string, keyType: 'str' | 'int' = 'str') {
   check(key.trim().length > 0 && key.length <= 128, '字段名需要 1–128 个字符。');
   check(!['__proto__', 'constructor', 'prototype'].includes(key), '该字段名为保留名称。');
+  if (keyType === 'int')
+    check(
+      /^-?(0|[1-9]\d*)$/.test(key) &&
+        Number.isSafeInteger(Number(key)) &&
+        String(Number(key)) === key,
+      '整数键必须是规范的安全整数，例如 0、1、-1。',
+    );
+}
+
+export function dictionaryFieldKey(dict: DictionarySpec, field: string): string | number {
+  return dict.keyType === 'int' ? Number(field) : field;
 }
 
 function checkShape(value: unknown): asserts value is Dim[] {
@@ -56,16 +68,12 @@ export function dictionaryShape(text: string): Dim[] {
 
 /** Describes an input contract, not tensor values or executable Python. */
 export function parseDictionarySchema(text: unknown): DictionarySpec {
-  check(
-    typeof text === 'string' && text.length <= DICTIONARY_SCHEMA_LIMIT,
-    `字典结构描述最多 ${DICTIONARY_SCHEMA_LIMIT} 个字符。`,
-  );
   let source: unknown;
-  try {
-    source = JSON.parse(text);
-  } catch {
-    throw new Error('字典结构描述格式无效。');
-  }
+  if (typeof text === 'string') {
+    check(text.length <= DICTIONARY_SCHEMA_LIMIT, `字典结构描述最多 ${DICTIONARY_SCHEMA_LIMIT} 个字符。`);
+    try { source = JSON.parse(text); }
+    catch { throw new Error('字典结构描述格式无效。'); }
+  } else source = text;
   let count = 0;
   const walk = (value: unknown, depth: number): DictionarySpec | TensorSpec | NoneSpec => {
     check(++count <= 256 && depth <= 8, '字典最多 256 个条目、8 层嵌套。');
@@ -76,20 +84,26 @@ export function parseDictionarySchema(text: unknown): DictionarySpec {
     }
     if (value.kind === 'dict') {
       check(
-        Object.keys(value).every((key) => ['kind', 'fields'].includes(key)) && record(value.fields),
+        Object.keys(value).every((key) => ['kind', 'keyType', 'fields'].includes(key)) &&
+          record(value.fields),
         '字典描述需要 kind="dict" 和 fields。',
       );
+      check(
+        value.keyType === undefined || value.keyType === 'str' || value.keyType === 'int',
+        '字典 keyType 只能是 str 或 int；省略表示字符串键。',
+      );
+      const keyType = value.keyType as DictionarySpec['keyType'];
       const fields = Object.fromEntries(
         Object.entries(value.fields).map(([key, child]) => {
-          checkDictionaryKey(key);
+          checkDictionaryKey(key, keyType);
           return [key, walk(child, depth + 1)];
         }),
       );
-      return { kind: 'dict', fields };
+      return { kind: 'dict', ...(keyType === undefined ? {} : { keyType }), fields };
     }
     check(
-      Object.keys(value).every((key) => ['shape', 'axes', 'dtype'].includes(key)),
-      'Tensor 描述只包含 shape、dtype 和可选的 axes。',
+      Object.keys(value).every((key) => ['shape', 'axes', 'dtype', 'autograd'].includes(key)),
+      'Tensor 描述只包含 shape、dtype 和可选的 axes、autograd。',
     );
     checkShape(value.shape);
     check(
@@ -105,9 +119,13 @@ export function parseDictionarySchema(text: unknown): DictionarySpec {
         ),
       '轴名称数量需要与 Tensor 维度一致。',
     );
-    return { shape: [...value.shape], axes: [...axes], dtype: value.dtype };
+    if (value.autograd !== undefined) validateAutograd(value.autograd, value.dtype);
+    return { shape: [...value.shape], axes: [...axes], dtype: value.dtype,
+      ...(value.autograd === undefined ? {} : { autograd: { ...value.autograd } }) };
   };
   const result = walk(source, 0);
   check('kind' in result && result.kind === 'dict', '输入的根类型需要是字典。');
+  check(JSON.stringify(result).length <= DICTIONARY_SCHEMA_LIMIT,
+    `字典结构描述最多 ${DICTIONARY_SCHEMA_LIMIT} 个字符。`);
   return result;
 }

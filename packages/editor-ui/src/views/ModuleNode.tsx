@@ -1,12 +1,21 @@
 import { plutoCodeTypes, plutoOperationLabel } from '@tensor-trail/model-core/modules/plutoForwardOps';
+import { imageMetadataCodeTypes } from '@tensor-trail/model-core/modules/imageMetadata';
+import { parameterName } from '@tensor-trail/model-core/modules/moduleReference';
+import { matchingPreparationLabel } from '@tensor-trail/model-core/modules/matchingPreparation';
+import { sortingLabel } from '@tensor-trail/model-core/modules/sorting';
+import { loopOperationLabels } from '@tensor-trail/model-core/modules/loopOps';
+import { attributeBinding, attributeOwnerLabel, attributeTypes } from '@tensor-trail/model-core/core/attributes';
 import { plutoCompositeTypes } from '@tensor-trail/model-core/modules/plutoForward';
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { useUpdateNodeInternals, type Node, type NodeProps } from '@xyflow/react';
 import { ChevronRight, AlertCircle, ArrowUpRight } from 'lucide-react';
 import type { ModelNode, NodeResult, Port } from '@tensor-trail/model-core/core/types';
-import { isDictionarySpec, isTensorSpec, isIntegerSpec, shapeText } from '@tensor-trail/model-core/core/types';
+import { isDictionarySpec, isTensorSpec, isIntegerSpec, isIntegerListSpec, isControlSpec, isModuleSpec, isDeviceSpec, shapeText } from '@tensor-trail/model-core/core/types';
 import { ModuleGlyph } from './ModuleGlyph';
 import { PortHandles } from './PortHandles';
+import { canvasValueLabel } from './canvasValueLabel';
+import { valueDisplayText } from './valueDisplayText';
+import { IfRegionNode } from './IfRegionNode';
 import { useEditor } from '../editor/store';
 import { parseCalculations, calculationLabel, sliceLabel } from '@tensor-trail/model-core/modules/calculation';
 import { isContainerInput } from '@tensor-trail/model-core/modules/containers';
@@ -20,6 +29,7 @@ import type { LocalParameterColor } from './localParameterColors';
 import { agentCompositeTypes, agentCodeTypes } from '@tensor-trail/model-core/modules/agentCompletion';
 import { mapCompositeTypes } from '@tensor-trail/model-core/modules/mapEncoder';
 import { natCompositeTypes } from '@tensor-trail/model-core/modules/natSequence';
+import { DEFAULT_TENSOR_PALETTE, gradLabel, gradSourceLabel, tensorGradState, tensorInk } from '@tensor-trail/model-core/core/tensorAppearance';
 
 export type TrailNode = Node<
   {
@@ -56,7 +66,7 @@ export const tone = (category: string) =>
 export const categoryColor = (category: string) => `var(--category-${tone(category)})`;
 
 export const isTensorNode = (type: string) =>
-  ['Input', 'Output', 'Inlet', 'Outlet', 'TensorVariable', 'ValueVariable'].includes(type);
+  ['Input', 'Output', 'Inlet', 'Outlet', 'TensorVariable', 'ValueVariable', 'BufferSource'].includes(type);
 
 const elementwiseLabels: Record<string, string> = {
   BitwiseAnd: '&',
@@ -64,8 +74,10 @@ const elementwiseLabels: Record<string, string> = {
   Where: 'where',
   ZerosLike: 'zeros_like',
   AlignTrailingDims: '尾部补维',
+  Divide: 'a / b',
 };
 const featureOperations = [
+  ...Object.keys(loopOperationLabels),
   'IntegerGreater',
   'Squeeze',
   'Cos',
@@ -77,6 +89,14 @@ const featureOperations = [
   'BooleanIndex',
   'Contiguous',
   'Zeros',
+  'NewZeros',
+  'OnesScaled',
+  'Arange',
+  'SortRowsByMax',
+  'MaxWithIndices',
+  'Sort',
+  'RowIndex',
+  'GetDevice',
   'BooleanAssign',
   'IndexAssign',
   'RepeatBatch',
@@ -86,8 +106,15 @@ const featureOperations = [
   'ReduceSum',
 ];
 
-function operationText(node: ModelNode): string {
+function operationText(node: ModelNode, result?: NodeResult): string {
   try {
+    if (node.type === 'TensorItemInt' && node.params.cast) return 'int(x)';
+    if (loopOperationLabels[node.type]) return loopOperationLabels[node.type];
+    if (node.type === 'GetDevice') return '.device';
+    const matchingLabel = matchingPreparationLabel(node);
+    if (matchingLabel) return matchingLabel;
+    const sortLabel = sortingLabel(node);
+    if (sortLabel) return sortLabel;
     const plutoLabel = plutoOperationLabel(node);
     if (plutoLabel) return plutoLabel;
     if (elementwiseLabels[node.type]) return elementwiseLabels[node.type];
@@ -106,16 +133,21 @@ function operationText(node: ModelNode): string {
     if (node.type === 'IndexAssign')
       return node.params.dim === 1 ? `x[:, ${node.params.index}] = v` : 'index_put()';
     if (node.type === 'Zeros') return 'zeros()';
+    if (node.type === 'NewZeros') return 'new_zeros()';
     if (node.type === 'BooleanAssign') return 'x[mask] = v';
     if (node.type === 'Flatten')
       return `flatten(${node.params.start_dim ?? 1}, ${node.params.end_dim ?? -1})`;
     if (node.type === 'ToVector') return functionTitle(node.label);
+    if (node.type === 'GetParameter') return `读取 .${parameterName(node.params.name)}`;
     if (node.type === 'DictionaryGet')
       return parseFieldPath(node.params.path)
         .map((key) => `[${JSON.stringify(key)}]`)
         .join('');
     if (node.type === 'Slice') return sliceLabel(node.params);
-    if (node.type === 'TensorIndex') return tensorIndexLabel(node.params);
+    if (node.type === 'TensorIndex') {
+      const input = result?.inputs.in;
+      return tensorIndexLabel(node.params, input && isTensorSpec(input) ? input.shape.length : undefined);
+    }
     if (node.type === 'Unsqueeze') return unsqueezeLabel(node.params);
     if (node.type === 'Any') return anyLabel(node.params);
     if (node.type === 'Invert') return '~';
@@ -133,13 +165,19 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
   const { model, result, inputs, outputs } = data;
   const [editing, setEditing] = useState(false);
   const cancelRename = useRef(false);
-  const background = model.tensorColor;
-  const rgb = background
-    ? [1, 3, 5].map((offset) => parseInt(background.slice(offset, offset + 2), 16))
-    : [];
-  const ink =
-    rgb.length && rgb[0] * 0.299 + rgb[1] * 0.587 + rgb[2] * 0.114 < 145 ? '#f8fafc' : '#172033';
+  const palette = useEditor((state) => state.project.tensorPalette) ?? DEFAULT_TENSOR_PALETTE;
   const spec = result?.outputs.out ?? Object.values(result?.outputs ?? {})[0] ?? result?.inputs.in;
+  const tensor = spec && isTensorSpec(spec) ? spec : undefined;
+  const showGrad = !!tensor || (!spec && isTensorNode(model.type) && model.type !== 'Inlet');
+  const gradState = tensorGradState(tensor);
+  const background = showGrad ? palette[gradState] : undefined;
+  const border = model.tensorBorderColor ?? model.tensorColor ?? (tensor?.parameterRef ? '#60a5fa' : tensor?.bufferRef ? '#059669' : undefined);
+  const tensorStyle = {
+    ...(background ? { '--tensor-bg': background, '--tensor-ink': tensorInk(background) } : {}),
+    ...(border ? { '--tensor-border': border } : {}),
+  } as CSSProperties;
+  const gradBadge = showGrad && <span className="tensor-grad-badge" data-grad-state={gradState}
+    title={`requires_grad=${gradState === 'unknown' ? '未知' : gradState === 'on' ? 'True' : 'False'} · ${tensor ? gradSourceLabel(tensor) : '尚未确定'}；不代表已执行 backward`}>{gradLabel(gradState)}</span>;
   const axisLabels = spec && isTensorSpec(spec) && (
     <div className="node-axis-labels" aria-label="输出轴含义">
       {spec.axes.length ? (
@@ -165,6 +203,76 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
   }, [model.id, inputSide, outputSide, inputs.length, outputs.length, updateNodeInternals]);
   const bad = result?.status === 'error' || result?.status === 'blocked';
   const container = isContainerInput(model.type);
+  if (model.type === 'IfRegion') return <IfRegionNode model={model} selected={selected} />;
+  if (model.type === 'WhileLoop') return (
+    <div className={`while-loop-node ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''}`}
+      data-testid={`node-${model.id}`} title="双击进入循环体；只展示一轮符号模板，未执行循环" style={{ minHeight: Math.max(140,(verticalPorts+1)*24) }}>
+      <PortHandles inputs={inputs} outputs={outputs} inputSide={inputSide} outputSide={outputSide} labels />
+      <span className="control-role-badge">WHILE <ArrowUpRight size={14} /></span>
+      <strong>{model.label}</strong><code>i &lt; num_points</code>
+      <small>状态：{String(model.params.states)} · i += 1</small>
+      <small>一轮符号模板 · 未执行</small>
+    </div>
+  );
+  if (model.type === 'IfCondition') return (
+    <div className={`condition-test-node ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''}`}
+      data-testid={`node-${model.id}`} title="count == quota；虚线表示控制依赖，实际分支未采集">
+      <PortHandles inputs={inputs} outputs={outputs} inputSide={inputSide} outputSide={outputSide} labels />
+      <strong>{model.label}</strong><code>count == quota</code><small>条件比较 · 未执行</small>
+    </div>
+  );
+  if (model.type === 'BranchValue') return (
+    <div className={`branch-value-node ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''}`}
+      data-testid={`node-${model.id}`} title="仅静态展示此分支，未执行数值计算">
+      <PortHandles inputs={inputs} outputs={outputs} inputSide={inputSide} outputSide={outputSide} labels={false} />
+      <strong>{model.params.branch ? 'True 分支' : 'False 分支'}</strong>
+      <small>{model.params.branch ? '更新剩余行' : 'maps 不修改'}</small>
+    </div>
+  );
+  if (model.type === 'IntegerList' || (spec && (isIntegerListSpec(spec) || isControlSpec(spec)) && isTensorNode(model.type))) return (
+    <div className={`control-value-node ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''}`} data-testid={`node-${model.id}`} title={spec ? shapeText(spec) : '待连接'}>
+      <PortHandles inputs={inputs} outputs={outputs} inputSide={inputSide} outputSide={outputSide} labels={false} />
+      <strong>{model.label}</strong><code>{spec ? shapeText(spec) : 'list[int]'}</code>
+    </div>
+  );
+  if (model.type === 'DeviceVariable' || (spec && isDeviceSpec(spec) && isTensorNode(model.type))) {
+    return (
+      <div
+        className={`device-value-node ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
+        data-testid={`node-${model.id}`}
+        aria-label={`设备值 ${model.label}`}
+        title={bad ? result?.messages.join('\n') : `${model.label} · ${spec ? shapeText(spec) : '待连接 Device'} · 设备元数据，不是 Tensor；实际设备未采集`}
+      >
+        <PortHandles inputs={inputs} outputs={outputs} inputSide={inputSide} outputSide={outputSide} labels={false} />
+        <span className="device-role-badge">DEVICE</span>
+        <strong>{model.label}</strong>
+      </div>
+    );
+  }
+  if (attributeTypes.has(model.type)) {
+    const write = model.type === 'SetAttribute';
+    let owner = '属性路径待修正', name = String(model.params.name ?? '属性');
+    try {
+      const binding = attributeBinding(model.params);
+      owner = attributeOwnerLabel(binding.owner);
+      name = binding.name;
+    } catch { /* Invalid bindings remain editable in the inspector. */ }
+    return (
+      <div
+        className={`attribute-node ${write ? 'attribute-set-node' : 'attribute-get-node'} ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
+        data-testid={`node-${model.id}`}
+        aria-label={`${write ? '写属性' : '读属性'} ${owner}.${name}`}
+        title={bad ? result?.messages.join('\n') : `${model.label} · ${owner}.${name} · 属性绑定，不是 forward 形参`}
+        style={tensorStyle}
+      >
+        <PortHandles inputs={inputs} outputs={outputs} inputSide={inputSide} outputSide={outputSide} labels={false} />
+        <div className="attribute-node-heading"><span className="attribute-role-badge">{write ? 'SET' : 'GET'}</span><strong>{name}</strong></div>
+        <code className="attribute-owner">{owner}</code>
+        {model.params.version && <small className="attribute-version">赋值版本：{String(model.params.version)}</small>}
+        <div className="attribute-value-summary">{spec && <code>{valueDisplayText(spec)}</code>}{gradBadge}</div>
+      </div>
+    );
+  }
   if (model.type === 'LocalParameter')
     return (
       <div
@@ -234,11 +342,7 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
       <div
         className={`${model.type === 'DictionaryInput' ? 'dictionary-input-node' : 'tensor-node forward-input-node'} ${model.type === 'Inlet' ? 'module-input-node' : ''} ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
         data-testid={`node-${model.id}`}
-        style={
-          background
-            ? ({ '--tensor-bg': background, '--tensor-ink': ink } as CSSProperties)
-            : undefined
-        }
+        style={tensorStyle}
       >
         <PortHandles
           inputs={inputs}
@@ -286,6 +390,7 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
             {model.label}
           </div>
         )}
+        {gradBadge}
         {model.type === 'DictionaryInput' && (
           <div className="dictionary-node-summary">
             <strong>{spec && isDictionarySpec(spec) ? shapeText(spec) : 'dict · 待修正'}</strong>
@@ -300,7 +405,8 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
     );
   if (isTensorNode(model.type)) {
     const spec = result?.outputs.out ?? result?.inputs.in;
-    const shape = spec ? shapeText(spec) : bad ? '待修正' : '等待输入';
+    const moduleReference = spec && isModuleSpec(spec);
+    const shape = spec ? canvasValueLabel(spec, 'node') : bad ? '待修正' : '等待输入';
     const tensorRole = ['TensorVariable', 'ValueVariable'].includes(model.type)
       ? 'tensor-variable'
       : ['Input', 'Inlet'].includes(model.type)
@@ -308,23 +414,19 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
         : 'tensor-output';
     return (
       <div
-        className={`tensor-node ${spec && isIntegerSpec(spec) ? 'integer-value-node' : ''} ${tensorRole} ${data.reverse ? 'flow-left' : ''} ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
+        className={`tensor-node ${spec && isModuleSpec(spec) ? 'module-reference-node' : ''} ${spec && isIntegerSpec(spec) ? 'integer-value-node' : ''} ${tensorRole} ${data.reverse ? 'flow-left' : ''} ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
         data-testid={`node-${model.id}`}
         aria-label={
           ['TensorVariable', 'ValueVariable'].includes(model.type)
-            ? `张量变量 ${model.label}`
+            ? `${spec && !isTensorSpec(spec) ? '值变量' : '张量变量'} ${model.label}`
             : undefined
         }
-        style={
-          background
-            ? ({ '--tensor-bg': background, '--tensor-ink': ink } as CSSProperties)
-            : undefined
-        }
+        style={tensorStyle}
       >
         {editing ? (
           <input
             className="tensor-label-input nodrag nowheel"
-            aria-label={spec && isIntegerSpec(spec) ? '编辑变量名称' : '编辑 Tensor 名称'}
+            aria-label={spec && !isTensorSpec(spec) ? '编辑变量名称' : '编辑 Tensor 名称'}
             autoFocus
             defaultValue={model.label}
             maxLength={200}
@@ -355,7 +457,18 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
             {model.label}
           </div>
         )}
-        <div className="tensor-node-shape">
+        {tensor?.parameterRef && <span className="parameter-role-badge" title={`${tensor.parameterRef.module}.${tensor.parameterRef.name} · 注册参数，不等于已执行反向传播`}>Parameter</span>}
+        {tensor?.bufferRef && <span className="buffer-role-badge" title={`${tensor.bufferRef.reference} · 注册 buffer，不是 nn.Parameter；persistent=${tensor.bufferRef.persistent}`}>BUFFER</span>}
+        {gradBadge}
+        {moduleReference ? (
+          <PortHandles
+            inputs={inputs}
+            outputs={outputs}
+            inputSide={inputSide}
+            outputSide={outputSide}
+            labels={false}
+          />
+        ) : <div className="tensor-node-shape">
           <PortHandles
             inputs={inputs}
             outputs={outputs}
@@ -366,7 +479,7 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
           <code title={spec && isTensorSpec(spec) ? `${shape} · ${spec.axes.join(', ')}` : shape}>
             {shape}
           </code>
-        </div>
+        </div>}
         {axisLabels}
       </div>
     );
@@ -451,7 +564,7 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
     );
   }
 
-  if (model.type === 'ToVector') {
+  if (['ToVector', 'Reweight'].includes(model.type)) {
     return (
       <div
         className={`compact-operation-node function-node to-vector-node tone-${tone(data.category)} ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
@@ -483,7 +596,8 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
         <span className="function-symbol" aria-hidden="true">
           ƒ
         </span>
-        <strong>{model.label}</strong>
+        <strong>{model.type === 'Reweight' ? functionTitle(model.label) : model.label}</strong>
+        {model.type === 'Reweight' && <ArrowUpRight size={14} aria-hidden="true" />}
       </div>
     );
   }
@@ -491,7 +605,9 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
   if (
     model.type === 'Function' ||
     model.type === 'CodeFunction' ||
+    model.type === 'TensorSequencePack' ||
     agentCodeTypes.has(model.type) ||
+    imageMetadataCodeTypes.has(model.type) ||
     plutoCodeTypes.has(model.type)
   ) {
     return (
@@ -499,7 +615,8 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
         className={`compact-operation-node function-node tone-${tone(data.category)} ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
         data-testid={`node-${model.id}`}
         aria-label={`函数：${model.label}`}
-        title={`${model.label} · ${model.type === 'CodeFunction' || agentCodeTypes.has(model.type) || plutoCodeTypes.has(model.type) ? '在右侧查看函数代码与参数' : '在右侧查看和编辑数学公式'}`}
+        title={`${model.label} · ${model.type === 'CodeFunction' || model.type === 'TensorSequencePack' || agentCodeTypes.has(model.type) || plutoCodeTypes.has(model.type) || imageMetadataCodeTypes.has(model.type) ? '在右侧查看函数代码与参数' : '在右侧查看和编辑数学公式'}`}
+        style={verticalPorts > 2 ? { minHeight: (verticalPorts + 1) * 16 } : undefined}
       >
         <PortHandles
           inputs={inputs}
@@ -606,17 +723,20 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
     );
   }
 
-  if (['DictionaryGet', 'Slice', 'TensorIndex', 'Unsqueeze'].includes(model.type)) {
+  if (['DictionaryGet', 'GetParameter', 'Slice', 'TensorIndex', 'Unsqueeze'].includes(model.type)) {
     const isSlice = model.type === 'Slice';
     const isIndex = model.type === 'TensorIndex';
     const isUnsqueeze = model.type === 'Unsqueeze';
-    const kind = isUnsqueeze ? '增加维度' : isSlice || isIndex ? '索引与切片' : '字典字段读取';
-    let expression = isSlice ? '切片参数待修正' : '选择字典字段';
+    const isParameter = model.type === 'GetParameter';
+    const kind = isParameter ? '读取参数' : isUnsqueeze ? '增加维度' : isSlice || isIndex ? '索引与切片' : '字典字段读取';
+    let expression = isParameter ? '参数名待修正' : isSlice ? '切片参数待修正' : '选择字典字段';
     try {
-      expression = isSlice
+      expression = isParameter
+        ? `读取 .${parameterName(model.params.name)}`
+        : isSlice
         ? sliceLabel(model.params)
         : isIndex
-          ? tensorIndexLabel(model.params)
+          ? operationText(model, result)
           : isUnsqueeze
             ? unsqueezeLabel(model.params)
             : parseFieldPath(model.params.path)
@@ -627,7 +747,7 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
     }
     return (
       <div
-        className={`compact-operation-node ${isSlice ? 'slice-node' : isIndex ? 'tensor-index-node' : isUnsqueeze ? 'unsqueeze-node' : 'field-read-node'} tone-${tone(data.category)} ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
+        className={`compact-operation-node ${isParameter ? 'parameter-read-node' : isSlice ? 'slice-node' : isIndex ? 'tensor-index-node' : isUnsqueeze ? 'unsqueeze-node' : 'field-read-node'} tone-${tone(data.category)} ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
         data-testid={`node-${model.id}`}
         aria-label={`${kind}：${expression}`}
         title={
@@ -669,7 +789,7 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
         <ol className="calculation-group-steps">
           {steps.map((node) => (
             <li key={node.id}>
-              <code title={`${node.label} · ${operationText(node)}`}>{operationText(node)}</code>
+              <code title={`${node.label} · ${operationText(node, result?.child?.nodes[node.id])}`}>{operationText(node, result?.child?.nodes[node.id])}</code>
             </li>
           ))}
         </ol>
@@ -727,7 +847,7 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
     <div
       className={`module-node tone-${tone(data.category)} ${hasTop ? 'has-top-ports' : ''} ${hasBottom ? 'has-bottom-ports' : ''} ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
       data-testid={`node-${model.id}`}
-      title={model.subgraph ? `双击进入 ${model.label} 的 forward()` : undefined}
+      title={model.subgraph ? `双击进入 ${model.label} 的${['EmbeddingXYZInit', 'EmbeddingXYZModuleInit'].includes(model.type) ? '参数初始化（非 forward）' : model.type === 'ForEachTensor' ? '循环体' : ' forward()'}` : undefined}
     >
       <div className="node-heading">
         <div className="node-title">
@@ -747,6 +867,10 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
                 </span>
               ))}
             </div>
+          ) : model.type === 'ForEachTensor' ? (
+            <strong>ForEach · {result?.iterations?.length ?? '?'} 次</strong>
+          ) : ['EmbeddingXYZInit', 'EmbeddingXYZModuleInit'].includes(model.type) ? (
+            <strong>仅构造阶段 · {model.type === 'EmbeddingXYZModuleInit' ? '输出模块引用' : '输出 weight'}</strong>
           ) : (
             <ModuleGlyph type={model.type} />
           )}
@@ -767,7 +891,7 @@ export function ModuleNode({ data, selected }: NodeProps<TrailNode>) {
           </span>
         ) : model.subgraph ? (
           <button className="nodrag" onClick={data.open}>
-            进入 forward() <ChevronRight size={12} />
+            {['EmbeddingXYZInit', 'EmbeddingXYZModuleInit'].includes(model.type) ? '进入初始化' : model.type === 'ForEachTensor' ? '进入循环体' : '进入 forward()'} <ChevronRight size={12} />
           </button>
         ) : (
           <span>

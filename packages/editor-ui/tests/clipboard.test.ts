@@ -25,9 +25,9 @@ function boundaryGraph(): Graph {
 }
 
 describe('图形剪贴板协议', () => {
-  it('往返保留模块、子图、端口方向与背景色', () => {
+  it('往返保留模块、子图、端口方向与边框色', () => {
     const g = example().graph;
-    g.nodes[0].tensorColor = '#dbeafe';
+    g.nodes[0].tensorBorderColor = '#dbeafe';
     g.nodes[0].portLayout = { output: 'bottom' };
     const fragment = copySelection(g, ['input', 'transformer']);
     expect(readClipboard(clipboardText(fragment))).toEqual(fragment);
@@ -96,13 +96,13 @@ describe('图形剪贴板协议', () => {
     const copy = linkedCopy(source, 'copy');
     source.label = '最新名称';
     source.params.shape = '4, 5';
-    copy.tensorColor = '#abcdef';
+    copy.tensorBorderColor = '#abcdef';
     const graph = { nodes: [source, copy], edges: [] };
     const fragment = copySelection(graph, ['copy']);
     expect(fragment.nodes[0].valueSource).toBeUndefined();
     expect(fragment.nodes[0].label).toBe('最新名称');
     expect(fragment.nodes[0].params.shape).toBe('4, 5');
-    expect(fragment.nodes[0].tensorColor).toBe('#abcdef');
+    expect(fragment.nodes[0].tensorBorderColor).toBe('#abcdef');
     expect(readClipboard(clipboardText(fragment))).toEqual(fragment);
     expect(copy.valueSource).toBe('source');
     expect(copy.params.shape).toBe('2, 3');

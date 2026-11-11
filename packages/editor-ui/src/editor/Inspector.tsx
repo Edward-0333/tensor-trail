@@ -29,11 +29,32 @@ import { FunctionFormulaField } from './FunctionFormulaField';
 import { effectiveValueNode, isValueNode, linkedValueNodes, valueOwner } from '@tensor-trail/model-core/core/valueLinks';
 import { localParameterColors } from '../views/localParameterColors';
 import { sequenceCode } from '@tensor-trail/model-core/modules/sequenceOps';
+import { imageMetadataCode } from '@tensor-trail/model-core/modules/imageMetadata';
+import { tensorSequenceCode } from '@tensor-trail/model-core/modules/tensorSequence';
+import { forEachCode } from '@tensor-trail/model-core/modules/forEach';
 import { natSource } from '@tensor-trail/model-core/modules/natSequence';
 import { agentCompletionCode } from '@tensor-trail/model-core/modules/agentCompletion';
+import { embeddingInitializationCode } from '@tensor-trail/model-core/modules/embeddingInitialization';
+import { moduleReferenceCode } from '@tensor-trail/model-core/modules/moduleReference';
+import { attributeCode } from '@tensor-trail/model-core/modules/attributes';
+import { newZerosCode } from '@tensor-trail/model-core/modules/newZeros';
+import { bufferSourceCode } from '@tensor-trail/model-core/modules/bufferSource';
+import { matchingPreparationCode } from '@tensor-trail/model-core/modules/matchingPreparation';
+import { deviceCode } from '@tensor-trail/model-core/modules/device';
+import { sortingCode } from '@tensor-trail/model-core/modules/sorting';
+import { reweightCode } from '@tensor-trail/model-core/modules/reweight';
+import { whileLoopCode } from '@tensor-trail/model-core/modules/whileLoop';
+import { loopOpsCode } from '@tensor-trail/model-core/modules/loopOps';
+import { divideCode } from '@tensor-trail/model-core/modules/elementwise';
+import { AttributeBindingPanel } from './AttributeBindingPanel';
+import { IfRegionPanel } from './IfRegionPanel';
 import { mapOperationCode } from '@tensor-trail/model-core/modules/mapOps';
 import { mapEncoderCode } from '@tensor-trail/model-core/modules/mapEncoder';
 import { maskedWriteCode } from '@tensor-trail/model-core/modules/maskedWrite';
+import { isTensorSpec } from '@tensor-trail/model-core/core/types';
+import { canRequireGrad } from '@tensor-trail/model-core/core/tensorAppearance';
+import { TensorAppearancePanel } from './TensorAppearancePanel';
+import { RuntimePanel } from './RuntimePanel';
 
 const operationHelp: Record<
   string,
@@ -361,7 +382,8 @@ function ParamField({
 }
 
 export function Inspector({ graph, result }: { graph: Graph; result?: GraphResult }) {
-  const [tab, setTab] = useState<'node' | 'hyperparameters'>('node');
+  const tabs = [['node', '节点属性'], ['hyperparameters', '模型超参数'], ['appearance', '张量配色'], ['runtime', '运行数据']] as const;
+  const [tab, setTab] = useState<'node' | 'hyperparameters' | 'appearance' | 'runtime'>('node');
   const state = useEditor(),
     storedNode = graph.nodes.find((n) => n.id === state.selected),
     node = storedNode ? effectiveValueNode(graph, storedNode) : undefined,
@@ -396,8 +418,23 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
       mapEncoderCode(node) ??
       mapOperationCode(node) ??
       agentCompletionCode(node) ??
+      embeddingInitializationCode(node) ??
+      moduleReferenceCode(node) ??
+      attributeCode(node, state.path) ??
+      newZerosCode(node) ??
+      bufferSourceCode(node) ??
+      matchingPreparationCode(node) ??
+      sortingCode(node) ??
+      reweightCode(node) ??
+      whileLoopCode(node) ??
+      loopOpsCode(node) ??
+      deviceCode(node) ??
+      divideCode(node) ??
       maskedWriteCode(node) ??
       sequenceCode(node) ??
+      imageMetadataCode(node) ??
+      tensorSequenceCode(node) ??
+      forEachCode(node) ??
       natSource(node))
     : undefined;
   const localColor =
@@ -405,6 +442,7 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
   const container = node && isContainerInput(node.type);
   const namedInput = container || node?.type === 'Inlet';
   const boundary = node && ['Inlet', 'Outlet'].includes(node.type);
+  const tensorOutput = node ? result?.nodes[node.id]?.outputs.out : undefined;
   const replaceable =
     node &&
     linkedMembers.length <= 1 &&
@@ -418,6 +456,7 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
       'TensorSize',
       'LocalParameter',
       'TensorVariable',
+      'DeviceVariable',
       'CodeFunction', // Change its typed template through the operation field instead.
     ].includes(node.type);
   const compatible = replaceable
@@ -426,7 +465,7 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
         .filter(
           (d) =>
             !d.composite &&
-            !['Input', 'Output', 'LocalParameter', 'TensorVariable'].includes(d.type) &&
+            !['Input', 'Output', 'LocalParameter', 'TensorVariable', 'DeviceVariable'].includes(d.type) &&
             !isContainerInput(d.type) &&
             JSON.stringify(d.inputs.map((p) => p.id)) ===
               JSON.stringify(ports(node, registry).inputs.map((p) => p.id)) &&
@@ -442,12 +481,7 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
         <span className="tiny-badge">{node ? '模块' : '总览'}</span>
       </div>
       <div className="inspector-tabs" role="tablist" aria-label="属性面板内容">
-        {(
-          [
-            ['node', '节点属性'],
-            ['hyperparameters', '模型超参数'],
-          ] as const
-        ).map(([key, label], index) => (
+        {tabs.map(([key, label], index) => (
           <button
             key={key}
             id={`inspector-tab-${key}`}
@@ -459,14 +493,8 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
             onKeyDown={(event) => {
               if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
                 event.preventDefault();
-                const next =
-                  event.key === 'Home'
-                    ? 'node'
-                    : event.key === 'End'
-                      ? 'hyperparameters'
-                      : index
-                        ? 'node'
-                        : 'hyperparameters';
+                const next = tabs[event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1
+                  : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length][0];
                 setTab(next);
                 document.getElementById(`inspector-tab-${next}`)?.focus();
               }
@@ -476,7 +504,13 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
           </button>
         ))}
       </div>
-      {tab === 'hyperparameters' ? (
+      {tab === 'runtime' ? (
+        <div className="inspector-scroll" id="inspector-panel-runtime" role="tabpanel" aria-labelledby="inspector-tab-runtime"><RuntimePanel /></div>
+      ) : tab === 'appearance' ? (
+        <div className="inspector-scroll" id="inspector-panel-appearance" role="tabpanel" aria-labelledby="inspector-tab-appearance">
+          <TensorAppearancePanel />
+        </div>
+      ) : tab === 'hyperparameters' ? (
         <div
           className="inspector-scroll"
           id="inspector-panel-hyperparameters"
@@ -530,9 +564,13 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
                     onClick={() => state.navigate([...state.path, node.id])}
                   >
                     <ArrowUpRight size={14} />
-                    {node.type === 'CalculationGroup'
+                    {['EmbeddingXYZInit', 'EmbeddingXYZModuleInit'].includes(node.type)
+                      ? '进入初始化'
+                      : node.type === 'WhileLoop'
+                      ? '进入循环体（符号模板）'
+                      : node.type === 'CalculationGroup'
                       ? '编辑内部操作'
-                      : node.type === 'ToVector'
+                      : ['ToVector', 'Reweight'].includes(node.type)
                         ? '进入函数'
                         : '进入 forward()'}
                   </button>
@@ -551,7 +589,7 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
               {help && (
                 <section className="operation-port-help" aria-label="操作输入与输出说明">
                   <div className="section-label">
-                    {node.type === 'ToVector' ? '函数接口' : '操作接口'}
+                    {['ToVector', 'Reweight'].includes(node.type) ? '函数接口' : '操作接口'}
                   </div>
                   <dl>
                     {help.ports.map(([port, description]) => (
@@ -683,14 +721,14 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
               </section>
               {(isTensorNode(node.type) || container) && (
                 <section className="tensor-color-settings">
-                  <div className="section-label">{namedInput ? '输入背景' : 'Tensor 背景'}</div>
+                  <div className="section-label">{namedInput ? '输入边框' : 'Tensor 边框'}</div>
                   <div className="tensor-color-options">
                     <button
-                      className={!node.tensorColor ? 'active' : ''}
-                      onClick={() => state.setTensorColor(node.id)}
-                      aria-label={namedInput ? '输入背景透明' : 'Tensor 背景透明'}
+                      className={!node.tensorBorderColor ? 'active' : ''}
+                      onClick={() => state.setTensorBorderColor(node.id)}
+                      aria-label={namedInput ? '输入边框默认' : 'Tensor 边框默认'}
                     >
-                      透明
+                      默认
                     </button>
                     {[
                       ['紫色', '#ede9fe'],
@@ -703,19 +741,34 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
                       <button
                         key={color}
                         title={label}
-                        aria-label={`${namedInput ? '输入背景' : 'Tensor 背景'}${label}`}
-                        aria-pressed={node.tensorColor === color}
+                        aria-label={`${namedInput ? '输入边框' : 'Tensor 边框'}${label}`}
+                        aria-pressed={node.tensorBorderColor === color}
                         style={{ background: color }}
-                        onClick={() => state.setTensorColor(node.id, color)}
+                        onClick={() => state.setTensorBorderColor(node.id, color)}
                       />
                     ))}
                     <input
-                      aria-label={namedInput ? '自定义输入背景色' : '自定义 Tensor 背景色'}
+                      aria-label={namedInput ? '自定义输入边框色' : '自定义 Tensor 边框色'}
                       type="color"
-                      value={node.tensorColor ?? '#ede9fe'}
-                      onChange={(e) => state.setTensorColor(node.id, e.target.value)}
+                      value={node.tensorBorderColor ?? '#64748b'}
+                      onChange={(e) => state.setTensorBorderColor(node.id, e.target.value)}
                     />
                   </div>
+                  <button className="soft-button" onClick={() => setTab('appearance')}>管理全项目张量背景色</button>
+                </section>
+              )}
+              {tensorOutput && isTensorSpec(tensorOutput) && (
+                <section className="tensor-autograd-settings">
+                  <label className="param-field">
+                    <span>自动求导状态标注<small>out · requires_grad</small></span>
+                    <select aria-label="自动求导状态标注" value={node.tensorAutograd ? String(node.tensorAutograd.requiresGrad) : 'auto'}
+                      onChange={(event) => state.setTensorAutograd(node.id, event.target.value === 'auto' ? undefined : event.target.value === 'true')}>
+                      <option value="auto">跟随输入 / 推导；无法确定则未知</option>
+                      <option value="true" disabled={!canRequireGrad(tensorOutput.dtype)}>grad:on · True</option>
+                      <option value="false">grad:off · False</option>
+                    </select>
+                  </label>
+                  <p className="microcopy">修改后记为手工标注，不会改变 Python 模型。运行模式或代码改变后需要重新核实。</p>
                 </section>
               )}
               {node.type === 'CalculationGroup' && (
@@ -763,8 +816,11 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
                   </select>
                 </label>
               )}
-              {!container && (
+              {['SetAttribute', 'GetAttribute'].includes(node.type) && <AttributeBindingPanel node={node} />}
+              {node.type === 'IfRegion' && <IfRegionPanel graph={graph} node={node} />}
+              {!container && node.type !== 'IfRegion' && (
                 <TensorView
+                  observeInput={node.type === 'SetAttribute'}
                   result={result?.nodes[node.id]}
                   outputPorts={
                     node.type === 'TensorSize' ? ports(node, registry).outputs : undefined
@@ -780,7 +836,9 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
                 {resolveForwardView(state.project.graph, state.path).current.title}
               </p>
               <p className="muted">
-                本层展示直接计算和模块调用；子模块保持封装，双击进入内部 forward()。
+                {owner && ['EmbeddingXYZInit', 'EmbeddingXYZModuleInit'].includes(owner.type)
+                  ? '本层说明模型构造时的参数初始化，不会在每次 forward 时重复执行；出口展示已注册的 weight。'
+                  : '本层展示直接计算和模块调用；子模块保持封装，双击进入内部 forward()。'}
               </p>
               <dl className="summary-metrics">
                 <div>

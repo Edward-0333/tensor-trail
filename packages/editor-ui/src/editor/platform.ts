@@ -2,6 +2,7 @@ import type { DocumentState, EditorAction, EditorPlatform } from '@tensor-trail/
 import type { Project } from '@tensor-trail/model-core/core/types';
 import { ProjectFiles } from './projectFiles';
 import { useEditor } from './store';
+import { activeRuntimeSnapshot } from '@tensor-trail/model-core/core/runtimeSnapshot';
 
 export let editorPlatform: EditorPlatform;
 export let projectFiles: ProjectFiles;
@@ -33,6 +34,29 @@ export function saveProject(saveAs = false) {
 export function openSourceProject() {
   flushPendingEdit();
   return projectFiles.open();
+}
+
+export async function loadActiveRuntime() {
+  const before = useEditor.getState();
+  const reference = before.project.runtime?.snapshots.find(
+    (ref) => ref.id === before.project.runtime?.active,
+  );
+  if (!reference || activeRuntimeSnapshot(before.project, before.runtimeSnapshot)) return;
+  const current = () => {
+    const s = useEditor.getState();
+    return (
+      s.documentId === before.documentId &&
+      s.project.runtime?.active === reference.id &&
+      s.project.runtime.snapshots.find((ref) => ref.id === reference.id)?.file === reference.file
+    );
+  };
+  try {
+    const snapshot = await projectFiles.readRuntime(reference);
+    if (current()) useEditor.getState().setRuntimeSnapshot(snapshot);
+  } catch (error) {
+    if (current())
+      useEditor.setState({ runtimeSnapshot: undefined, runtimeError: (error as Error).message });
+  }
 }
 
 export async function replaceEditorProject(project?: Project) {

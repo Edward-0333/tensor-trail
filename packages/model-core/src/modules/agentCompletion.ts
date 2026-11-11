@@ -55,8 +55,16 @@ export function agentCompletionCode(n: ModelNode): string | undefined {
     return `self.type_emb = nn.Embedding(${p.num_embeddings}, ${p.embedding_dim})\n\ndef forward(self, category):\n    return self.type_emb(category)  # 可训练的类别查表；不将类别数当作输出轴。`;
   if (n.type === 'IndexAssign')
     return `def forward(self, x, values):\n    index = [slice(None)] * x.ndim\n    index[${p.dim}] = ${p.index}\n    x[tuple(index)] = values\n    return x\n\n# x[:, 0] = x_ego：覆盖自车行，其他 agent 保持原值；不与旧自车行相加。`;
-  if (n.type === 'LearnedParameter')
-    return `self.parameter = nn.Parameter(torch.empty(${p.shape}, dtype=torch.${p.dtype}))\nnn.init.normal_(self.parameter, std=0.02)\n\ndef forward(self):\n    return self.parameter  # 参数值从训练权重获得，画布不填造随机数值。`;
+  if (n.type === 'LearnedParameter') {
+    const note = String(p.source_note ?? '')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => `# ${line}`)
+      .join('\n');
+    if (p.initialization === 'existing')
+      return `# 读取已有 nn.Parameter；不在 forward 中重新初始化或调用 Embedding 查表。\n# shape=[${p.shape}], dtype=torch.${p.dtype}\n${note}\nout = existing_parameter\n# 只记录参数规格，不伪造真实权重或运行时梯度状态。`;
+    return `self.parameter = nn.Parameter(torch.empty(${p.shape}, dtype=torch.${p.dtype}))\nnn.init.normal_(self.parameter, std=0.02)\n\ndef forward(self):\n    return self.parameter  # 参数值从训练权重获得，画布不填造随机数值。${note ? `\n${note}` : ''}`;
+  }
   if (n.type === 'RepeatBatch')
     return 'def forward(self, parameter, like):\n    return parameter.repeat(like.shape[0], 1, 1)\n\n# 参数在 batch 维重复；梯度累积到同一份可训练参数。';
   if (n.type === 'StateLinear')
@@ -123,15 +131,27 @@ export function installAgentCompletion(registry: ModuleRegistry) {
     label: '可训练参数',
     category: '基础层',
     description:
-      'nn.Parameter：属于模型权重，接收反向梯度；不同于超参数或输入常量。当前使用正态初始化 std=0.02。',
+      'nn.Parameter：属于模型权重，不同于超参数或输入常量。支持描述正态初始化或仅读取已有权重，不模拟运行时梯度状态。',
     fields: [
       text('shape', '参数形状', '1, 1, 128'),
       select('dtype', '数据类型', 'float32', ['float16', 'float32', 'float64']),
+      select('initialization', '权重来源', 'normal_0.02', ['normal_0.02', 'existing']),
+      { ...text('source_note', '权重来源备注', ''), maxLength: 1999 },
     ],
     inputs: [],
     outputs: output,
     infer: (_, p) => {
       const shape = dimensions(p.shape);
+      const initialization = p.initialization ?? 'normal_0.02';
+      requireThat(
+        ['normal_0.02', 'existing'].includes(String(initialization)),
+        '未知的参数权重来源。',
+      );
+      requireThat(
+        p.source_note === undefined ||
+          (typeof p.source_note === 'string' && p.source_note.length <= 1999),
+        '权重来源备注需要不超过 1999 字符的文本。',
+      );
       return {
         outputs: {
           out: tensor(
@@ -140,7 +160,13 @@ export function installAgentCompletion(registry: ModuleRegistry) {
             String(p.dtype),
           ),
         },
-        notes: ['可训练模型参数；初始化 std=0.02，真实数值由训练权重决定。'],
+        notes: [
+          initialization === 'existing'
+            ? '读取已有模型参数；本步骤不重新随机初始化，不执行 Embedding 查表。'
+            : '可训练模型参数；初始化 std=0.02，真实数值由训练权重决定。',
+          '只描述参数规格；是否冻结、当前梯度模式及实际梯度状态需运行时采集或显式标注。',
+          ...(p.source_note ? [String(p.source_note)] : []),
+        ],
       };
     },
   });

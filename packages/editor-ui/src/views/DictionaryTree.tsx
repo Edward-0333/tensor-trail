@@ -1,5 +1,7 @@
 import type { DictionarySpec } from '@tensor-trail/model-core/core/types';
-import { isDictionarySpec, isTensorSpec, shapeText } from '@tensor-trail/model-core/core/types';
+import { isDictionarySpec, isTensorSpec } from '@tensor-trail/model-core/core/types';
+import { valueDisplayText } from './valueDisplayText';
+import { gradLabel, tensorGradState } from '@tensor-trail/model-core/core/tensorAppearance';
 
 export function DictionaryTree({ value }: { value: DictionarySpec }) {
   return (
@@ -9,16 +11,16 @@ export function DictionaryTree({ value }: { value: DictionarySpec }) {
           {isDictionarySpec(child) ? (
             <details>
               <summary>
-                <code>{key}</code> · {shapeText(child)}
+                <code>{value.keyType === 'int' ? `${key} (int)` : key}</code> · {valueDisplayText(child)}
               </summary>
               <DictionaryTree value={child} />
             </details>
           ) : (
             <>
-              <code>{key}</code>
+              <code>{value.keyType === 'int' ? `${key} (int)` : key}</code>
               <span>
-                {shapeText(child)}
-                {isTensorSpec(child) ? ` · ${child.dtype}` : ''}
+                {valueDisplayText(child)}
+                {isTensorSpec(child) ? ` · ${child.dtype} · ${gradLabel(tensorGradState(child))}` : ''}
               </span>
             </>
           )}

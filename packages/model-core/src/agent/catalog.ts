@@ -12,6 +12,13 @@ const object = (properties: Record<string, unknown>, required: string[]) => ({
   additionalProperties: false,
 });
 function fieldSchema(f: Field) {
+  if (f.key === 'schema')
+    return {
+      type: ['string', 'object'],
+      maxLength: f.maxLength ?? 64000,
+      description: 'DictionarySpec object (preferred); legacy JSON strings remain readable.',
+      default: f.default,
+    };
   return {
     ...(f.kind === 'number'
       ? { type: 'integer', minimum: f.min ?? 1, maximum: Number.MAX_SAFE_INTEGER }
@@ -28,6 +35,18 @@ function fieldSchema(f: Field) {
 export function describeModules(includeInternal = false) {
   return structuredClone({
     apiVersion: 1 as const,
+    editing: {
+      validationModes: ['strict', 'draft'],
+      defaultValidationMode: 'strict',
+      patchLayouts: ['preserve', 'auto'],
+      defaultPatchLayout: 'preserve',
+      position:
+        'RecipeNode.position and set_position accept finite x/y coordinates. Explicit layout operations always reflow their target graph.',
+      linkedCopies:
+        'duplicate_linked creates a same-graph value alias with no independent inputs. source may be an existing alias; the new copy refers directly to its canonical owner.',
+      draft:
+        'Missing input/output and unconnected inputs are warnings; structural and known shape errors remain errors. Unloaded runtime sidecars use static inference with an explicit warning; references are retained.',
+    },
     modules: registry.list(includeInternal).map((d) => ({
       type: d.type,
       label: d.label,
@@ -67,6 +86,8 @@ export function describeModules(includeInternal = false) {
 }
 
 export function getSchemas() {
+  const position = object({ x: { type: 'number' }, y: { type: 'number' } }, ['x', 'y']);
+  const mode = { type: 'string', enum: ['strict', 'draft'], default: 'strict' };
   const node = {
     oneOf: registry.list(true).map((d) =>
       object(
@@ -74,6 +95,7 @@ export function getSchemas() {
           id: identifier,
           type: { const: d.type },
           label: name,
+          position,
           params: object(Object.fromEntries(d.fields.map((f) => [f.key, fieldSchema(f)])), []),
           ...(d.composite ? { subgraph: { $ref: '#/$defs/graph' } } : {}),
         },
@@ -95,6 +117,8 @@ export function getSchemas() {
   const path = { type: 'array', maxItems: 12, items: identifier };
   const ops = [
     object({ op: { const: 'add_node' }, path, node: { $ref: '#/$defs/node' } }, ['op', 'node']),
+    object({ op: { const: 'replace_node' }, path, id: identifier, node: { $ref: '#/$defs/node' } }, ['op', 'id', 'node']),
+    object({ op: { const: 'duplicate_linked' }, path, source: identifier, id: identifier, position }, ['op', 'source', 'id']),
     object({ op: { const: 'remove_node' }, path, id: identifier }, ['op', 'id']),
     object(
       {
@@ -110,6 +134,13 @@ export function getSchemas() {
       'id',
       'label',
     ]),
+    object({ op: { const: 'set_position' }, path, id: identifier, position }, [
+      'op',
+      'id',
+      'position',
+    ]),
+    object({ op: { const: 'set_tensor_border' }, path, id: identifier,
+      color: { type: ['string', 'null'], pattern: '^#[0-9a-fA-F]{6}$' } }, ['op', 'id', 'color']),
     ...['connect', 'disconnect'].map((op) =>
       object({ op: { const: op }, path, from: endpoint, to: endpoint }, ['op', 'from', 'to']),
     ),
@@ -118,6 +149,34 @@ export function getSchemas() {
   ];
   const base = { $schema: 'https://json-schema.org/draft/2020-12/schema', $defs: { node, graph } };
   return structuredClone({
+    validationOptions: {
+      $schema: base.$schema,
+      ...object(
+        {
+          mode,
+          runtimeSnapshot: {
+            type: 'object',
+            description:
+              'Optional validated runtime-snapshot v1, supplied by the host; not persisted.',
+          },
+        },
+        [],
+      ),
+    },
+    patchOptions: {
+      $schema: base.$schema,
+      ...object(
+        {
+          mode,
+          layout: { type: 'string', enum: ['preserve', 'auto'], default: 'preserve' },
+          runtimeSnapshot: {
+            type: 'object',
+            description: 'Optional loaded runtime-snapshot v1; not persisted.',
+          },
+        },
+        [],
+      ),
+    },
     recipe: {
       ...base,
       title: 'Tensor Trail Recipe v1',

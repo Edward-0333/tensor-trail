@@ -73,7 +73,7 @@ describe('网络输入与旧输入兼容', () => {
       id: 'data',
       type: 'ForwardInput',
       label: '网络输入',
-      tensorColor: '#172033',
+      tensorBorderColor: '#172033',
       params: { text: '自由描述，不要求是 JSON' },
       portLayout: { output: 'bottom' },
     });
@@ -184,11 +184,11 @@ describe('网络输入与旧输入兼容', () => {
     expect(result.nodes.next.child!.nodes.linear.messages[0]).toContain('网络输入');
     expect(tensorValue(result.nodes.linear.outputs.out).shape).toEqual([8, 100, 64]);
   });
-  it('内容说明、名称、背景、端口方向及位置可保存、重开和复制', () => {
+  it('内容说明、名称、边框、端口方向及位置可保存、重开和复制', () => {
     const graph = connected('DictInput');
     Object.assign(graph.nodes[0], {
       label: 'forward 的 batch',
-      tensorColor: '#172033',
+      tensorBorderColor: '#172033',
       portLayout: { output: 'bottom' },
       position: { x: 120, y: -80 },
     });
@@ -199,7 +199,7 @@ describe('网络输入与旧输入兼容', () => {
     expect(copied.nodes[0]).toMatchObject({
       type: 'ForwardInput',
       label: 'forward 的 batch',
-      tensorColor: '#172033',
+      tensorBorderColor: '#172033',
       params: { text: '自由描述，不要求是 JSON' },
       portLayout: { output: 'bottom' },
       position: { x: 152, y: -48 },

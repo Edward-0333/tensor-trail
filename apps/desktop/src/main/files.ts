@@ -5,6 +5,7 @@ import type { DocumentState, DocumentVersion } from '@tensor-trail/platform-api'
 import { parseProject } from '@tensor-trail/model-core/core/serialization';
 import { registry } from '@tensor-trail/model-core/modules';
 import type { FileToken } from '../shared/protocol';
+import { parseRuntimeSnapshot, safeSnapshotPath } from '@tensor-trail/model-core/core/runtimeSnapshot';
 
 const MAX = 3_000_000;
 export class FileFault extends Error {
@@ -178,6 +179,26 @@ export class DocumentFiles {
       file.validated = true;
     }
     return text.replace(/^\uFEFF/, '');
+  }
+  async readRelated(key: string, relativePath: string) {
+    const file = this.record(key);
+    if (!this.state || file.owner !== this.state.documentId) throw new FileFault('DOCUMENT_OWNER','快照不属于当前项目。');
+    if (!safeSnapshotPath(relativePath)) throw new FileFault('SNAPSHOT_PATH','快照路径必须是项目目录内的相对 JSON 路径。');
+    const project = parseProject(await this.read(key), registry);
+    const reference = project.runtime?.snapshots.find(ref=>ref.file===relativePath);
+    if (!reference) throw new FileFault('SNAPSHOT_REFERENCE','项目文件没有声明这个快照，请先保存引用。');
+    const base = await fs.realpath(path.dirname(file.path));
+    let resolved = base;
+    for (const component of relativePath.split('/')) {
+      resolved = path.join(resolved,component);
+      if ((await fs.lstat(resolved)).isSymbolicLink()) throw new FileFault('SNAPSHOT_PATH','快照路径不能包含符号链接。');
+    }
+    const real = await fs.realpath(resolved);
+    if (!real.startsWith(base + path.sep)) throw new FileFault('SNAPSHOT_PATH','快照超出项目目录。');
+    const text = decode(await readLimited(resolved));
+    if (parseRuntimeSnapshot(text).id !== reference.id) throw new FileFault('SNAPSHOT_ID','快照 ID 与项目引用不匹配。');
+    if (file.owner !== this.state?.documentId) throw new FileFault('DOCUMENT_CHANGED','读取期间项目已切换。');
+    return text;
   }
   async write(key: string, text: string, version: DocumentVersion) {
     this.current(version);

@@ -2,8 +2,10 @@ import { useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import type { DictionarySpec, ModelNode, TensorSpec } from '@tensor-trail/model-core/core/types';
 import { clone, isDictionarySpec, isTensorSpec } from '@tensor-trail/model-core/core/types';
+import { canRequireGrad, gradSourceLabel } from '@tensor-trail/model-core/core/tensorAppearance';
 import {
   checkDictionaryKey,
+  dictionaryFieldKey,
   DICTIONARY_DTYPES,
   dictionaryShape,
   emptyDictionary,
@@ -24,7 +26,7 @@ export function DictionaryInputEditor({ node }: { node: ModelNode }) {
         <p className="muted">修正结构描述后可继续编辑字段。</p>
         <textarea
           aria-label="修正字典结构描述"
-          defaultValue={String(node.params.schema ?? '')}
+          defaultValue={typeof node.params.schema === 'object' ? JSON.stringify(node.params.schema,null,2) : String(node.params.schema ?? '')}
           onBlur={(event) => useEditor.getState().setParam(node.id, 'schema', event.target.value)}
         />
       </div>
@@ -41,14 +43,15 @@ export function DictionaryInputEditor({ node }: { node: ModelNode }) {
         parent = next;
       }
       update(parent);
-      const text = JSON.stringify(parseDictionarySchema(JSON.stringify(draft)));
+      const validated = parseDictionarySchema(draft);
+      const text = JSON.stringify(validated);
       if (text === JSON.stringify(schema)) {
         setError('');
         return;
       }
       const committed = useEditor.getState().edit((graph) => {
         const current = valueOwner(graph, node.id);
-        current.params.schema = text;
+        current.params.schema = validated;
       });
       setError(committed ? '' : useEditor.getState().notice);
     } catch (e) {
@@ -56,12 +59,29 @@ export function DictionaryInputEditor({ node }: { node: ModelNode }) {
     }
   }
 
-  function fields(dict: DictionarySpec, path: string[]) {
+  function fields(dict: DictionarySpec, path: string[], displayPath: (string | number)[] = []) {
     return (
       <div className="dictionary-fields">
+        <label>
+          字典键类型
+          <select
+            aria-label={`字典键类型 ${JSON.stringify(displayPath)}`}
+            value={dict.keyType ?? 'str'}
+            onChange={(event) =>
+              change(path, (parent) => {
+                if (event.target.value === 'int') parent.keyType = 'int';
+                else delete parent.keyType;
+              })
+            }
+          >
+            <option value="str">字符串 str</option>
+            <option value="int">整数 int</option>
+          </select>
+        </label>
         {Object.entries(dict.fields).map(([key, value]) => {
           const fieldPath = [...path, key];
-          const label = fieldPath.map((part) => `[${JSON.stringify(part)}]`).join('');
+          const childDisplayPath = [...displayPath, dictionaryFieldKey(dict, key)];
+          const label = childDisplayPath.map((part) => `[${JSON.stringify(part)}]`).join('');
           const nested = isDictionarySpec(value);
           const updateTensor = (update: (tensor: TensorSpec) => void) =>
             change(path, (parent) => {
@@ -82,7 +102,7 @@ export function DictionaryInputEditor({ node }: { node: ModelNode }) {
                       return;
                     }
                     change(path, (parent) => {
-                      checkDictionaryKey(name);
+                      checkDictionaryKey(name, parent.keyType);
                       if (Object.hasOwn(parent.fields, name))
                         throw new Error(`字段 ${name} 已存在。`);
                       parent.fields = Object.fromEntries(
@@ -111,7 +131,7 @@ export function DictionaryInputEditor({ node }: { node: ModelNode }) {
               {nested ? (
                 <details>
                   <summary>展开 {Object.keys(value.fields).length} 个字段</summary>
-                  {fields(value, fieldPath)}
+                  {fields(value, fieldPath, childDisplayPath)}
                 </details>
               ) : !isTensorSpec(value) ? (
                 <code>None</code>
@@ -140,12 +160,26 @@ export function DictionaryInputEditor({ node }: { node: ModelNode }) {
                       onChange={(event) =>
                         updateTensor((tensor) => {
                           tensor.dtype = event.target.value;
+                          if (!canRequireGrad(tensor.dtype) && tensor.autograd?.requiresGrad)
+                            delete tensor.autograd;
                         })
                       }
                     >
                       {DICTIONARY_DTYPES.map((dtype) => (
                         <option key={dtype}>{dtype}</option>
                       ))}
+                    </select>
+                  </label>
+                  <label>
+                    自动求导 · {gradSourceLabel(value)}
+                    <select aria-label={`自动求导 ${label}`} value={value.autograd ? String(value.autograd.requiresGrad) : 'unknown'}
+                      onChange={(event) => updateTensor((tensor) => {
+                        if (event.target.value === 'unknown') delete tensor.autograd;
+                        else tensor.autograd = { requiresGrad: event.target.value === 'true', source: 'manual' };
+                      })}>
+                      <option value="unknown">未知 / 由数据类型确定</option>
+                      <option value="true" disabled={!canRequireGrad(value.dtype)}>grad:on · True</option>
+                      <option value="false">grad:off · False</option>
                     </select>
                   </label>
                   <label>
@@ -178,8 +212,14 @@ export function DictionaryInputEditor({ node }: { node: ModelNode }) {
               onClick={() =>
                 change(path, (parent) => {
                   let key = kind === 'dict' ? 'group' : 'tensor';
-                  const base = key;
-                  for (let i = 2; Object.hasOwn(parent.fields, key); i++) key = `${base}${i}`;
+                  if (parent.keyType === 'int') {
+                    let index = 0;
+                    while (Object.hasOwn(parent.fields, String(index))) index++;
+                    key = String(index);
+                  } else {
+                    const base = key;
+                    for (let i = 2; Object.hasOwn(parent.fields, key); i++) key = `${base}${i}`;
+                  }
                   parent.fields[key] =
                     kind === 'dict'
                       ? emptyDictionary()

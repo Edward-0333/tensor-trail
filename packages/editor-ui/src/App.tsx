@@ -32,6 +32,8 @@ import { useEditor } from './editor/store';
 import { Canvas } from './editor/Canvas';
 import { Inspector } from './editor/Inspector';
 import { ForwardHierarchyHelp } from './editor/ForwardHierarchyHelp';
+import { ForEachControls } from './editor/ForEachControls';
+import { graphAt } from '@tensor-trail/model-core/core/graph';
 import { AgentPanel } from './editor/AgentPanel';
 import { NodeLibrary } from './editor/NodeLibrary';
 import { isTensorNode } from './views/ModuleNode';
@@ -45,8 +47,10 @@ import {
   saveProject,
   replaceEditorProject,
   openSourceProject,
+  loadActiveRuntime,
 } from './editor/platform';
 import { isContainerInput } from '@tensor-trail/model-core/modules/containers';
+import { ifRegionMembers } from '@tensor-trail/model-core/core/ifRegions';
 
 export default function App() {
   const state = useEditor();
@@ -69,18 +73,25 @@ export default function App() {
     pathKey = state.path.join('/');
   const openProject = () =>
     canOpenSourceFile() ? void openSourceProject() : fileRef.current?.click();
-  const rootResult = useMemo(() => inferProject(state.project, registry), [state.project]);
+  const rootResult = useMemo(() => inferProject(state.project, registry, state.runtimeSnapshot), [state.project, state.runtimeSnapshot]);
+  const activeReference = state.project.runtime?.snapshots.find(ref=>ref.id===state.project.runtime?.active);
+  useEffect(() => { void loadActiveRuntime(); }, [state.documentId, activeReference?.id, activeReference?.file]);
   const forwardView = resolveForwardView(state.project.graph, state.path);
   const { graph } = forwardView;
   const selection = new Set(
     state.selectedIds.length ? state.selectedIds : state.selected ? [state.selected] : [],
   );
   const canCopy = graph.nodes.some((node) => selection.has(node.id));
-  const result = resultAt(rootResult, state.path) ?? {
+  const framed = new Set(graph.nodes.filter(n => n.type === 'IfRegion').flatMap(ifRegionMembers));
+  const regionSelection = graph.nodes.filter(n => selection.has(n.id) && n.type !== 'IfRegion' && !framed.has(n.id));
+  const owner = state.path.length ? graphAt(state.project.graph, state.path.slice(0, -1)).nodes.find(n => n.id === state.path.at(-1)) : undefined;
+  const loopResult = owner?.type === 'ForEachTensor'
+    ? resultAt(rootResult, state.path.slice(0, -1), state.loopSelections)?.nodes[owner.id] : undefined;
+  const result = resultAt(rootResult, state.path, state.loopSelections) ?? {
     order: [],
     nodes: {},
     outputs: {},
-    issues: ['当前子图无法推导，请返回父层检查输入连接和模块参数。'],
+    issues: loopResult?.iterations?.length === 0 ? [] : ['当前子图无法推导，请返回父层检查输入连接和模块参数。'],
   };
   const order = result?.order ?? [];
   const failures =
@@ -92,7 +103,7 @@ export default function App() {
   useEffect(() => {
     setStep(-1);
     setPlaying(false);
-  }, [pathKey, state.project.graph]);
+  }, [pathKey, state.project.graph, state.loopSelections]);
   useEffect(() => setMobilePane('canvas'), [pathKey]);
   useEffect(() => {
     if (!playing) return;
@@ -319,6 +330,11 @@ export default function App() {
               <Redo2 size={17} />
             </button>
           </div>
+          <button className="soft-button" disabled={!regionSelection.length}
+            title="将选中节点放入 if 虚线范围框，不移动节点" onClick={() => {
+              const frame = registry.create('IfRegion', { members: regionSelection.map(n => n.id).join(',') });
+              if (state.edit(g => { g.nodes.push(frame); })) state.select(frame.id);
+            }}>if 框</button>
           <button className="soft-button" onClick={() => setAgentOpen(true)}>
             AI 构建
           </button>
@@ -442,6 +458,12 @@ export default function App() {
               <option value="pluto-input">PLUTO：data 网络输入</option>
             </select>
           </div>
+          {owner?.type === 'ForEachTensor' && <ForEachControls result={loopResult}
+            selected={state.loopSelections[JSON.stringify(state.path)]}
+            onSelect={index => state.selectLoopIteration(state.path, index)} />}
+          {owner?.type === 'WhileLoop' && <div className="while-loop-notice" role="note">
+            while i &lt; num_points · 一轮符号模板，未执行循环。状态出口反馈给下一轮；虚线为条件依赖，True/False 实际结果未采集。
+          </div>}
           <div className="canvas-region">
             {state.hasProject && (
               <div className="canvas-caption">

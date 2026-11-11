@@ -2,6 +2,7 @@ import type { Graph, ModelEdge, ModelNode, Registry } from './types';
 import { clone, uid } from './types';
 import { orderGraph, ports } from './graph';
 import { isCalculation } from '../modules/libraryCategories';
+import { ifRegionMembers } from './ifRegions';
 
 const boundary = (node: ModelNode) => ['Inlet', 'Outlet'].includes(node.type);
 const key = (node: string, port: string) => JSON.stringify([node, port]);
@@ -14,6 +15,8 @@ export function canMergeCalculations(
   registry: Registry,
 ): boolean {
   if (a === b) return false;
+  const regionOf = (id: string) => graph.nodes.find(n => n.type === 'IfRegion' && ifRegionMembers(n).includes(id))?.id;
+  if (regionOf(a) !== regionOf(b)) return false;
   const members = new Set([a, b]);
   if (
     [a, b].some(
@@ -126,6 +129,8 @@ export function splitCalculationGroup(graph: Graph, id: string): string[] {
       edges.push({ id: edge.id, ...source, target: edge.target, targetPort: edge.targetPort });
   }
   graph.nodes = [...graph.nodes.filter((n) => n.id !== id), ...nodes];
+  for (const region of graph.nodes.filter(n => n.type === 'IfRegion'))
+    region.params.members = ifRegionMembers(region).flatMap(member => member === id ? nodes.map(n => n.id) : [member]).join(',');
   graph.edges = edges;
   return nodes.map((n) => n.id);
 }
@@ -240,5 +245,10 @@ export function mergeCalculations(
       customized: true,
     },
   ];
+  for (const region of graph.nodes.filter(n => n.type === 'IfRegion')) {
+    const contained = ifRegionMembers(region);
+    if (contained.some(member => selected.has(member)))
+      region.params.members = [...contained.filter(member => !selected.has(member)), id].join(',');
+  }
   return id;
 }

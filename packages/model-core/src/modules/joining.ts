@@ -2,7 +2,7 @@ import type { Dim, ModuleDefinition, Params, TensorSpec } from '../core/types';
 import { tensorValue } from '../core/types';
 import { resultDtype } from './elementwise';
 import { axisIndex, requireThat, same, tensor } from './math';
-import { num, output } from './primitives';
+import { num, output, text } from './primitives';
 
 const dtypes = new Set([
   'bool',
@@ -112,6 +112,11 @@ const base = {
   outputs: output,
   getPorts: joiningPorts,
 };
+const concatAxisName = {
+  ...text('axis_name', '拼接轴含义（可选）', ''),
+  maxLength: 128,
+  help: '仅覆盖输出拼接轴的语义标签，不改变形状、数值或拼接规则；留空沿用第一个输入。',
+};
 
 export const joiningModules: ModuleDefinition[] = [
   {
@@ -119,9 +124,16 @@ export const joiningModules: ModuleDefinition[] = [
     type: 'Concat',
     label: 'Cat',
     description: '对应 torch.cat，沿已有轴连接 1–16 路 Tensor；其它轴必须相等，不进行广播。',
+    fields: [...fields, concatAxisName],
+    getFields: (params) =>
+      params.axis_name === undefined
+        ? base.getFields(params)
+        : [...base.getFields(params), concatAxisName],
     infer: (values, params) => {
       const inputs = readInputs(values, params),
         dim = dimension(params);
+      const axisName = params.axis_name ?? '';
+      requireThat(typeof axisName === 'string' && axisName.length <= 128, '拼接轴含义需要短文本。');
       requireThat(
         inputs.every((value) => value.shape.length > 0),
         'Cat 不能拼接零维 Tensor，请使用 Stack。',
@@ -132,7 +144,9 @@ export const joiningModules: ModuleDefinition[] = [
       const active = inputs.filter((value) => !(value.shape.length === 1 && value.shape[0] === 0));
       if (!active.length)
         return {
-          outputs: { out: tensor([0], [...inputs[0].axes], dtype) },
+          outputs: {
+            out: tensor([0], axisName.trim() ? [axisName.trim()] : [...inputs[0].axes], dtype),
+          },
           notes: ['所有输入均为一维空 Tensor，Cat 输出一维空 Tensor；dtype 仍按全部输入提升。'],
         };
       const reference = active[0],
@@ -146,8 +160,10 @@ export const joiningModules: ModuleDefinition[] = [
       checkSharedAxes(active, warnings, '非拼接轴必须相等，Cat 不进行广播', axis);
       const shape = [...reference.shape];
       shape[axis] = summedDimensions(active.map((value) => value.shape[axis]));
+      const axes = [...reference.axes];
+      if (axisName.trim()) axes[axis] = axisName.trim();
       return {
-        outputs: { out: tensor(shape, [...reference.axes], dtype) },
+        outputs: { out: tensor(shape, axes, dtype) },
         warnings,
         notes: [`沿第 ${axis} 轴拼接 ${inputs.length} 路 Tensor，其余维度不变。`],
       };

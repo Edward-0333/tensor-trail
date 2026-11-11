@@ -62,7 +62,14 @@ export const primitives: ModuleDefinition[] = [
     [
       text('shape', '形状', '8, 100, 64'),
       text('axes', '轴含义', 'batch, sequence, feature'),
-      select('dtype', '数据类型', 'float32', ['float32', 'float16', 'float64', 'int64', 'bool']),
+      select('dtype', '数据类型', 'float32', [
+        'float32',
+        'float16',
+        'float64',
+        'int64',
+        'uint8',
+        'bool',
+      ]),
     ],
     (_, p) => {
       const shape = dimensions(p.shape);
@@ -105,7 +112,7 @@ export const primitives: ModuleDefinition[] = [
     'Outlet',
     '模块输出',
     '内部',
-    '将 Tensor 返回父模块。',
+    '将 Tensor、tuple/list 或其他值返回父模块，保留原有类型。',
     [text('port', '端口标识', 'out')],
     ({ in: x }) => pass(x, '将结果返回上一级模块。'),
     input,
@@ -403,6 +410,26 @@ export const primitives: ModuleDefinition[] = [
     base(type, type, '基础层', '逐元素操作，保持 Tensor 形状。', [], ({ in: x }) =>
       pass(x, `${type} 保持各轴尺寸。`),
     ),
+  ),
+  base(
+    'Tanh',
+    'Tanh',
+    '基础层',
+    '对应 torch.tanh(in)，逐元素双曲正切；当前形状模式支持浮点 Tensor，保持形状和 dtype。',
+    [],
+    ({ in: x }) => {
+      requireThat(
+        ['float16', 'bfloat16', 'float32', 'float64'].includes(x.dtype),
+        `Tanh 当前支持浮点 Tensor，当前为 ${x.dtype}。`,
+      );
+      return {
+        outputs: { out: tensor([...x.shape], [...x.axes], x.dtype) },
+        notes: [
+          '逐元素双曲正切，不改变各轴尺寸；不是 softmax 或归一化层。',
+          '实数数学值域为 (-1, 1)；浮点计算可能饱和到 -1 或 1。画布不计算实际数值。',
+        ],
+      };
+    },
   ),
   base(
     'SplitHeads',
