@@ -29,7 +29,7 @@ export function resolveForwardView(root: Graph, path: readonly string[] = []) {
       title:
         ['EmbeddingXYZInit', 'EmbeddingXYZModuleInit'].includes(owner.type)
           ? `${owner.label} · 参数初始化（非 forward）`
-          : owner.type === 'ForEachTensor'
+          : ['ForEachTensor', 'ForLoop'].includes(owner.type)
           ? `${owner.label} · 循环体`
           : owner.type === 'WhileLoop'
           ? `${owner.label} · 一轮符号模板`

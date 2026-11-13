@@ -29,3 +29,21 @@ export const ifRegion: ModuleDefinition = {
     };
   },
 };
+
+const loopStatement = text('statement', '循环语句（仅显示，不执行）', 'for item in items');
+const loopNote = text('note', '展示范围', '每轮执行框内代码；当前只展示一轮的数据流，不模拟迭代、状态反馈或最终结果。');
+export const loopRegion: ModuleDefinition = {
+  type: 'LoopRegion',
+  label: '循环范围框',
+  category: '网络结构',
+  description: '在父画布用虚线框展示循环体，让调用参数准备直接可见。仅标注代码范围，不执行或展开多轮，不产生循环最终输出；需要自动状态递推时使用 ForLoop。',
+  fields: [loopStatement, loopNote, { ...text('members', '框内节点 ID（逗号分隔）', ''), maxLength: 51000 }],
+  getFields: () => [loopStatement, loopNote],
+  inputs: [], outputs: [],
+  inferValue: (_, params) => {
+    if (typeof params.statement !== 'string' || !/^(for|while)\s+\S/.test(params.statement.trim()))
+      throw new Error('请填写以 for 或 while 开始的循环语句；只用于显示，不执行。');
+    return { outputs: {}, notes: [String(params.note),
+      '循环范围框不改变数据流，不模拟次数、状态反馈或梯度；成员只按其当前输入规格推导这一轮。'] };
+  },
+};

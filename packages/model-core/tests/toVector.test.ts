@@ -121,7 +121,10 @@ describe('to_vector 函数组合', () => {
       20,
       ...trailing.map(() => 1),
     ]);
-    expect(child.nodes.zeros.outputs.out).toEqual(child.nodes.difference.outputs.out);
+    expect(child.nodes.zeros.outputs.out).toEqual({
+      ...child.nodes.difference.outputs.out,
+      autograd: { requiresGrad: false, source: 'inferred' },
+    });
   });
 
   it.each([0, 1, 2])('时间长度 T=%s 时保持与 PyTorch 切片一致的空轴语义', (time) => {

@@ -1,9 +1,12 @@
 import { useState } from 'react';
 import type { NodeResult, TensorSpec, Port } from '@tensor-trail/model-core/core/types';
 import { isDictionarySpec, isTensorSpec, isIntegerSpec, isIntegerListSpec, isControlSpec, isSizeSpec, isTensorSequenceSpec, isModuleSpec, isDeviceSpec } from '@tensor-trail/model-core/core/types';
+import { literalDeviceName } from '@tensor-trail/model-core/modules/device';
 import { DictionaryTree } from './DictionaryTree';
 import { isScalarTensor, valueDisplayText } from './valueDisplayText';
 import { gradLabel, gradSourceLabel, tensorGradState } from '@tensor-trail/model-core/core/tensorAppearance';
+import { LineageDetails } from './InformationSources';
+import { isDtypeSpec, isNumpyArraySpec } from '@tensor-trail/model-core/core/types';
 
 export function TensorAxes({ spec }: { spec: TensorSpec }) {
   if (isScalarTensor(spec)) return (
@@ -35,7 +38,7 @@ export function TensorView({ result, outputPorts, observeInput = false }: { resu
   return (
     <section className="tensor-inspector">
       <div className="section-label">
-        {observeInput ? '属性写入值（输入 Tensor）' : spec && isDeviceSpec(spec) ? '设备元数据' : spec && isModuleSpec(spec) ? '模块引用' : spec && isIntegerSpec(spec)
+        {observeInput ? '属性写入值（输入 Tensor）' : spec && isNumpyArraySpec(spec) ? 'NUMPY 数组' : spec && isDtypeSpec(spec) ? '类型元数据' : spec && isDeviceSpec(spec) ? '设备元数据' : spec && isModuleSpec(spec) ? '模块引用' : spec && isIntegerSpec(spec)
           ? '整数值'
           : spec && !isTensorSpec(spec)
             ? '输入结构'
@@ -58,12 +61,26 @@ export function TensorView({ result, outputPorts, observeInput = false }: { resu
         <><code>{valueDisplayText(spec)}</code><p className="microcopy">{isControlSpec(spec)
           ? '条件控制依赖，不是 Tensor 或观测到的布尔值。两条分支仅静态检查，不表示已执行或同时执行。'
           : 'Python list[int]，每项为配置声明的整数。容器不是 Tensor，没有 shape、dtype 或梯度。'}</p></>
+      ) : spec && isNumpyArraySpec(spec) ? (
+        <>
+          <code>{valueDisplayText(spec)}</code>
+          <p className="microcopy">NumPy ndarray，不是 PyTorch Tensor，没有 requires_grad；此处是形状和类型声明，不含真实矩阵值。</p>
+          <p className="microcopy">需要通过 torch.tensor 或 new_tensor 转为 Tensor 后再参与后续张量运算。</p>
+        </>
+      ) : spec && isDtypeSpec(spec) ? (
+        <>
+          <div className="container-value-kind">DTYPE</div>
+          <code>{valueDisplayText(spec)}</code>
+          <p className="microcopy">torch.dtype 类型元数据，不是 Tensor，不读取参考张量的元素或传递其梯度。</p>
+        </>
       ) : spec && isDeviceSpec(spec) ? (
         <>
           <div className="container-value-kind">DEVICE</div>
           <code>{spec.reference}</code>
           <p className="microcopy">torch.device 设备元数据，不是 Tensor；没有 shape、dtype 或 requires_grad。</p>
-          <p className="microcopy">这里只记录设备来源表达式，实际设备未采集，不推断为 cuda:0 或 cpu。灰色虚线表示设备依赖，不传递张量元素或梯度。</p>
+          <p className="microcopy">{literalDeviceName(spec.reference)
+            ? '这是当前配置的固定设备声明，不是运行观测，也不保证硬件可用；改变设备时需同步更新。'
+            : '这里只记录设备来源表达式，实际设备未采集，不推断为 cuda:0 或 cpu。'}灰色虚线表示设备依赖，不传递张量元素或梯度。</p>
         </>
       ) : spec && isModuleSpec(spec) ? (
         <>
@@ -153,6 +170,7 @@ export function TensorView({ result, outputPorts, observeInput = false }: { resu
           <small>查看下方提示或补全输入连接</small>
         </div>
       )}
+      <LineageDetails value={spec} />
       {!observeInput && Object.entries(result.inputs).length > 0 && (
         <div className="input-summary">
           {Object.entries(result.inputs).map(([key, value]) => (

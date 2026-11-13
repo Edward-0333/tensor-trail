@@ -10,6 +10,8 @@ import { parseDictionarySchema } from './dictionary';
 import { validateRuntimeReferences } from './runtimeSnapshot';
 import { checkForEachBody } from './forEach';
 import { checkWhileBody } from './whileLoop';
+import { checkForLoopBody } from './forLoop';
+import { validateInformationSource } from './informationSources';
 function requireThat(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
@@ -61,6 +63,7 @@ export function validateProjectObject(value: unknown, registry: Registry): Proje
   let total = 0;
   if (value.hyperparameters !== undefined) validateHyperparameters(value.hyperparameters);
   if (value.runtime !== undefined) validateRuntimeReferences(value.runtime);
+  requireThat(value.lineageEnabled === undefined || typeof value.lineageEnabled === 'boolean', '信息来源分析开关必须为布尔值。');
   if (value.tensorPalette !== undefined)
     requireThat(record(value.tensorPalette) &&
       Object.keys(value.tensorPalette).length === 3 &&
@@ -129,6 +132,20 @@ export function validateProjectObject(value: unknown, registry: Registry): Proje
         '共享值来源必须是有效节点 ID。',
       );
       const layout = node.portLayout;
+      if (node.loopFeedbackRoutes !== undefined) {
+        requireThat(type === 'ForLoop' && record(node.loopFeedbackRoutes) &&
+          Object.keys(node.loopFeedbackRoutes).length <= 8,
+          '循环回传布局仅支持 ForLoop，最多 8 条状态路径。');
+        for (const [state, route] of Object.entries(node.loopFeedbackRoutes)) {
+          requireThat(identifier(state) && record(route) &&
+            ['left', 'right'].includes(String(route.targetSide)) &&
+            Array.isArray(route.waypoints) && route.waypoints.length <= 100 &&
+            route.waypoints.every(point => record(point) && Number.isFinite(point.x) && Number.isFinite(point.y)) &&
+            (route.labelPosition === undefined || (typeof route.labelPosition === 'number' &&
+              Number.isFinite(route.labelPosition) && route.labelPosition >= 0 && route.labelPosition <= 1)),
+            '循环回传布局无效：需要有效状态名、左右端点、最多 100 个有限坐标点和 0-1 的文字位置。');
+        }
+      }
       requireThat(
         (node.tensorColor === undefined || isHexColor(node.tensorColor)) &&
           (node.tensorBorderColor === undefined || isHexColor(node.tensorBorderColor)),
@@ -140,6 +157,7 @@ export function validateProjectObject(value: unknown, registry: Registry): Proje
       }
       if (node.tensorAutograd !== undefined)
         validateAutograd(node.tensorAutograd, node.type === 'Input' ? String(node.params.dtype) : undefined);
+      if (node.informationSource !== undefined) validateInformationSource(node.informationSource);
       requireThat(
         layout === undefined ||
           (record(layout) &&
@@ -155,6 +173,7 @@ export function validateProjectObject(value: unknown, registry: Registry): Proje
         inspect(node.subgraph, depth + 1, type);
         if (type === 'ForEachTensor') checkForEachBody(node.subgraph as Graph);
         if (type === 'WhileLoop') checkWhileBody(node as unknown as ModelNode);
+        if (type === 'ForLoop') checkForLoopBody(node as unknown as ModelNode);
       } else requireThat(node.subgraph === undefined, '普通算子不能携带子图。');
       if (node.type === 'Inlet' || node.type === 'Outlet') {
         requireThat(depth > 0, '根图不能使用子图边界节点。');

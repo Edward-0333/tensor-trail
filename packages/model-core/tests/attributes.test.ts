@@ -226,10 +226,10 @@ describe('Scoped Tensor attributes', () => {
     expect(inferGraph(g, registry).nodes.set.messages[0]).toContain('nn.Parameter');
   });
 
-  it('rejects even an unexecuted SET inside a ForEach body', () => {
+  it.each(['ForEachTensor', 'ForLoop', 'WhileLoop'])('rejects even an unexecuted SET inside a %s body', type => {
     const g = graph(),
       body = registry.create('Submodule', {}, 'loop');
-    body.type = 'ForEachTensor';
+    body.type = type;
     body.subgraph!.nodes.push(registry.create('SetAttribute', binding, 'inside_set'));
     g.nodes.push(body);
     expect(planAttributes(g).issues.join(' ')).toContain('循环体');

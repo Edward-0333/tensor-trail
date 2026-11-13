@@ -3,6 +3,7 @@ import {
   Background,
   BackgroundVariant,
   Controls,
+  ControlButton,
   MiniMap,
   MarkerType,
   ConnectionLineType,
@@ -13,11 +14,15 @@ import {
   useNodesInitialized,
   useReactFlow,
   useViewport,
+  ViewportPortal,
 } from '@xyflow/react';
-import type { Graph, GraphResult } from '@tensor-trail/model-core/core/types';
-import { canvasValueLabel } from '../views/canvasValueLabel';
+import { Maximize } from 'lucide-react';
+import type { Graph, GraphResult, ModelNode } from '@tensor-trail/model-core/core/types';
 import { layoutIfRegions } from '../views/ifRegionLayout';
-import { valueEdgeStyle } from '../views/valueEdgeStyle';
+import { layoutRegions, measuredNodeSizes } from '../views/layoutRegions';
+import { constrainLayoutMoves, isLayoutRegion, layoutRegionOf, layoutRegionOutputOwners, layoutRegionRect } from '@tensor-trail/model-core/core/layoutRegions';
+import { isCodeRegion } from '@tensor-trail/model-core/core/ifRegions';
+import { isCountContract, valueEdgeLabel, valueEdgeStyle } from '../views/valueEdgeStyle';
 import { ports } from '@tensor-trail/model-core/core/graph';
 import { registry } from '@tensor-trail/model-core/modules/index';
 import { categoryColor, ModuleNode, type TrailNode } from '../views/ModuleNode';
@@ -36,7 +41,11 @@ import {
 } from '@tensor-trail/model-core/core/valueLinks';
 import { removeValueNodes } from '@tensor-trail/model-core/editing/valueLinkEditing';
 import { localParameterColors } from '../views/localParameterColors';
+import { levelInputs } from '../views/levelInputs';
+import { finalOutputValues } from '../views/finalOutputs';
 import { createRoutes } from '../views/routeStore';
+import { layoutLoopFeedback, loopFeedback } from '../views/loopFeedback';
+import { LoopFeedbackOverlay } from '../views/LoopFeedbackOverlay';
 import {
   nodeWirePreview,
   nodeDragRoutes,
@@ -72,18 +81,38 @@ export function Canvas({
   result,
   step,
   theme,
+  owner,
 }: {
   graph: Graph;
   result?: GraphResult;
   step: number;
   theme: 'dark' | 'light';
+  owner?: ModelNode;
 }) {
   const selected = useEditor((s) => s.selected),
     selectedIds = useEditor((s) => s.selectedIds),
     pasteCount = useEditor((s) => s.pasteCount),
     path = useEditor((s) => s.path);
   const initialized = useNodesInitialized();
-  const { fitView, screenToFlowPosition, getNodes } = useReactFlow<TrailNode>();
+  const { fitView, fitBounds, screenToFlowPosition, getNodes } = useReactFlow<TrailNode>();
+  const knownRegions = useRef(new Set(graph.nodes.filter(isLayoutRegion).map(n => n.id)));
+  useEffect(() => {
+    const regions = graph.nodes.filter(isLayoutRegion);
+    const added = regions.find(n => !knownRegions.current.has(n.id));
+    knownRegions.current = new Set(regions.map(n => n.id));
+    if (!added) return;
+    const frame = requestAnimationFrame(() => {
+      void fitBounds(layoutRegionRect(graph, added, useEditor.getState().nodeSizes), { padding: .25, duration: 250 });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [graph, fitBounds]);
+  const feedback = useMemo(() => loopFeedback(graph, owner), [graph, owner]);
+  const [selectedFeedback, setSelectedFeedback] = useState<string>();
+  const fitGraph = useCallback(() => {
+    const { bounds } = layoutLoopFeedback(feedback, getNodes(), owner?.loopFeedbackRoutes);
+    if (bounds) void fitBounds(bounds, { padding: 0.18 });
+    else void fitView({ padding: 0.18, maxZoom: 1.1 });
+  }, [feedback, getNodes, fitBounds, fitView, owner?.loopFeedbackRoutes]);
   const viewport = useViewport();
   const renderedRoutes = useMemo(createRoutes, []);
   const wireDrag = useRef<{
@@ -96,6 +125,7 @@ export function Canvas({
     const session = wireDrag.current;
     if (!session)
       return { positions: moved.map((n) => ({ id: n.id, position: n.position })), guides: [] };
+    const hasRegion = moved.some(n => isLayoutRegion(n.data.model) || layoutRegionOf(graph, n.id));
     const snapped = snapNodesToWires(
       graph,
       session.routes,
@@ -103,8 +133,9 @@ export function Canvas({
       moved,
       viewport.zoom,
       session.guides,
-      disabled,
+      disabled || hasRegion,
     );
+    snapped.positions = constrainLayoutMoves(graph, snapped.positions, measuredNodeSizes(getNodes()));
     session.guides = snapped.guides;
     return snapped;
   };
@@ -134,13 +165,16 @@ export function Canvas({
     if (!initialized || fitted.current) return;
     // Wait for measured cards before fitting a newly opened graph.
     const frame = requestAnimationFrame(() => {
-      void fitView({ padding: 0.18, maxZoom: 1.1 });
+      fitGraph();
       fitted.current = true;
     });
     return () => cancelAnimationFrame(frame);
-  }, [initialized, fitView]);
+  }, [initialized, fitGraph]);
   const derived = useMemo(() => {
     const localColors = localParameterColors(graph);
+    const finalOutputs = finalOutputValues(graph, result, owner);
+    const regionOutputs = layoutRegionOutputOwners(graph);
+    const inputBoundaries = new Map(levelInputs(graph, path.length === 0).map(input => [input.id, input]));
     const linked = new Set(
       graph.nodes.flatMap((node) => (node.valueSource ? [node.id, node.valueSource] : [])),
     );
@@ -155,6 +189,7 @@ export function Canvas({
     return graph.nodes.map((stored) => {
       const model = effectiveValueNode(graph, stored),
         nodePorts = ports(model, registry);
+      const outputRegion = regionOutputs.get(model.id);
       return {
         id: model.id,
         type: 'module' as const,
@@ -162,7 +197,7 @@ export function Canvas({
         selected: model.id === selected,
         deletable: !!stored.valueSource || !['Inlet', 'Outlet'].includes(model.type),
         className: [
-          model.type === 'IfRegion' ? 'if-region-flow' : '',
+          isCodeRegion(model) ? 'if-region-flow' : isLayoutRegion(model) ? 'layout-region-flow' : '',
           linked.has(model.id) ? 'value-linked' : '',
           highlighted.has(model.id) ? 'value-link-highlight' : '',
         ]
@@ -170,6 +205,9 @@ export function Canvas({
           .join(' '),
         data: {
           model,
+          inputBoundary: inputBoundaries.get(model.id),
+          finalOutput: finalOutputs.has(model.id),
+          regionOutput: outputRegion ? { id: outputRegion.id, label: outputRegion.label, color: String(outputRegion.params.color) } : undefined,
           localParameterColor: localColors.get(model.id),
           result: result?.nodes[model.id],
           inputs: stored.valueSource ? [] : nodePorts.inputs,
@@ -184,12 +222,22 @@ export function Canvas({
         },
       };
     });
-  }, [graph, result, selected, selectedIds, path, step]);
+  }, [graph, result, owner, selected, selectedIds, path, step]);
   const [nodes, setNodes, onNodesChange] = useNodesState<TrailNode>(derived);
+  useEffect(() => {
+    useEditor.getState().setNodeSizes(measuredNodeSizes(nodes));
+  }, [nodes]);
+  const feedbackRoutes = layoutLoopFeedback(feedback, nodes, owner?.loopFeedbackRoutes).routes;
+  useEffect(() => {
+    if (selected || selectedIds.length) setSelectedFeedback(undefined);
+  }, [selected, selectedIds]);
   useEffect(() => {
     setNodes((current) => {
       const selection = new Set(current.filter((n) => n.selected).map((n) => n.id));
-      return derived.map((node) => ({ ...node, selected: selection.has(node.id) }));
+      const measurements = new Map(current.map(node => [node.id, node.measured]));
+      // Selection/data refreshes must not briefly unmount measurement-based overlays
+      // and lose pointer capture while a return path is being dragged.
+      return derived.map((node) => ({ ...node, measured: measurements.get(node.id), selected: selection.has(node.id) }));
     });
   }, [derived, setNodes]);
   useEffect(() => {
@@ -212,35 +260,38 @@ export function Canvas({
   }, []);
   const derivedEdges: TrailEdge[] = useMemo(
     () =>
-      graph.edges.map((edge) => ({
-        id: edge.id,
-        source: edge.source,
-        target: edge.target,
-        sourceHandle: edge.sourcePort,
-        targetHandle: edge.targetPort,
-        type: 'editable',
-        data: {
-          valueKey: JSON.stringify([
-            graph.nodes.find((node) => node.id === edge.source)?.valueSource ?? edge.source,
-            edge.sourcePort,
-          ]),
-          waypoints: edge.waypoints,
-          labelPosition: edge.labelPosition,
-          changeRoute: (points) => useEditor.getState().setEdgeWaypoints(edge.id, points),
-          changeSharedRoutes: (changes) => useEditor.getState().setSharedWireWaypoints(changes),
-          changeLabelPosition: (position) =>
-            useEditor.getState().setEdgeLabelPosition(edge.id, position),
-          select: () => useEditor.getState().select(null),
-        },
-        label: canvasValueLabel(result?.nodes[edge.source]?.outputs[edge.sourcePort]),
-        animated: step >= 0 && result?.order[step] === edge.source,
-        style: valueEdgeStyle(result?.nodes[edge.source]?.outputs[edge.sourcePort], result?.nodes[edge.source]?.status === 'error'),
-        labelStyle: {
-          fill: 'var(--text-secondary)',
-          fontSize: 10,
-          fontFamily: 'Consolas, monospace',
-        },
-      })),
+      graph.edges.map((edge) => {
+        const countContract = isCountContract(graph.nodes.find(node => node.id === edge.target), edge.targetPort);
+        return {
+          id: edge.id,
+          source: edge.source,
+          target: edge.target,
+          sourceHandle: edge.sourcePort,
+          targetHandle: edge.targetPort,
+          type: 'editable',
+          data: {
+            valueKey: JSON.stringify([
+              graph.nodes.find((node) => node.id === edge.source)?.valueSource ?? edge.source,
+              edge.sourcePort,
+            ]),
+            waypoints: edge.waypoints,
+            labelPosition: edge.labelPosition,
+            changeRoute: (points) => useEditor.getState().setEdgeWaypoints(edge.id, points),
+            changeSharedRoutes: (changes) => useEditor.getState().setSharedWireWaypoints(changes),
+            changeLabelPosition: (position) =>
+              useEditor.getState().setEdgeLabelPosition(edge.id, position),
+            select: () => { setSelectedFeedback(undefined); useEditor.getState().select(null); },
+          },
+          label: valueEdgeLabel(result?.nodes[edge.source]?.outputs[edge.sourcePort], countContract),
+          animated: step >= 0 && result?.order[step] === edge.source,
+          style: valueEdgeStyle(result?.nodes[edge.source]?.outputs[edge.sourcePort], result?.nodes[edge.source]?.status === 'error', countContract),
+          labelStyle: {
+            fill: 'var(--text-secondary)',
+            fontSize: 10,
+            fontFamily: 'Consolas, monospace',
+          },
+        };
+      }),
     [graph, result, step],
   );
   const [edges, setEdges, onEdgesChange] = useEdgesState<TrailEdge>(derivedEdges);
@@ -252,13 +303,47 @@ export function Canvas({
       }),
     [derivedEdges, setEdges],
   );
+  const startNodeDrag = () => {
+    setMergePreview(null); setWireGuides([]);
+    wireDrag.current = {
+      initial: getNodes().map(n => ({ id: n.id, position: { ...n.position } })),
+      routes: renderedRoutes.getSnapshot(), guides: [],
+    };
+  };
+  const updateDragPositions = (positions: NodePosition[]) => {
+    const byId = new Map(positions.map(n => [n.id, n.position]));
+    setNodes(current => current.map(n => byId.has(n.id) ? { ...n, position: byId.get(n.id)! } : n));
+  };
+  const dragNodes = (event: { altKey?: boolean }, node: TrailNode, moved: TrailNode[]) => {
+    const snapped = alignDrag(moved, Boolean(event.altKey));
+    updateDragPositions(snapped.positions); setWireGuides(snapped.guides);
+    if (wireDrag.current) {
+      const preview = nodeWirePreview(graph, wireDrag.current.routes, wireDrag.current.initial, snapped.positions);
+      if (preview.length) renderedRoutes.setPreview('node-drag', preview);
+      else renderedRoutes.clearPreview('node-drag');
+    }
+    const position = snapped.positions.find(n => n.id === node.id)?.position ?? node.position;
+    const target = mergeTarget({ ...node, position }, moved, Boolean(event.altKey));
+    setMergePreview(target ? { moving: node.id, target } : null);
+  };
+  const stopNodeDrag = (event: { altKey?: boolean }, node: TrailNode, moved: TrailNode[]) => {
+    const snapped = alignDrag(moved, Boolean(event.altKey));
+    const position = snapped.positions.find(n => n.id === node.id)?.position ?? node.position;
+    const target = mergeTarget({ ...node, position }, moved, Boolean(event.altKey));
+    const session = wireDrag.current;
+    const routeChanges = session ? nodeDragRoutes(graph, session.routes, session.initial,
+      snapped.positions, viewport.zoom, Boolean(event.altKey)) : [];
+    setMergePreview(null); setWireGuides([]); wireDrag.current = null;
+    renderedRoutes.clearPreview('node-drag'); updateDragPositions(snapped.positions);
+    useEditor.getState().finishNodeDrag(snapped.positions, target ? [node.id, target] : undefined, routeChanges);
+  };
   return (
     <EdgeRoutesProvider routes={renderedRoutes}>
       <ReactFlow<TrailNode, TrailEdge>
         className={dropActive ? 'module-drop-active' : undefined}
         colorMode={theme}
         ariaLabelConfig={ariaLabelConfig}
-        nodes={layoutIfRegions(nodes).map((node) => ({
+        nodes={layoutRegions(layoutIfRegions(nodes)).map((node) => ({
           ...node,
           className: [
             node.className,
@@ -293,81 +378,18 @@ export function Canvas({
           useEditor.getState().add(module.type, module.variantId, position);
         }}
         onNodesChange={onNodesChange}
-        onNodeClick={(_, node) => useEditor.setState({ selected: node.id })}
+        onNodeClick={(_, node) => { setSelectedFeedback(undefined); useEditor.setState({ selected: node.id }); }}
         onSelectionChange={rememberSelection}
-        onEdgeClick={() => useEditor.getState().select(null)}
-        onPaneClick={() => useEditor.getState().select(null)}
-        onSelectionStart={() => useEditor.getState().select(null)}
+        onEdgeClick={() => { setSelectedFeedback(undefined); useEditor.getState().select(null); }}
+        onPaneClick={() => { setSelectedFeedback(undefined); useEditor.getState().select(null); }}
+        onSelectionStart={() => { setSelectedFeedback(undefined); useEditor.getState().select(null); }}
         onNodeDoubleClick={(_, node) => node.data.open()}
-        onNodeDragStart={() => {
-          setMergePreview(null);
-          setWireGuides([]);
-          wireDrag.current = {
-            initial: getNodes().map((n) => ({ id: n.id, position: { ...n.position } })),
-            routes: renderedRoutes.getSnapshot(),
-            guides: [],
-          };
-        }}
-        onNodeDrag={(event, node, moved) => {
-          const snapped = alignDrag(moved, event.altKey);
-          const positions = new Map(snapped.positions.map((n) => [n.id, n.position]));
-          setNodes((current) =>
-            current.map((n) =>
-              positions.has(n.id) ? { ...n, position: positions.get(n.id)! } : n,
-            ),
-          );
-          setWireGuides(snapped.guides);
-          if (wireDrag.current) {
-            const preview = nodeWirePreview(
-              graph,
-              wireDrag.current.routes,
-              wireDrag.current.initial,
-              snapped.positions,
-            );
-            if (preview.length) renderedRoutes.setPreview('node-drag', preview);
-            else renderedRoutes.clearPreview('node-drag');
-          }
-          const target = mergeTarget(
-            { ...node, position: positions.get(node.id) ?? node.position },
-            moved,
-            event.altKey,
-          );
-          setMergePreview(target ? { moving: node.id, target } : null);
-        }}
-        onNodeDragStop={(event, node, moved) => {
-          const snapped = alignDrag(moved, event.altKey);
-          const position =
-            snapped.positions.find((n) => n.id === node.id)?.position ?? node.position;
-          const target = mergeTarget({ ...node, position }, moved, event.altKey);
-          const session = wireDrag.current;
-          const routeChanges = session
-            ? nodeDragRoutes(
-                graph,
-                session.routes,
-                session.initial,
-                snapped.positions,
-                viewport.zoom,
-                event.altKey,
-              )
-            : [];
-          setMergePreview(null);
-          setWireGuides([]);
-          wireDrag.current = null;
-          renderedRoutes.clearPreview('node-drag');
-          const positions = new Map(snapped.positions.map((n) => [n.id, n.position]));
-          setNodes((current) =>
-            current.map((n) =>
-              positions.has(n.id) ? { ...n, position: positions.get(n.id)! } : n,
-            ),
-          );
-          useEditor
-            .getState()
-            .finishNodeDrag(
-              snapped.positions,
-              target ? [node.id, target] : undefined,
-              routeChanges,
-            );
-        }}
+        onNodeDragStart={startNodeDrag}
+        onNodeDrag={dragNodes}
+        onNodeDragStop={stopNodeDrag}
+        onSelectionDragStart={startNodeDrag}
+        onSelectionDrag={(event, moved) => { if (moved.length) dragNodes(event, moved[0], moved); }}
+        onSelectionDragStop={(event, moved) => { if (moved.length) stopNodeDrag(event, moved[0], moved); }}
         onBeforeDelete={async ({ nodes: removed, edges: removedEdges }) => {
           if (!removed.length && !removedEdges.length) return false;
           const state = useEditor.getState();
@@ -384,7 +406,7 @@ export function Canvas({
                 removed.map((node) => node.id),
               );
               current.edges = current.edges.filter((edge) => !explicitEdges.has(edge.id));
-            })
+            }, explicitEdges.size > 0 || removed.some(node => !isLayoutRegion(node.data.model)))
           )
             state.select(null);
           return false;
@@ -417,6 +439,19 @@ export function Canvas({
         elevateEdgesOnSelect
       >
         <EdgeJunctions />
+        <ViewportPortal><LoopFeedbackOverlay routes={feedbackRoutes} layouts={owner?.loopFeedbackRoutes}
+          selected={selectedFeedback}
+          onSelect={state => {
+            if (state === selectedFeedback) return;
+            setSelectedFeedback(state);
+            if (state) {
+              useEditor.getState().select(null);
+              setNodes(current => current.map(node => ({ ...node, selected: false })));
+              setEdges(current => current.map(edge => ({ ...edge, selected: false })));
+            }
+          }}
+          onChange={(state, layout) => { useEditor.getState().setLoopFeedbackLayout(state, layout); }}
+        /></ViewportPortal>
         {dropActive && <div className="canvas-drop-hint">松开以添加模块</div>}
         {mergePreview && (
           <div className="canvas-merge-hint" role="status">
@@ -442,7 +477,10 @@ export function Canvas({
           </>
         )}
         <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="var(--grid)" />
-        <Controls showInteractive={false} />
+        <Controls showInteractive={false} showFitView={!feedback.length}>
+          {!!feedback.length && <ControlButton className="react-flow__controls-fitview"
+            onClick={fitGraph} title="适配全图" aria-label="适配全图"><Maximize /></ControlButton>}
+        </Controls>
         <MiniMap
           style={{ width: 124, height: 84 }}
           nodeColor={(node) => node.className?.includes('if-region-flow') ? 'transparent' : categoryColor(String(node.data.category))}

@@ -19,7 +19,7 @@ const result: NodeResult = {
 };
 function render(type: string, hasResult = true) {
   const model = registry.create(type, {}, 'device');
-  model.label = 'maps.device';
+  model.label = type === 'GetDtype' ? 'query_feat.dtype' : 'maps.device';
   const props: NodeProps<TrailNode> = {
     id: model.id,
     type: 'module',
@@ -34,9 +34,11 @@ function render(type: string, hasResult = true) {
     positionAbsoluteY: 0,
     data: {
       model,
-      result: hasResult ? result : undefined,
+      result: hasResult ? type === 'GetDtype' ? {
+        ...result, outputs: { out: { kind: 'dtype', value: 'float32' } },
+      } : result : undefined,
       ...ports(model, registry),
-      category: '输入输出',
+      category: type === 'GetDtype' ? '形状查询' : '输入输出',
       reverse: false,
       active: false,
       dimmed: false,
@@ -69,6 +71,17 @@ describe('Device metadata presentation', () => {
   });
   it('renders GetDevice as the .device read operation', () => {
     expect(render('GetDevice')).toContain('<code>.device</code>');
+  });
+  it.each([true, false])('renders GetDtype like the compact GetDevice operation (inferred: %s)', hasResult => {
+    const html = render('GetDtype', hasResult);
+    expect(render('GetDevice')).toContain('compact-operation-node feature-operation-node');
+    expect(html).toContain('compact-operation-node feature-operation-node');
+    expect(html).toContain('<code>.dtype</code>');
+    expect(html).toContain('query_feat.dtype');
+    expect(html).toContain('aria-label="输入 in"');
+    expect(html).toContain('aria-label="输出 out"');
+    for (const removed of ['node-heading', 'node-operation', 'node-footer', 'node-axis-labels', 'grad:', '<svg'])
+      expect(html).not.toContain(removed);
   });
   it('explains unobserved device metadata in the inspector rather than Tensor axes or autograd status', () => {
     const html = renderToStaticMarkup(createElement(TensorView, { result }));

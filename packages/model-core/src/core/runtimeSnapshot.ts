@@ -1,5 +1,5 @@
-import type { DictionarySpec, Project, RuntimeSnapshot, TensorSpec } from './types';
-import { clone, isDictionarySpec, isTensorSpec } from './types';
+import type { Project, RuntimeSnapshot, ValueSpec } from './types';
+import { clone, isDictionarySpec, isTensorSequenceSpec, isTensorSpec } from './types';
 import { parseDictionarySchema } from './dictionary';
 
 const record = (v: unknown): v is Record<string, unknown> =>
@@ -21,11 +21,12 @@ export function safeSnapshotPath(file: unknown): file is string {
     file.split('/').every((part) => part && part !== '.' && part !== '..')
   );
 }
-function markRuntime(value: TensorSpec | DictionarySpec): void {
+function markRuntime(value: ValueSpec): void {
   if (isDictionarySpec(value)) {
-    for (const child of Object.values(value.fields))
-      if (isTensorSpec(child) || isDictionarySpec(child)) markRuntime(child);
-  } else if (value.autograd) value.autograd.source = 'runtime';
+    Object.values(value.fields).forEach(markRuntime);
+  } else if (isTensorSequenceSpec(value)) {
+    value.items.forEach(markRuntime);
+  } else if (isTensorSpec(value) && value.autograd) value.autograd.source = 'runtime';
 }
 export function parseRuntimeSnapshot(value: unknown): RuntimeSnapshot {
   if (typeof value === 'string') {

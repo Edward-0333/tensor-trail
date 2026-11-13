@@ -73,6 +73,56 @@ export function viewLabel(params: Params): string {
 
 export const featureMathModules: ModuleDefinition[] = [
   {
+    type: 'NanToNum',
+    label: 'torch.nan_to_num',
+    category: '数学运算',
+    description: '按 PyTorch 默认值逐元素替换 NaN 和正负无穷，保留形状和 dtype；不是 detach 或归一化。',
+    fields: [],
+    inputs: input,
+    outputs: output,
+    infer: ({ in: source }) => {
+      const x = tensorValue(source);
+      requireThat(
+        [...floatDtypes, ...integerDtypes, 'complex64', 'complex128'].includes(x.dtype),
+        `NanToNum 暂不支持 dtype=${x.dtype}。`,
+      );
+      return {
+        outputs: { out: tensor([...x.shape], [...x.axes], x.dtype) },
+        notes: [
+          'torch.nan_to_num(x)：NaN → 0；+inf / -inf → 对应浮点类型的最大 / 最小有限值。',
+          '有限值保持不变；复数的实部和虚部分别处理，整数和 bool 无需替换。',
+          '这里只推导结构，不执行数值替换，也不假定输入实际含有 NaN / inf；该操作不会主动切断梯度。',
+        ],
+      };
+    },
+  },
+  {
+    type: 'IntegerFloorDivide',
+    label: '整数整除 a // b',
+    category: '数学运算',
+    description: '两个局部整数相除后向下取整，对应 Python a // b，例如 GC // G。',
+    fields: [],
+    inputs: [{ id: 'a', label: '被除数 a' }, { id: 'b', label: '除数 b' }],
+    outputs: output,
+    inferValue: ({ a, b }) => {
+      const left = integerValue(a, 'a'), right = integerValue(b, 'b');
+      requireThat(right !== 0, 'a // b 的除数不能为 0。');
+      const numeric = typeof left === 'number' && typeof right === 'number';
+      let value: Dim = `(${left}) // (${right})`;
+      if (numeric) {
+        // Avoid rounding a large integer quotient through floating-point division.
+        const dividend = BigInt(left), divisor = BigInt(right);
+        const correction = (left < 0) !== (right < 0) && dividend % divisor !== 0n ? 1n : 0n;
+        value = Number(dividend / divisor - correction);
+      }
+      return {
+        outputs: { out: { kind: 'int', value } },
+        warnings: numeric ? [] : ['符号整除需验证除数非零，结果向下取整。'],
+        notes: [`${left} // ${right} = ${value}；局部整数计算，不参与梯度。`],
+      };
+    },
+  },
+  {
     type: 'IntegerTruncDivide',
     label: 'int(a / b)',
     category: '数学运算',

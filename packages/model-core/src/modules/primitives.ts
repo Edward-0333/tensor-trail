@@ -344,8 +344,11 @@ export const primitives: ModuleDefinition[] = [
       [],
       ({ a, b }) => {
         const warnings: string[] = [];
+        // Boolean gates promote to the numeric operand without an explicit cast in PyTorch.
+        const left = a.dtype === 'bool' && b.dtype !== 'bool' ? { ...a, dtype: b.dtype } : a;
+        const right = b.dtype === 'bool' && a.dtype !== 'bool' ? { ...b, dtype: a.dtype } : b;
         return {
-          outputs: { out: broadcast(a, b, warnings) },
+          outputs: { out: broadcast(left, right, warnings) },
           warnings,
           notes: ['从最后一维开始对齐；对应尺寸相等或其中一个为 1。'],
         };

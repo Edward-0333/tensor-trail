@@ -32,11 +32,18 @@ export type Operation =
   | { op: 'add_node'; path?: string[]; node: RecipeNode }
   | { op: 'replace_node'; path?: string[]; id: string; node: RecipeNode }
   | { op: 'duplicate_linked'; path?: string[]; source: string; id: string; position?: { x: number; y: number } }
+  | { op: 'link_value'; path?: string[]; source: string; id: string }
   | { op: 'remove_node'; path?: string[]; id: string }
   | { op: 'set_params'; path?: string[]; id: string; params: Params }
   | { op: 'rename_node'; path?: string[]; id: string; label: string }
   | { op: 'set_position'; path?: string[]; id: string; position: { x: number; y: number } }
+  | { op: 'assign_region'; path?: string[]; ids: string[]; region: string | null }
+  | { op: 'fit_region'; path?: string[]; id: string }
+  | { op: 'resize_region'; path?: string[]; id: string; position?: { x: number; y: number }; width: number; height: number }
   | { op: 'set_tensor_border'; path?: string[]; id: string; color: string | null }
+  | { op: 'set_lineage_enabled'; enabled: boolean }
+  /** Migration only: remove legacy semantic declarations. Sources are now automatic. */
+  | { op: 'set_information_source'; path?: string[]; id: string; source: null }
   | { op: 'connect' | 'disconnect'; path?: string[]; from: string; to: string }
   | { op: 'layout'; path?: string[] }
   | { op: 'rename_project'; name: string };

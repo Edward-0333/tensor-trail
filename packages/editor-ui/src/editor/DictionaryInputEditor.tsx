@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import type { DictionarySpec, ModelNode, TensorSpec } from '@tensor-trail/model-core/core/types';
-import { clone, isDictionarySpec, isTensorSpec } from '@tensor-trail/model-core/core/types';
+import { clone, isDictionarySpec, isTensorSequenceSpec, isTensorSpec } from '@tensor-trail/model-core/core/types';
+import { TensorSequenceTree } from '../views/DictionaryTree';
 import { canRequireGrad, gradSourceLabel } from '@tensor-trail/model-core/core/tensorAppearance';
 import {
   checkDictionaryKey,
@@ -114,7 +115,7 @@ export function DictionaryInputEditor({ node }: { node: ModelNode }) {
                     });
                   }}
                 />
-                <span>{nested ? 'dict' : isTensorSpec(value) ? 'Tensor' : 'None'}</span>
+                <span>{nested ? 'dict' : isTensorSpec(value) ? 'Tensor' : isTensorSequenceSpec(value) ? value.kind : 'None'}</span>
                 <button
                   type="button"
                   className="icon-button"
@@ -132,6 +133,11 @@ export function DictionaryInputEditor({ node }: { node: ModelNode }) {
                 <details>
                   <summary>展开 {Object.keys(value.fields).length} 个字段</summary>
                   {fields(value, fieldPath, childDisplayPath)}
+                </details>
+              ) : isTensorSequenceSpec(value) ? (
+                <details>
+                  <summary>展开 {value.items.length} 个 Tensor（结构只读）</summary>
+                  <TensorSequenceTree value={value} />
                 </details>
               ) : !isTensorSpec(value) ? (
                 <code>None</code>

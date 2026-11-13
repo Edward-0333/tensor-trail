@@ -5,7 +5,7 @@ import type {
   TensorSpec,
   DictionarySpec,
 } from '../core/types';
-import { clone, isTensorSpec, isIntegerSpec, isDictionarySpec, tensorValue } from '../core/types';
+import { clone, isTensorSpec, isTensorSequenceSpec, isIntegerSpec, isDictionarySpec, tensorValue } from '../core/types';
 import { checkDictionaryKey } from '../core/dictionary';
 import { requireThat, rank, same, floating, tensor, axisIndex } from './math';
 import { input, output, text, num, bool, select } from './primitives';
@@ -107,7 +107,7 @@ export const plutoForwardOps: ModuleDefinition[] = [
     type: 'DictionaryPack',
     label: '字典组装',
     category: '组合计算',
-    description: '按字段名连接输入并组装字典；支持 Tensor、子字典和 None。',
+    description: '按字段名连接输入并组装字典；支持 Tensor、Tensor list/tuple、子字典和 None。',
     fields: [text('keys', '字段名（逗号分隔）', 'trajectory,probability,prediction')],
     inputs: [],
     outputs: output,
@@ -117,15 +117,15 @@ export const plutoForwardOps: ModuleDefinition[] = [
       for (const key of dictionaryKeys(p)) {
         const value = v[key];
         requireThat(
-          value && (isTensorSpec(value) || isDictionarySpec(value) || value.kind === 'none'),
-          `${key} 需要 Tensor、字典或 None。`,
+          value && (isTensorSpec(value) || isTensorSequenceSpec(value) || isDictionarySpec(value) || value.kind === 'none'),
+          `${key} 需要 Tensor、Tensor list/tuple、字典或 None。`,
         );
-        if (isTensorSpec(value) || isDictionarySpec(value)) fields[key] = clone(value);
+        if (isTensorSpec(value) || isTensorSequenceSpec(value) || isDictionarySpec(value)) fields[key] = clone(value);
         else fields[key] = { kind: 'none' };
       }
       return {
         outputs: { out: { kind: 'dict', fields } },
-        notes: ['按名称组装字典；不堆叠 Tensor，不改变各字段形状。'],
+        notes: ['按名称组装字典；不堆叠 Tensor，保留列表/元组顺序、每个元素的形状和梯度标注。'],
       };
     },
   },

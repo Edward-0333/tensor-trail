@@ -3,6 +3,7 @@ import { clone, uid, type Graph, type ModelEdge, type ModelNode } from '../core/
 import { isValueNode, linkedValueNodes, valueOwner } from '../core/valueLinks';
 import { duplicateSelection } from './clipboard';
 import { pruneIfRegions } from '../core/ifRegions';
+import { pruneLayoutRegions } from '../core/layoutRegions';
 
 const isBoundary = (node: ModelNode) => ['Inlet', 'Outlet'].includes(node.type);
 
@@ -69,6 +70,19 @@ function copyInputs(graph: Graph, from: string, to: string): void {
       .filter((edge) => edge.target === from)
       .map((edge) => ({ ...reroute(edge), id: uid(), target: to })),
   );
+}
+
+/** Reuse an existing display without deleting its identity, geometry or outgoing wires. */
+export function linkValueInGraph(graph: Graph, id: string, source: string): void {
+  const node = graph.nodes.find(n => n.id === id);
+  if (!node || !isValueNode(node.type)) throw new Error('请选择已有值节点建立关联。');
+  const owner = valueOwner(graph, source);
+  if (node.type !== owner.type || !isValueNode(owner.type)) throw new Error('值关联两端必须具有相同类型。');
+  if (node.id === owner.id) throw new Error('共享值不能引用自身。');
+  if (isBoundary(node)) throw new Error('不能用值关联合并已有子图接口；请显式处理父图端口。');
+  if (graph.edges.some(edge => edge.target === id)) throw new Error('目标节点有独立输入连线，请先显式断开再建立值关联。');
+  if (graph.nodes.some(n => n.valueSource === id)) throw new Error('目标节点已是其他副本的主节点，不能创建串联值关联。');
+  node.valueSource = owner.id;
 }
 
 /** Detach a view without losing its current input wiring. */
@@ -141,8 +155,10 @@ export function removeValueNodes(root: Graph, path: string[], ids: string[]): vo
       };
     });
   }
+  const removedNodes = graph.nodes.filter((node) => removed.has(node.id));
   graph.nodes = graph.nodes.filter((node) => !removed.has(node.id));
-  pruneIfRegions(graph);
+  pruneIfRegions(graph, removedNodes);
+  pruneLayoutRegions(graph);
   graph.edges = graph.edges.filter(
     (edge) => !removed.has(edge.source) && !removed.has(edge.target),
   );

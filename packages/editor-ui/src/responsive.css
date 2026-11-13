@@ -142,6 +142,11 @@
   .header-actions {
     margin-left: auto;
     gap: 5px;
+    min-width: 0;
+    overflow-x: auto;
+  }
+  .header-actions > * {
+    flex-shrink: 0;
   }
   .history-buttons {
     border: 0;

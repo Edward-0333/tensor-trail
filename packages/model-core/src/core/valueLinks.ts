@@ -9,6 +9,8 @@ const valueTypes = new Set([
   'TensorVariable',
   'ValueVariable',
   'DeviceVariable',
+  'DeviceConstant',
+  'DtypeConstant',
   'BufferSource',
   'IntegerParameter',
   'Inlet',
@@ -45,6 +47,8 @@ export function effectiveValueNode(graph: Graph, node: ModelNode): ModelNode {
   const effective = { ...node, params: owner.params, label: owner.label };
   if (owner.tensorAutograd) effective.tensorAutograd = owner.tensorAutograd;
   else delete effective.tensorAutograd;
+  if (owner.informationSource) effective.informationSource = owner.informationSource;
+  else delete effective.informationSource;
   return effective;
 }
 
@@ -57,6 +61,8 @@ export function syncValueLinks(graph: Graph): void {
       node.label = owner.label;
       if (owner.tensorAutograd) node.tensorAutograd = clone(owner.tensorAutograd);
       else delete node.tensorAutograd;
+      if (owner.informationSource) node.informationSource = clone(owner.informationSource);
+      else delete node.informationSource;
     }
     if (node.subgraph) syncValueLinks(node.subgraph);
   }

@@ -1,7 +1,7 @@
 ---
 title: "Tensor Trail AI 操作指南"
 created: 2026-10-19
-last_updated: 2026-11-10
+last_updated: 2026-11-12
 authors:
   human: "用户"
   ai: "Codex"
@@ -22,6 +22,21 @@ tags: [项目, Tensor, AI, API]
 本版提供纯 JavaScript/TypeScript API、命令行和 `window.tensorTrail` 画布 API。外部 AI 负责理解架构并生成 JSON，程序共用原有模块注册表进行构建和形状校验。无需在本程序中配置模型密钥。
 
 **尚未提供 MCP、HTTP REST 服务或内置大模型聊天框。** 当前仅做形状推导，不运行真实张量、训练或 PyTorch 前向。普通聊天模型需由具备文件、命令行或页面调用能力的工具连接程序。
+
+## 调用边界与实参准备
+
+绘制 `module(expr1, expr2, ...)` 时，括号里的表达式属于调用方，不属于 `module` 的内部实现。
+先在调用侧画出创建张量、乘法、索引、reshape、detach 等实参准备，再连接到封装模块的输入端口。
+模块内部从形参 Inlet 开始，不重复创建这些实参，不把参数准备藏进被调用模块。
+
+例如 `ego_cross_attn(ego_feat.new_ones(B,1,3)*0.5, ego_feat, curr_query_pos.detach(), curr_query_feat.detach())`：
+调用侧应直接显示 `GetDtype/GetDevice -> NewOnes -> *0.5`、原始 `ego_feat` 和两条 `Detach` 路径；
+注意力内部从 `query_points/query_feat/key_points/key_feat` 开始。
+
+额外的循环封装也不应隐藏用户要求观察的调用参数。需要在父画布显示时，优先将循环展开为同层范围，
+或采用明确的内部引用视图。**显示在封装外不等于移到循环前执行**：循环内的参数准备仍每轮发生，
+尤其不能把依赖更新状态的 detach、索引等操作只计算一次。首轮预览必须明确标注，
+不将第一轮 shape 或结果当作所有轮次的结果，不伪造尚未绘制的状态反馈和最终输出。
 
 ## 快速开始
 
@@ -82,13 +97,40 @@ node packages/cli/scripts/agent.mjs validate cross-attention.json
 
 配方中的连接为 `query.out → attention.q`、`key.out → attention.k`、`value.out → attention.v`、`attention.out → output.in`。展开诊断路径 `attention/q_heads`、`attention/k_heads`、`attention/v_heads` 和 `attention/scores` 可观察多头与矩形注意力分数形状。缺失任一路输入或尺寸不兼容会阻断输出。
 
+## 布局分区
+
+`LayoutRegion` 是纯布局区域，圆角浅色填充，没有计算端口；不要用它代替模型调用、`IfRegion` 或 `LoopRegion`。分区及成员保持同一层级，只有显式加入的节点受边界约束。不要自动为用户已有图分区。
+
+通过 API 新增空分区，再用 `assign_region` 移入成员。保留其他节点位置与快照；被显式移入的节点重新排在分区内，已有成员不重排。示例假定 `q`、`k`、`v` 是当前图中的节点 ID：
+
+```js
+const result = patchModel(project, {
+  operations: [
+    { op: 'add_node', node: { id: 'qkv_region', type: 'LayoutRegion',
+      label: 'Q/K/V 投影', position: { x: 200, y: 300 },
+      params: { sizing: 'auto', width: 900, height: 400, color: '#38b2ac' } } },
+    { op: 'assign_region', ids: ['q', 'k', 'v'], region: 'qkv_region' },
+  ],
+}, { mode: 'draft', layout: 'preserve' });
+```
+
+`assign_region` 的 `region: null` 解除归属而不移动节点；指定另一分区则转移归属。`fit_region` 自动适配，`resize_region` 设置手动宽高并可选修改左上角 `position`，不会裁剪成员。`set_position` 移动分区时携带成员，移动成员时限制在区域内；内部手工线路随整体平移，跨界连线重新走线。每项操作都支持 `path`。
+
+`set_params` 可设置颜色、尺寸模式和 `members`；设置成员会执行与 `assign_region` 相同的归属/移入逻辑，优先使用专用操作。节点“所属分区”由分区 `params.members` 计算，不另写 `regionId`。每个节点只属于一个分区，不嵌套分区，不把 if/for 虚线框本身归入分区。删除分区保留成员。
+
+可用 `rename_node` 修改分区名称，`set_params` 设置 `note`（最多 240 字符）与 `outputs`（逗号分隔的本分区成员 ID）。例如 `{op:'set_params', id:'vision_region', params:{note:'提取多视角视觉特征，预测占用点及类别。', outputs:'outs'}}`。注释显示在标题下，输出成员显示独立徽标，不用绿色边框伪造 forward 最终返回身份；这些编辑不改变已有几何信息。标记仅对应指定节点，不传播给区外关联副本；解除成员归属或删除成员时清理，复制分区时重映射 ID。
+
+用户要求分区输入不向外拉长线时，对原输入使用 `duplicate_linked` 在区外使用点附近创建关联副本，再用 `disconnect/connect` 重接对应的外部使用边；保留区内唯一原输入，不增加 forward 形参，不绘制主节点到副本的连线。只处理用户指定分区的输入使用，不将普通中间张量自动全部拆成副本。
+
+纯 SDK 没有浏览器节点测量值，按默认卡片尺寸安排位置；打开编辑器后使用实际测量尺寸安全扩展边界，不改变模型计算。显式 `layout` 保留已有分区及成员位置，只重排未归属节点。
+
 ## Forward 输入
 
 ### if 条件范围框
 
 `IfRegion` 是画布中的虚线范围框，不是函数或执行引擎。`condition` 写条件表达式（不含 `if` 和冒号），`members` 为同层节点 ID 的逗号分隔文本，`note` 为说明。条件只显示，不执行 Python、不改变数据边或推导顺序；所有内部形状均为静态检查，不表示两个条件同时成立。示例参数：`{"condition":"self.pretrain","members":"cast,normalize,match,set","note":"预训练时每次 forward 刷新分组"}`。
 
-范围根据成员节点的实际尺寸自动计算，不改变旧节点位置或连线。画布多选节点后点击工具栏「if 框」；也可从库拖入空框，在右侧勾选成员。通过移动内部节点调整范围；非空框自身不整体拖动。删除框保留内部节点，复制框包含内部节点；当前不允许同层范围重叠或把范围框再作为成员，嵌套条件可放到函数子图中。API 使用普通 `add_node` / `set_params` 操作，无需直接编辑项目 JSON。
+范围根据成员节点的实际尺寸自动计算，不改变旧节点位置或连线。画布多选节点后点击工具栏「if 框」；也可从库拖入空框，在右侧勾选成员。通过移动内部节点调整范围；非空框自身不整体拖动。支持严格树形嵌套：LoopRegion 可以直接包含 IfRegion，每个节点或子框只能有一个直接父框，不允许自引用、环和重复归属。父框包含子框标题和边界。删除内层框保留代码并提升到父框，复制框递归包含成员。API 使用普通 `add_node` / `set_params` 操作，无需直接编辑项目 JSON。
 
 同一模块属性有多次赋值时，`SetAttribute` / `GetAttribute` 可设置 `version`，例如 `initial` 和 `pretrain`。每次 SET 使用不同版本，GET 显式选版本。它们仍然表示同一个 Python 属性，不是两个属性或参数；版本只消除静态绑定歧义，不模拟条件、执行顺序或最终状态。未写版本的旧单次赋值保持兼容。
 
@@ -183,12 +225,16 @@ const changed = patchModel(draft.project, patch);
 | add_node | node | 按 Recipe 节点格式新增 |
 | replace_node | id, node | 原子替换同一 ID 的类型与参数；保留默认位置，完整事务须修复受影响端口 |
 | remove_node | id | 删除节点及关联边；保护 Inlet/Outlet |
+| link_value | id, source | 把已有值节点恢复为同类型主节点的关联副本，保留 ID、位置、分区与输出连线 |
 | set_params | id, params | 合并参数；未手工修改的组合模块重新生成 |
 | rename_node | id, label | 修改显示名 |
-| set_position | id, position | 仅移动指定节点，position 为有限 x/y；不触发祖先 customized |
+| set_position | id, position | 移动节点，分区携带成员，成员受边界约束；不触发祖先 customized |
+| assign_region | ids, region | 将同层节点移入分区；region 为 null 时解除归属 |
+| fit_region | id | 将布局分区设为自动适配成员范围 |
+| resize_region | id, width, height | 设置手动尺寸，可传 position；不能裁剪成员 |
 | set_tensor_border | id, color | 设置本节点边框（`#RRGGBB`）；`null` 恢复默认，不改背景、梯度或布局，关联副本仅改本地颜色 |
 | connect / disconnect | from, to | 连接/断开 node.port 端点 |
-| layout | 无 | 重排目标图 |
+| layout | 无 | 重排目标图的未归属节点，保留布局分区及成员 |
 | rename_project | name | 修改项目名 |
 
 patchVersion 可省略，默认 1。除 rename_project 外，每项都可传 `path: ["encoder", "attention"]` 指定子图，省略为顶层，id 相对于该子图。
@@ -202,6 +248,8 @@ patchVersion 可省略，默认 1。除 rename_project 外，每项都可传 `pa
 ```
 
 内部语义编辑会标记所有祖先 customized，之后父级 set_params 拒绝重建，保护手工结构；应继续改内部算子。重命名和布局不会触发标记。
+
+`link_value` 用于关联已有节点，而 `duplicate_linked` 会新建副本。它不按名称猜测来源，必须明确指定同层 `source`；源是副本时直接引用其主节点。目标不能有独立输入边、不能已经拥有其他副本，也不能是 Inlet/Outlet（避免隐式合并父图接口）。例如恢复输入副本：`{op: 'link_value', id: 'img_metas_near_head', source: 'img_metas'}`。它保持现有输出边、手工走线和分区归属，参数等共享元数据以主节点为准。
 
 整批操作作用于克隆模型，最后统一检查，允许断开旧边、插入节点、重新连线。失败不会改变源模型。Patch 默认保留已有布局，仅安排未指定 position 的新节点；显式 layout 操作仍重排目标图。第三参数 `{layout: 'auto'}` 恢复添加节点后重排所在图的旧行为。Patch 保留 variants；build 新项目 variants 为空。
 
@@ -219,7 +267,7 @@ patchModel(project, patch, { mode: 'draft', layout: 'preserve' });
 - 环路、重复 ID、错误端口、未知模块/参数、已知形状或 dtype 错误始终是 error。`ok: true` 在 draft 下仅表示可继续编辑，不表示模型完整或可训练。
 - 子图仍必须有合法边界。逐步展开请用 `Submodule`，至少保留一个 Inlet，可以暂不定义 Outlet；不要为了通过校验伪造返回值。
 - `layout` 默认 `preserve`。旧节点位置、端口布局、现有连线拐点和标签位置不动；新节点有 position 时直接使用，否则确定性地放到已有布局右侧。生成式组合模块改参数后，保留仍存在的节点/连线几何信息。
-- `set_position` 只移动指定节点；不会替它重画手工连线，也不将祖先标成 customized。显式 `layout` 操作优先于保留布局；`layout: 'auto'` 会在添加节点的子图中重排。
+- `set_position` 对未归属节点只改变其位置；布局分区携带成员，成员受边界约束，相关线路按上面的分区规则处理，不将祖先标成 customized。显式 `layout` 操作优先于保留布局，但保留已有分区及成员；`layout: 'auto'` 会在添加节点的子图中重排未归属节点。
 - 原地修改的节点、连线和参数使用 Patch；不必手工编辑持久化 JSON。只有模块目录没有对应语义时才实现新的算子、形状规则并重新构建。
 
 CLI 对应命令：
@@ -368,6 +416,19 @@ SparseWorld 当前 FPN 为四路 1x1 lateral 卷积，三次从粗到细的最�
 
 ## tuple/list 返回值与空列表
 
+`BooleanIndexAxis` 表示一维 bool 掩码筛选指定轴，例如 `dim="1"` 对应 `x[:, mask]`，
+输入为 `in` 和 `mask`，不广播掩码、不合并 batch。默认输出数量为 `count_symbol`；
+`declared_count=true` 增加整数 `count` 端口，用于有算法保证的 True 数量契约，不能将其说成软件实际计数。
+例如按配额分组后的当前帧 query 数为 720；该节点不执行分组或读取真实掩码。
+
+`NewZeros(metadata_inputs=true)` 可分别连接 `GetDtype.out → dtype` 和 `GetDevice.out → device`，
+不再连接参考 Tensor 的 `in`。尺寸仍由 `shape` 中的 `d0`–`d7` 指定；创建独立的全零 Tensor，默认 grad:off、无原始输入来源编号。
+旧图未设置该参数时仍使用原来的参考 Tensor 输入。
+
+`IntegerSubtract`、`IntegerMinimum`、`IntegerMaximum` 使用 `a,b → out`，输出 Python 整数而非 Tensor。
+它们与 `IntegerAddOne` 可展开 `max(1,min(epoch-finetune_epoch+1,limit))`，只计算声明的整数。
+训练/推理条件使用互斥的 `IfRegion` 范围框展示；不要将两条输出合并成同时执行的数据流。
+
 `TensorSequencePack` 用 `kind="tuple"` 或 `"list"`、`input_count=0..16` 配置容器。
 输入端口为 `item0`、`item1` 等，输出 `out` 是保留各元素 shape/dtype/梯度标注的有序容器，
 不是 Tensor，不要求元素同形，也不是 `stack` 或 `concat`。右侧观察器可查看每个元素。
@@ -381,6 +442,13 @@ SparseWorld 当前 FPN 为四路 1x1 lateral 卷积，三次从粗到细的最�
 
 ## 关联副本与就近连接
 
+已知的设备和类型可以直接用无输入的 `DeviceConstant(device="cuda:0")`、
+`DtypeConstant(dtype="float32")` 表示，画布只显示 `DEVICE cuda:0` / `DTYPE float32`。
+`context` 记录原 `.device/.dtype` 表达式、确定值的依据及适用配置。
+这是固定值展示，不是运行时读取、数据转换或新的模型输入；切换精度或设备时必须同步更新。
+未知值仍保留 `GetDevice/GetDtype`，不能为减少连线猜测设备或类型。
+两类常量支持 `duplicate_linked`，可让每个使用点有一个就近引用；不需要张量到元数据值的连线。
+
 通过 `duplicate_linked` 创建已有值节点在同一画布中的关联副本，例如：
 
 ```json
@@ -390,10 +458,27 @@ SparseWorld 当前 FPN 为四路 1x1 lateral 卷积，三次从粗到细的最�
 `source` 和新 `id` 必须属于同一 `path`；若 source 本身是副本，会直接关联原始主节点，不产生引用链。
 支持已有可关联值类型，例如 LocalParameter、IntegerParameter、TensorVariable 和 Inlet；不支持计算算子。
 副本没有独立输入端口，不需要主节点到副本的连线；输出可就近连接消费者。
+局部参数主节点可以只有输入、没有输出连线，仍然负责接收计算结果并为关联副本提供值。
+不要为了保留主节点的直接使用点而拉长线：定义放在计算处，远处使用全部改为就近关联副本。
+只作为副本值来源的主节点不是无用节点，不能清理删除。已有单用途副本太远时可直接移近使用点。
 用 `disconnect/connect` 将原长线替换为副本到消费者的短线。它主要减少长线和交叉，不一定减少边的总数。
 改名或改参数会同步主节点，位置独立。Inlet 副本不会增加父模块的输入端口。
 循环中的副本共享当前迭代的值，不能把外层同名参数当成循环体内的尺寸值。
 此操作同样支持 `mode:"draft",layout:"preserve"`，失败时整个补丁回滚；不直接编辑项目 JSON。
+
+### 末尾返回结构的就近引用
+
+补图时从当前 forward 的 `return` 倒查。如果其前方只有变量引用、`DictionaryPack`、
+`TensorSequencePack` 或 `DictionaryUpdate`，可为已经形成的张量/结果列表创建就近关联副本，
+一对一连接末尾打包端口。此规则不局限于局部参数；计算处的主节点可以没有直接使用连线。
+不要改为独立常量或复制计算，也不要把普通中间计算链全部改成关联副本。
+
+软件自动用加粗绿色边框标出本层原样返回的值及其关联副本，不需要写入自定义边框颜色。
+倒查只穿过引用和纯容器组装，遇到计算、索引、detach、条件选择、列表追加或子模块调用即停止。
+字典更新按字段排除被覆盖的旧值；仅部分字段保留下来的旧字典本身不标为完整最终输出。
+循环体状态 Outlet 不作 forward 最终返回值处理；缺少有效推导结果时不猜测。
+该身份与梯度、模型参数及输入来源独立：绿色不等于 no_grad，也不禁止其他分支继续使用该值。
+只改本次涉及的尾部连线，用 `layout:"preserve"` 保留其他布局、路径和运行快照。
 
 ## ForEach 循环子图
 
@@ -418,6 +503,83 @@ SparseWorld 当前 FPN 为四路 1x1 lateral 卷积，三次从粗到细的最�
 拒绝除数 0；符号输入保留表达式并提示约束。可用于 SparseWorld 的 `BN / B`，再连接 `View` 的尺寸端口。
 `View` 只验证尺寸/元素数，不验证 PyTorch stride 是否允许真正的零拷贝 view。
 
+`IntegerFloorDivide` 的 `a/b → out` 对应 Python `a // b`，向下取整（例如 `-7 // 3 = -3`），
+与向零截断的 `IntegerTruncDivide` 区分。输入必须是局部整数或符号尺寸，拒绝除数 0；
+符号结果保留整除表达式，不伪造数值。可用于 `C = GC // G`，画布以紧凑 `a // b` 节点显示。
+
+## For 状态循环
+
+需要在父画布直接观察调用实参时，可以改用 `LoopRegion`：
+`statement` 填写 `for interval in range(num_fu_frames)` 等语句，`members` 指定同层节点 ID，
+`note` 必须说明展示的是哪一轮及未绘制范围。虚线框只标注“框内操作每轮执行”，
+不封装成员、不求值循环语句、不自动模拟多轮或生成最终输出；与 `ForLoop` 的状态递推不同。
+删除框保留代码，复制框递归携带成员；边框随节点位置自适应。支持唯一直接父框的树形嵌套，不允许成员重复归属或范围环。
+
+`ForLoop` 表示有界 `for index in range(N)`，参数 `iterations` 为 0-16 的已知整数，
+`states` 为逗号分隔的 1-8 个状态名。循环体需要 `Inlet(index)` 和全部状态 Inlet；
+其他 Inlet 是每轮相同的捕获输入。Outlet 必须恰好对应状态名，其输出自动传给下一轮同名 Inlet。
+外层没有 index 输入，只接收初始状态和捕获值，并输出最终状态；不要画普通反馈边制造环路。
+
+设置 `iterations_input: true` 时，外层增加整数控制端口 `iterations`，取代静态参数 `iterations`；
+可连接已算出的 `num_fu_frames` 等局部整数，仍要求已知值在 0-16 内。此模式禁止同名循环体 Inlet，
+控制次数不是特征输入，也不会自动成为循环体捕获值。旧图默认继续使用参数模式。
+逐段补图时可暂不连接状态 Outlet，使用 draft 校验；已连通的第一轮节点仍能查看，
+但循环不返回最终状态、不假装剩余代码是恒等操作，也不推测后续轮次结果。
+
+状态支持 Tensor、Tensor list/tuple 和局部整数，允许 Tensor shape 与列表长度逐轮变化，但不能改变值种类。
+使用紧凑 `TensorListAppend(items,item)` 表达每轮 `list.append(tensor)`，保留每个元素的形状、梯度和来源；
+不是 stack/concat，收集结果最多 256 个 Tensor。零次迭代原样返回状态。
+所有轮次按序静态推导，后续轮次出错时不返回部分状态；循环体可切换迭代查看，嵌套子模块保持选定轮次。
+不执行 Python，不支持 break/continue、数据依赖循环次数或循环内 SetAttribute。
+循环体不能脱离 ForLoop 保存为普通模块变体。
+
+`NewOnes` 对应 `reference.new_ones(size)`，支持 `metadata_inputs: true`，由 `GetDtype/GetDevice`
+提供元数据和 d0-d7 提供尺寸；不使用参考张量的数值，不继承来源编号，默认梯度关闭。
+可接公式为 `x * 0.5` 的 `Function`，画出固定参考坐标；不能用只继承 device 的 `OnesScaled` 冒充。
+`OPUSCrossAttentionContract` 声明 query_points `[B,Q,3]`、query_feat `[B,Q,D]`、
+key_points `[B,K,P,3]`、key_feat `[B,K,D]` 四个输入，输出 `[B,Q,D]`；Q 与 K 可不同。
+它封装距离偏置、位置编码、多头交叉注意力及残差，不执行网络；仅暴露第一个被使用的返回值，
+第二个被 `_` 忽略的注意力权重不接入数据流。detach 保留来源编号，但切断对应输入梯度。
+
+需要展开时使用 `OPUSCrossAttention`，不再停留在接口契约：
+距离函数包含米制解码、Key 点集均值、广播差、L2 范数、取负与 no_grad 结果标记；
+主图绘制 `exp(dist/40)`、Key 特征产生的 `Linear -> Softplus -> Permute`，
+两路广播相乘得到 `[B,H,Q,K]` 偏置，再 flatten 成 `[B*H,Q,K]`。
+位置分支的两次 `self.pos_embed` 表示同一层的两次调用，不是两套独立权重。
+`query_points * 0` 仍是逐元素乘法，不能替换为 new_zeros 的元数据依赖。
+`self.attention` 包装层可进入查看：Q/K 加位置、原始 Key 作 V、sequence-first 转置、
+`nn.MultiheadAttention`、输出转置、两个 p=0 的 Dropout，以及原始 Query 的残差连接。
+`TorchMultiheadAttention` 保留为标准神经网络层接口，不声称已展开其原生实现；
+浮点 attn_mask 加到 logits，而不是布尔屏蔽；返回的 weights 默认沿头平均为 `[B,Q,K]`。
+checkpoint 条件与 `use_reentrant=False` 记录在展开模块的代码说明中，两条执行路径共享相同前向数据流，
+不重复画计算，也不把 checkpoint 当成 detach；DUMP 写文件不计入神经网络数据流。
+
+新增的 `Exp`、`Softplus`、`L2Norm` 是紧凑数学节点。
+`NoGradResult` 仅标注 no_grad 内已计算结果的上下文效果，不是源码新增的 detach，
+不适用于直接透传输入、Parameter 或显式 requires_grad=True 的工厂例外。
+
+SparseWorld 的 Decoder 示例使用 `query_points,query_feat,cls_scores,refine_pts` 四个状态，
+`mlvl_feats,occ2img,img_metas` 为捕获输入。每轮先 detach 输入坐标，再调用独立的 `decoder_layers[index]`。
+`OPUSDecoderLayerAt` 只按索引选择接口契约，`refines="1,4,16,24,32,48"` 声明各层输出点数；
+index 是模块选择配置，不是额外的 forward 张量，也不作为融合的信息来源。
+同一个循环体不表示各层共享网络参数。两个 append 收集本层输出，不能收集下一轮 detach 后的值。
+初始化两个空列表在循环外完成。最终只将 query_feat 和两个列表接到 Decoder 的 return。
+
+### 展开 Decoder 层
+
+`OPUSDecoderLayer` 是 `OPUSTransformerDecoderLayer.forward` 的可展开子图模板，保留上述 5 个数据输入和
+仅用于配置选择的 index。可用 `replace_node` 替换旧的层占位封装，保持同名端口与外层布局。
+各轮 `refines`/`last_refines` 通过整数列表取值；`LinearByDimensions(in,in_features,out_features)`
+仅用后两个整数指定该层 Linear 规格，不传播其信息来源，也不表示动态修改同一份真实权重。
+shape、来源编号、梯度标注由内部连接传播；不要再保留一个整体契约直接生成输出，绕过内部流程。
+
+`OPUSSamplingContract` 输出 `[B,Q,G,T*P,D/G]`，其中 P 为 `num_points`，不是 `num_refines`。
+`AdaptiveMixingContract`、`OPUSSelfAttentionContract`、`MMCVFFNContract` 保留相应模块接口及约束；
+复杂内部可后续用子图替换，不能将这些契约误称为已执行的网络。
+`ReduceMean` 是通用单轴浮点求均值；`PointRangeTransform` 按 pc_range 对最后 xyz 轴做仿射编码/解码。
+`refine_points` 使用米制点集中心加缩放后的位移，再归一化，没有 clamp。
+MMCV FFN 自带 add_identity=True，不能用软件内不含残差的普通 FFN 模板直接替代。
+
 ## While 状态循环
 
 `WhileLoop` 展示有界循环 `while i < num_points`，每轮固定 `i += 1`。
@@ -426,11 +588,17 @@ SparseWorld 当前 FPN 为四路 1x1 lateral 卷积，三次从粗到细的最�
 循环体的 Outlet 必须恰好是 `i` 和所有状态，分别表示下一轮计数器与下一轮状态。
 外层只输出各状态，不暴露循环体中的单轮 `i`。反馈由循环语义管理，不能连接普通边制造环路。
 
-这里只推导一轮符号模板 `i`，检查输出 `i + 1` 及状态 shape/dtype 不变量，不展开 1040 个子图。
+画布只展示一轮符号模板 `i`，检查输出 `i + 1` 及状态 shape/dtype 不变量，不展开 1040 个子图。
 初始 i 与上界为已知整数且条件不成立时跳过循环体，原样返回状态。
 不支持 break/continue、任意 while 条件、变形状状态或运行时迭代回放。
 模板输出只声明循环结束时的规格，不包含真实 Tensor 数值或实际分配结果；不得标为某次真实迭代。
 循环体不允许脱离 WhileLoop 保存为普通变体；可复制整个循环节点。
+
+开启 `lineageEnabled` 后，沿状态反馈迭代传播可能来源，最多 32 次分析，来源集合稳定后停止。
+这不是执行真实 Tensor 循环；多次迭代的来源取保守并集，按每个状态的实际依赖区分，不合并未使用的捕获输入。
+动态索引、标量写入、条件与分支合流均参与来源追踪；元数据仍不生成根输入编号。
+零次迭代保持初始来源，符号上界包含零次可能；未知算子或达到分析上限仍保留 `?`。
+循环体中的 SET 属性副作用尚不支持，请用状态 Inlet/Outlet 表达更新；允许 GET 外部已写入的属性。
 
 `IfCondition` 产生未执行的条件及 True/False 控制依赖，画为菱形和虚线。
 `BranchValue` 为每条可能路径传入 Tensor，`MergeBranches` 检查两个路径的 shape/dtype 一致。
@@ -441,6 +609,37 @@ SparseWorld 当前 FPN 为四路 1x1 lateral 卷积，三次从粗到细的最�
 SparseWorld 示例在 `packages/model-core/tests/fixtures/matchingLoop.ts`：按 `original_id` 写入 `inds`，
 用更新后的 `inds` 统计配额，配额满时仅清零、重排并写回 `maps[i+1:]`，保留已处理前缀。
 使用 `patchModel(...,{mode:"draft",layout:"preserve"})` 插入子图，局部值通过 `duplicate_linked` 就近引用。
+
+## SparseWorld 预测与返回
+
+`SparseWorldForecastStep` 是 `forward_backbone` 中一轮预测的详细模板；可将节点平铺到父画布的
+`LoopRegion`，也可把其 `interval` Inlet 的 port 改成 `index` 后用于 `ForLoop`。
+七个携带状态为 `curr_query_feat/curr_query_pos/curr_query_timestamp` 和四个结果列表。
+真实代码各轮复用同一份网络参数；图中的节点仅表达调用，不实例化 PyTorch 模型。
+
+当前工作区图沿用 `training=True, epoch=0, pretrain=True, batch=2`：一轮完整展开到 `return outputs`。
+`SingleIterationPreview` 只校验绘图范围，不是模型新增代码。若循环次数改成多轮会明确报错，
+不能把首轮形状当最终结果；可复用单轮模板进行真实状态递推的静态推导。
+测试覆盖 1 到 6 轮，追加后的 Query 数为 `780/840/900/960/1000/1040`；点/语义列表不能 stack。
+
+- `traj_head`、位置编码及 reg/cls/vel 分支可展开为 Linear、激活、LayerNorm。
+- 新增时间戳固定为 0.5，旧时间戳不累加。`fused_ego_feat` 沿 Query 轴广播相加。
+- 回归偏移先乘 0.5；XY 另加 `vel_offset * moving_mask`，速度项没有乘 0.5。
+- `SparseWorldRefinePoints` 解码点集并求中心，加 48 个独立偏移后编码，不是每个旧点直接加偏移。
+- `SparseWorldTransformPoints` 包含 `.cpu() -> linalg.inv -> .cuda()`、米制正向变换、平移、逆变换和编码。
+  调用侧先把点展平成 `[B,Q*48,3]`；平移保持 `[B,1,3]`，之后恢复原 shape。
+- `pred_traj_expand` 实际取 `[-GT_x,-GT_y,0]`。`zeros_like(pred_traj[:,:,:1])` 不使用预测轨迹数值，
+  也不继承其梯度；来源标记只保留真实 GT 数值来源。掩码只检测归一化 X>=0，不是完整空间有效性。
+- `SparseWorldForecastFinish` 绘制循环后额外一次轨迹和 `outputs.update`。`SelectValue` 接收已知 Python bool，
+  只采用选中路径的值规格；IfRegion 仍只是视觉范围，静态检查另一分支不代表执行了它。
+  当前 pretrain=True 不追加；微调未满6步时仅追加一次轨迹，不追加占据结果。
+- 原始 `outputs['refine_pts']` 仍是循环前720个Query；循环重新绑定变量不修改已保存的字典字段。
+
+运行快照只采集了 img 和 temporal_ego_states，不篡改为完整采集。
+`TensorFieldContract` 为缺失的 `kwargs['temporal_trajs']` 提供明确的静态规格：本地轨迹文件抽查单样本
+`[6,2] float32`，batch=2 声明 `[2,6,2]`，不是本次前向实测。
+`BatchMetaStack` 保留 NumPy 原 dtype 为 unknown；`ArrayToTensorExplicit` 明确指定源码的 float32/CUDA。
+`ReshapeLike` 仅继承参考 shape；`DictionaryUpdate` 浅层更新且保留各字段自己的来源和梯度描述。
 
 ## 开发验证
 

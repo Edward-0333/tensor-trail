@@ -15,6 +15,7 @@ import { graphAt, ports } from '@tensor-trail/model-core/core/graph';
 import { resolveForwardView } from '@tensor-trail/model-core/core/hierarchy';
 import { registry } from '@tensor-trail/model-core/modules/index';
 import { TensorView } from '../views/TensorView';
+import { InformationSourcePanel } from './InformationSourcePanel';
 import { ModuleDetail } from '../views/details';
 import { tone, isTensorNode } from '../views/ModuleNode';
 import { dimensions } from '@tensor-trail/model-core/modules/math';
@@ -29,15 +30,24 @@ import { FunctionFormulaField } from './FunctionFormulaField';
 import { effectiveValueNode, isValueNode, linkedValueNodes, valueOwner } from '@tensor-trail/model-core/core/valueLinks';
 import { localParameterColors } from '../views/localParameterColors';
 import { sequenceCode } from '@tensor-trail/model-core/modules/sequenceOps';
+import { decoderSupportCode } from '@tensor-trail/model-core/modules/decoderSupport';
+import { decoderLayerOpCode } from '@tensor-trail/model-core/modules/decoderLayerOps';
+import { attentionMathCode } from '@tensor-trail/model-core/modules/attentionMath';
+import { opusCrossAttentionCode } from '@tensor-trail/model-core/modules/opusCrossAttention';
+import { forecastMathCode } from '@tensor-trail/model-core/modules/forecastMath';
+import { forecastSupportCode } from '@tensor-trail/model-core/modules/forecastSupport';
+import { arrayConversionCode } from '@tensor-trail/model-core/modules/arrayConversion';
 import { imageMetadataCode } from '@tensor-trail/model-core/modules/imageMetadata';
 import { tensorSequenceCode } from '@tensor-trail/model-core/modules/tensorSequence';
 import { forEachCode } from '@tensor-trail/model-core/modules/forEach';
+import { forLoopCode } from '@tensor-trail/model-core/modules/forLoop';
 import { natSource } from '@tensor-trail/model-core/modules/natSequence';
 import { agentCompletionCode } from '@tensor-trail/model-core/modules/agentCompletion';
 import { embeddingInitializationCode } from '@tensor-trail/model-core/modules/embeddingInitialization';
 import { moduleReferenceCode } from '@tensor-trail/model-core/modules/moduleReference';
 import { attributeCode } from '@tensor-trail/model-core/modules/attributes';
 import { newZerosCode } from '@tensor-trail/model-core/modules/newZeros';
+import { selectionCode } from '@tensor-trail/model-core/modules/selectionOps';
 import { bufferSourceCode } from '@tensor-trail/model-core/modules/bufferSource';
 import { matchingPreparationCode } from '@tensor-trail/model-core/modules/matchingPreparation';
 import { deviceCode } from '@tensor-trail/model-core/modules/device';
@@ -48,6 +58,10 @@ import { loopOpsCode } from '@tensor-trail/model-core/modules/loopOps';
 import { divideCode } from '@tensor-trail/model-core/modules/elementwise';
 import { AttributeBindingPanel } from './AttributeBindingPanel';
 import { IfRegionPanel } from './IfRegionPanel';
+import { LayoutRegionPanel, LayoutRegionMembership } from './LayoutRegionPanel';
+import { unlinkValueWithConfirmation, valueUnlinkWarning } from './valueLinkActions';
+import { canJoinLayoutRegion, isLayoutRegion } from '@tensor-trail/model-core/core/layoutRegions';
+import { isCodeRegion } from '@tensor-trail/model-core/core/ifRegions';
 import { mapOperationCode } from '@tensor-trail/model-core/modules/mapOps';
 import { mapEncoderCode } from '@tensor-trail/model-core/modules/mapEncoder';
 import { maskedWriteCode } from '@tensor-trail/model-core/modules/maskedWrite';
@@ -413,7 +427,8 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
     fields.push({ key: 'allow_broadcast', label: '允许赋值广播', kind: 'boolean', default: false });
   const help = node ? operationHelp[node.type] : undefined;
   const code = node
-    ? (plutoForwardCode(node) ??
+    ? ((node.type === 'NanToNum' ? 'out = torch.nan_to_num(x)\n# NaN -> 0; +/-inf -> dtype finite limits; shape and dtype unchanged' : undefined) ??
+      plutoForwardCode(node) ??
       plutoCompositeCode(node) ??
       mapEncoderCode(node) ??
       mapOperationCode(node) ??
@@ -422,6 +437,7 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
       moduleReferenceCode(node) ??
       attributeCode(node, state.path) ??
       newZerosCode(node) ??
+      selectionCode(node) ??
       bufferSourceCode(node) ??
       matchingPreparationCode(node) ??
       sortingCode(node) ??
@@ -432,9 +448,17 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
       divideCode(node) ??
       maskedWriteCode(node) ??
       sequenceCode(node) ??
+      decoderSupportCode(node) ??
+      decoderLayerOpCode(node) ??
+      attentionMathCode(node) ??
+      opusCrossAttentionCode(node) ??
+      forecastMathCode(node) ??
+      forecastSupportCode(node) ??
+      arrayConversionCode(node) ??
       imageMetadataCode(node) ??
       tensorSequenceCode(node) ??
       forEachCode(node) ??
+      forLoopCode(node) ??
       natSource(node))
     : undefined;
   const localColor =
@@ -442,10 +466,12 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
   const container = node && isContainerInput(node.type);
   const namedInput = container || node?.type === 'Inlet';
   const boundary = node && ['Inlet', 'Outlet'].includes(node.type);
+  const unlinkWarning = linkedOwner && node ? valueUnlinkWarning(graph, !state.path.length, node.id) : undefined;
   const tensorOutput = node ? result?.nodes[node.id]?.outputs.out : undefined;
   const replaceable =
     node &&
     linkedMembers.length <= 1 &&
+    !isLayoutRegion(node) &&
     !node.subgraph &&
     !container &&
     ![
@@ -568,6 +594,8 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
                       ? '进入初始化'
                       : node.type === 'WhileLoop'
                       ? '进入循环体（符号模板）'
+                      : ['ForLoop', 'ForEachTensor'].includes(node.type)
+                      ? '进入循环体'
                       : node.type === 'CalculationGroup'
                       ? '编辑内部操作'
                       : ['ToVector', 'Reweight'].includes(node.type)
@@ -626,6 +654,7 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
                   个独立定义；其关联副本保持同色。
                 </p>
               )}
+              {canJoinLayoutRegion(node) && <LayoutRegionMembership graph={graph} node={node} />}
               {isValueNode(node.type) && (
                 <section className="value-link-settings" aria-label="复制规则">
                   <p className="microcopy">
@@ -683,18 +712,16 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
                     <button
                       className="soft-button"
                       aria-label="解除当前节点的值关联"
-                      onClick={() => state.unlinkValue(node.id)}
+                      onClick={() => unlinkValueWithConfirmation(node.id)}
                     >
                       <Unlink size={13} />
-                      解除链接
+                      解除值关联
                     </button>
                   </div>
-                  {boundary && (
-                    <p className="microcopy">解除链接后将产生独立接口；当前外部连线保留。</p>
-                  )}
+                  <p className="microcopy">{unlinkWarning ?? '值关联与分区归属相互独立；此按钮不会将模块移出分区。'}</p>
                 </section>
               )}
-              <section className="port-layout-settings">
+              {!isLayoutRegion(node) && <section className="port-layout-settings">
                 <div className="section-label">端口布局</div>
                 {(['input', 'output'] as const).map((kind) => (
                   <label className="param-field" key={kind}>
@@ -718,7 +745,7 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
                     </select>
                   </label>
                 ))}
-              </section>
+              </section>}
               {(isTensorNode(node.type) || container) && (
                 <section className="tensor-color-settings">
                   <div className="section-label">{namedInput ? '输入边框' : 'Tensor 边框'}</div>
@@ -771,6 +798,7 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
                   <p className="microcopy">修改后记为手工标注，不会改变 Python 模型。运行模式或代码改变后需要重新核实。</p>
                 </section>
               )}
+              {ports(node, registry).outputs.length > 0 && <InformationSourcePanel graph={state.project.graph} />}
               {node.type === 'CalculationGroup' && (
                 <section className="calculation-group-actions">
                   <p className="microcopy">
@@ -817,8 +845,9 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
                 </label>
               )}
               {['SetAttribute', 'GetAttribute'].includes(node.type) && <AttributeBindingPanel node={node} />}
-              {node.type === 'IfRegion' && <IfRegionPanel graph={graph} node={node} />}
-              {!container && node.type !== 'IfRegion' && (
+              {isCodeRegion(node) && <IfRegionPanel graph={graph} node={node} />}
+              {isLayoutRegion(node) && <LayoutRegionPanel graph={graph} node={node} />}
+              {!container && !isCodeRegion(node) && !isLayoutRegion(node) && (
                 <TensorView
                   observeInput={node.type === 'SetAttribute'}
                   result={result?.nodes[node.id]}

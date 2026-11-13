@@ -25,6 +25,7 @@ import {
 import { ReactFlowProvider } from '@xyflow/react';
 import { resolveForwardView } from '@tensor-trail/model-core/core/hierarchy';
 import { inferProject, resultAt } from '@tensor-trail/model-core/core/engine';
+import { forLoopCount } from '@tensor-trail/model-core/core/forLoop';
 import { shapeText } from '@tensor-trail/model-core/core/types';
 import { registry } from '@tensor-trail/model-core/modules/index';
 import { example, type ExampleKind } from '@tensor-trail/model-core/modules/examples';
@@ -32,7 +33,10 @@ import { useEditor } from './editor/store';
 import { Canvas } from './editor/Canvas';
 import { Inspector } from './editor/Inspector';
 import { ForwardHierarchyHelp } from './editor/ForwardHierarchyHelp';
+import { HierarchyNavigation } from './editor/HierarchyNavigation';
 import { ForEachControls } from './editor/ForEachControls';
+import { ForLoopControls } from './editor/ForLoopControls';
+import { LevelInputsBar } from './editor/LevelInputsBar';
 import { graphAt } from '@tensor-trail/model-core/core/graph';
 import { AgentPanel } from './editor/AgentPanel';
 import { NodeLibrary } from './editor/NodeLibrary';
@@ -50,7 +54,8 @@ import {
   loadActiveRuntime,
 } from './editor/platform';
 import { isContainerInput } from '@tensor-trail/model-core/modules/containers';
-import { ifRegionMembers } from '@tensor-trail/model-core/core/ifRegions';
+import { ifRegionMembers, isCodeRegion } from '@tensor-trail/model-core/core/ifRegions';
+import { isLayoutRegion } from '@tensor-trail/model-core/core/layoutRegions';
 
 export default function App() {
   const state = useEditor();
@@ -82,10 +87,10 @@ export default function App() {
     state.selectedIds.length ? state.selectedIds : state.selected ? [state.selected] : [],
   );
   const canCopy = graph.nodes.some((node) => selection.has(node.id));
-  const framed = new Set(graph.nodes.filter(n => n.type === 'IfRegion').flatMap(ifRegionMembers));
-  const regionSelection = graph.nodes.filter(n => selection.has(n.id) && n.type !== 'IfRegion' && !framed.has(n.id));
+  const framed = new Set(graph.nodes.filter(isCodeRegion).flatMap(ifRegionMembers));
+  const regionSelection = graph.nodes.filter(n => selection.has(n.id) && !isCodeRegion(n) && !isLayoutRegion(n) && !framed.has(n.id));
   const owner = state.path.length ? graphAt(state.project.graph, state.path.slice(0, -1)).nodes.find(n => n.id === state.path.at(-1)) : undefined;
-  const loopResult = owner?.type === 'ForEachTensor'
+  const loopResult = owner && ['ForEachTensor', 'ForLoop'].includes(owner.type)
     ? resultAt(rootResult, state.path.slice(0, -1), state.loopSelections)?.nodes[owner.id] : undefined;
   const result = resultAt(rootResult, state.path, state.loopSelections) ?? {
     order: [],
@@ -330,6 +335,9 @@ export default function App() {
               <Redo2 size={17} />
             </button>
           </div>
+          <button className="soft-button" disabled={!state.hasProject}
+            title="创建布局分区；选中模块会移入新分区，不改变计算连接"
+            onClick={() => state.createLayoutRegion([...selection])}>新建分区</button>
           <button className="soft-button" disabled={!regionSelection.length}
             title="将选中节点放入 if 虚线范围框，不移动节点" onClick={() => {
               const frame = registry.create('IfRegion', { members: regionSelection.map(n => n.id).join(',') });
@@ -417,26 +425,7 @@ export default function App() {
         <NodeLibrary searchRef={searchRef} />
         <section className="center-stage">
           <div className="canvas-toolbar">
-            <nav className="breadcrumbs" aria-label="模型层级">
-              <button
-                aria-current={state.path.length === 0 ? 'page' : undefined}
-                onClick={() => state.navigate([])}
-              >
-                <Network size={14} />
-                {forwardView.levels[0].title}
-              </button>
-              {forwardView.levels.slice(1).map((level, i) => (
-                <span key={level.path.join('/')}>
-                  <ChevronRight size={12} />
-                  <button
-                    aria-current={i === state.path.length - 1 ? 'page' : undefined}
-                    onClick={() => state.navigate(level.path)}
-                  >
-                    {level.title}
-                  </button>
-                </span>
-              ))}
-            </nav>
+            <HierarchyNavigation levels={forwardView.levels} onNavigate={state.navigate} />
             <ForwardHierarchyHelp />
             <select
               aria-label="载入示例"
@@ -461,51 +450,55 @@ export default function App() {
           {owner?.type === 'ForEachTensor' && <ForEachControls result={loopResult}
             selected={state.loopSelections[JSON.stringify(state.path)]}
             onSelect={index => state.selectLoopIteration(state.path, index)} />}
+          {owner?.type === 'ForLoop' && <ForLoopControls result={loopResult}
+            count={Number(forLoopCount(owner, loopResult?.inputs))} selected={state.loopSelections[JSON.stringify(state.path)]}
+            onSelect={index => state.selectLoopIteration(state.path, index)} />}
           {owner?.type === 'WhileLoop' && <div className="while-loop-notice" role="note">
             while i &lt; num_points · 一轮符号模板，未执行循环。状态出口反馈给下一轮；虚线为条件依赖，True/False 实际结果未采集。
           </div>}
-          <div className="canvas-region">
-            {state.hasProject && (
-              <div className="canvas-caption">
-                <strong>{forwardView.current.title}</strong>
-                <small>
-                  本层 {graph.nodes.length} 个节点 · {graph.edges.length} 条连接
-                </small>
-              </div>
-            )}
-            <ReactFlowProvider key={`${pathKey}:${state.canvasVersion}`}>
-              <Canvas graph={graph} result={result} step={step} theme={theme} />
-            </ReactFlowProvider>
-            {!state.hasProject && (
-              <div className="canvas-empty-state">
-                <div>
-                  <h2>开始绘制架构</h2>
-                  <p>打开已有项目，或新建一个空白项目。</p>
-                  <div className="canvas-empty-actions">
-                    <button
-                      className="primary-button"
-                      disabled={fileState.busy}
-                      onClick={openProject}
-                    >
-                      <ArrowUpFromLine size={16} />
-                      打开项目
-                    </button>
-                    <button
-                      className="soft-button"
-                      disabled={fileState.busy}
-                      onClick={() => void replaceEditorProject()}
-                    >
-                      <FilePlus2 size={16} />
-                      新建项目
-                    </button>
+          <ReactFlowProvider key={`${pathKey}:${state.canvasVersion}`}>
+            {state.hasProject && <LevelInputsBar graph={graph} root={state.path.length === 0} />}
+            <div className="canvas-region">
+              {state.hasProject && (
+                <div className="canvas-caption">
+                  <strong>{forwardView.current.title}</strong>
+                  <small>
+                    本层 {graph.nodes.length} 个节点 · {graph.edges.length} 条连接
+                  </small>
+                </div>
+              )}
+              <Canvas graph={graph} result={result} step={step} theme={theme} owner={owner} />
+              {!state.hasProject && (
+                <div className="canvas-empty-state">
+                  <div>
+                    <h2>开始绘制架构</h2>
+                    <p>打开已有项目，或新建一个空白项目。</p>
+                    <div className="canvas-empty-actions">
+                      <button
+                        className="primary-button"
+                        disabled={fileState.busy}
+                        onClick={openProject}
+                      >
+                        <ArrowUpFromLine size={16} />
+                        打开项目
+                      </button>
+                      <button
+                        className="soft-button"
+                        disabled={fileState.busy}
+                        onClick={() => void replaceEditorProject()}
+                      >
+                        <FilePlus2 size={16} />
+                        新建项目
+                      </button>
+                    </div>
                   </div>
                 </div>
+              )}
+              <div className="canvas-instruction">
+                左键框选 <span>·</span> 中键平移 <span>·</span> 双击模块进入 forward()
               </div>
-            )}
-            <div className="canvas-instruction">
-              左键框选 <span>·</span> 中键平移 <span>·</span> 双击模块进入 forward()
             </div>
-          </div>
+          </ReactFlowProvider>
           {state.hasProject && (
             <section className={`flow-strip ${flowExpanded ? '' : 'flow-collapsed'}`}>
               <div className="flow-strip-heading">

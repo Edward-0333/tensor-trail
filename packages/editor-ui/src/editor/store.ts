@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type {
   Graph,
   ModelEdge,
+  LoopFeedbackLayout,
   Params,
   PortLayout,
   PortSide,
@@ -13,9 +14,14 @@ import type {
 import { clone, uid, isTensorSpec } from '@tensor-trail/model-core/core/types';
 import { graphAt, graphIssues, markAncestors, ports } from '@tensor-trail/model-core/core/graph';
 import { resolveForwardView } from '@tensor-trail/model-core/core/hierarchy';
+import { forLoopStates } from '@tensor-trail/model-core/core/forLoop';
 import { inferProject, resultAt } from '@tensor-trail/model-core/core/engine';
 import { checkHyperparameterName } from '@tensor-trail/model-core/core/hyperparameters';
 import { parseProject, validateProjectObject } from '@tensor-trail/model-core/core/serialization';
+import {
+  assignLayoutRegion, canJoinLayoutRegion, fitLayoutRegion, isLayoutRegion, moveLayoutNodes, resizeLayoutRegion,
+  type NodeSizes, type RegionRect,
+} from '@tensor-trail/model-core/core/layoutRegions';
 import { checkSnapshotBindings, parseRuntimeSnapshot } from '@tensor-trail/model-core/core/runtimeSnapshot';
 import { registry } from '@tensor-trail/model-core/modules/index';
 import { dimensions } from '@tensor-trail/model-core/modules/math';
@@ -71,6 +77,12 @@ interface EditorState {
   selectLoopIteration: (path: string[], index: number) => void;
   selected: string | null;
   selectedIds: string[];
+  nodeSizes: NodeSizes;
+  setNodeSizes: (sizes: NodeSizes) => void;
+  createLayoutRegion: (ids: string[]) => void;
+  assignLayoutRegion: (ids: string[], region: string | null) => boolean;
+  resizeLayoutRegion: (id: string, rect: RegionRect) => boolean;
+  fitLayoutRegion: (id: string) => boolean;
   clipboard: Graph | null;
   clipboardOrigin: { documentId: string; path: string[]; fragment: Graph } | null;
   unlinkValue: (id: string) => void;
@@ -86,6 +98,7 @@ interface EditorState {
   setTensorPaletteColor: (state: TensorGradState, color: string) => void;
   resetTensorPalette: () => void;
   setTensorAutograd: (id: string, requiresGrad?: boolean) => void;
+  setLineageEnabled: (enabled: boolean) => void;
   past: Project[];
   future: Project[];
   notice: string;
@@ -105,6 +118,7 @@ interface EditorState {
   setEdgeWaypoints: (id: string, points?: ModelEdge['waypoints']) => void;
   setSharedWireWaypoints: (changes: WireRouteChange[]) => boolean;
   setEdgeLabelPosition: (id: string, position?: number) => void;
+  setLoopFeedbackLayout: (state: string, layout?: LoopFeedbackLayout) => boolean;
   move: (id: string, position: { x: number; y: number }) => void;
   finishNodeDrag: (
     positions: { id: string; position: { x: number; y: number } }[],
@@ -156,6 +170,25 @@ export const useEditor = create<EditorState>((set, get) => ({
   },
   selected: null,
   selectedIds: [],
+  nodeSizes: {},
+  setNodeSizes: sizes => {
+    if (JSON.stringify(sizes) !== JSON.stringify(get().nodeSizes)) set({ nodeSizes: sizes });
+  },
+  createLayoutRegion: ids => {
+    let id = '';
+    if (get().edit(graph => {
+      const members = graph.nodes.filter(n => ids.includes(n.id) && canJoinLayoutRegion(n));
+      const region = registry.create('LayoutRegion');
+      region.position = members.length
+        ? { x: Math.min(...members.map(n => n.position.x)) - 24, y: Math.min(...members.map(n => n.position.y)) - 60 }
+        : { x: Math.max(0, ...graph.nodes.map(n => n.position.x + 300)), y: 0 };
+      graph.nodes.push(region); id = region.id;
+      assignLayoutRegion(graph, members.map(n => n.id), id, get().nodeSizes);
+    }, false)) set({ selected: id, selectedIds: [id], notice: '已创建布局分区；可在属性中添加成员，拖动标题整体移动。' });
+  },
+  assignLayoutRegion: (ids, region) => get().edit(graph => assignLayoutRegion(graph, ids, region, get().nodeSizes), false),
+  resizeLayoutRegion: (id, rect) => get().edit(graph => resizeLayoutRegion(graph, id, rect, get().nodeSizes), false),
+  fitLayoutRegion: id => get().edit(graph => fitLayoutRegion(graph, id, get().nodeSizes), false),
   clipboard: null,
   clipboardOrigin: null,
   pasteCount: 0,
@@ -169,7 +202,7 @@ export const useEditor = create<EditorState>((set, get) => ({
   navigate: (path) => {
     try {
       resolveForwardView(get().project.graph, path);
-      set({ path: [...path], selected: null, selectedIds: [] });
+      set({ path: [...path], selected: null, selectedIds: [], nodeSizes: {} });
     } catch (e) {
       set({ notice: (e as Error).message });
     }
@@ -278,6 +311,7 @@ export const useEditor = create<EditorState>((set, get) => ({
       project.tensorPalette = { ...DEFAULT_TENSOR_PALETTE, ...project.tensorPalette, [state]: color };
     }, false),
   resetTensorPalette: () => get().edit((_, project) => { delete project.tensorPalette; }, false),
+  setLineageEnabled: enabled => get().edit((_, project) => { project.lineageEnabled = enabled; }, false),
   setTensorAutograd: (id, requiresGrad) =>
     get().edit((g, project) => {
       const node = valueOwner(g, id);
@@ -376,7 +410,7 @@ export const useEditor = create<EditorState>((set, get) => ({
           (Number.isSafeInteger(node.params[f.key]) && Number(node.params[f.key]) >= (f.min ?? 1)),
       );
       if (def.build && valid) node.subgraph = def.build(node.params);
-    }),
+    }, !graphAt(get().project.graph, get().path).nodes.some(n => n.id === id && isLayoutRegion(n))),
   renameNode: (id, name) => {
     if (name.trim())
       get().edit((g) => {
@@ -445,7 +479,7 @@ export const useEditor = create<EditorState>((set, get) => ({
       if (source && sourcePort && targetPort)
         graph.edges.push({ id: uid(), source: source.id, sourcePort, target: node.id, targetPort });
       added = node.id;
-    });
+    }, type !== 'LayoutRegion' || variantId !== undefined);
     if (committed && added)
       set({
         selected: added,
@@ -467,7 +501,8 @@ export const useEditor = create<EditorState>((set, get) => ({
       set({ notice: '已解除链接；当前输入连线保留，之后可单独修改或重新连接。' });
   },
   removeNodes: (ids) => {
-    const committed = get().edit((_, project) => removeValueNodes(project.graph, get().path, ids));
+    const semantic = graphAt(get().project.graph, get().path).nodes.some(n => ids.includes(n.id) && !isLayoutRegion(n));
+    const committed = get().edit((_, project) => removeValueNodes(project.graph, get().path, ids), semantic);
     if (committed) set({ selected: null, selectedIds: [] });
   },
   removeEdges: (ids) =>
@@ -501,18 +536,29 @@ export const useEditor = create<EditorState>((set, get) => ({
       if (position === undefined) delete edge.labelPosition;
       else edge.labelPosition = position;
     }, false),
+  setLoopFeedbackLayout: (state, layout) =>
+    get().edit((graph, project) => {
+      const path = get().path;
+      const owner = path.length
+        ? graphAt(project.graph, path.slice(0, -1)).nodes.find(n => n.id === path.at(-1)) : undefined;
+      if (owner?.type !== 'ForLoop' || !forLoopStates(owner).includes(state) ||
+          !['Inlet', 'Outlet'].every(type => graph.nodes.filter(n =>
+            n.type === type && n.valueSource === undefined && n.params.port === state).length === 1))
+        throw new Error('当前循环不存在此状态回传线。');
+      if (layout) owner.loopFeedbackRoutes = { ...owner.loopFeedbackRoutes, [state]: clone(layout) };
+      else if (owner.loopFeedbackRoutes) {
+        delete owner.loopFeedbackRoutes[state];
+        if (!Object.keys(owner.loopFeedbackRoutes).length) delete owner.loopFeedbackRoutes;
+      }
+    }, false),
   move: (id, position) =>
     get().edit((graph) => {
-      const node = graph.nodes.find((n) => n.id === id);
-      if (node) node.position = position;
+      moveLayoutNodes(graph, [{ id, position }], get().nodeSizes);
     }, false),
   finishNodeDrag: (positions, merge, routes = []) => {
     let merged: string | undefined;
     const committed = get().edit((graph) => {
-      for (const item of positions) {
-        const node = graph.nodes.find((n) => n.id === item.id);
-        if (node) node.position = { ...item.position };
-      }
+      moveLayoutNodes(graph, positions, get().nodeSizes);
       if (new Set(routes.map((r) => r.id)).size !== routes.length)
         throw new Error('重复的连线布局修改。');
       for (const route of routes) {
@@ -589,8 +635,8 @@ export const useEditor = create<EditorState>((set, get) => ({
       set({ notice: 'ForEach 具有循环收集语义，请复制整个循环模块；不能将循环体单独保存为普通模块变体。' });
       return;
     }
-    if (owner.type === 'WhileLoop') {
-      set({ notice: 'WhileLoop 具有状态反馈语义，请复制整个循环模块；不能把循环体保存为普通模块变体。' });
+    if (['WhileLoop', 'ForLoop'].includes(owner.type)) {
+      set({ notice: `${owner.type} 具有状态反馈语义，请复制整个循环模块；不能把循环体保存为普通模块变体。` });
       return;
     }
     if (owner.type === 'Submodule' && !owner.subgraph.nodes.some((n) => n.type === 'Outlet')) {
@@ -619,6 +665,7 @@ export const useEditor = create<EditorState>((set, get) => ({
         selected: null,
         selectedIds: [],
         notice: '已撤销。',
+        nodeSizes: {},
       });
   },
   redo: () => {
@@ -637,6 +684,7 @@ export const useEditor = create<EditorState>((set, get) => ({
         selected: null,
         selectedIds: [],
         notice: '已重做。',
+        nodeSizes: {},
       });
   },
   load: (project, preserveDocument = false) => {
@@ -648,6 +696,7 @@ export const useEditor = create<EditorState>((set, get) => ({
     set({
       project: loaded,
       loopSelections: {},
+      nodeSizes: {},
       runtimeSnapshot: undefined,
       runtimeError: undefined,
       hasProject: true,

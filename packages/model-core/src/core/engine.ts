@@ -13,9 +13,12 @@ import { clone, isTensorSpec, shapeText } from './types';
 import { graphIssues, orderGraph, ports } from './graph';
 import { normalizeTensorSelection } from './indexingTypes';
 import { annotateTensorOutputs } from './tensorAppearance';
+import { annotateInformationSources } from './informationSources';
+import { rootInputSources } from './rootInputs';
 import { activeRuntimeSnapshot, checkSnapshotBindings } from './runtimeSnapshot';
 import { inferForEach, loopIteration, type LoopSelections } from './forEach';
 import { inferWhile } from './whileLoop';
+import { inferForLoop } from './forLoop';
 import { planAttributes, type AttributeContext } from './attributes';
 
 export function inferGraph(
@@ -28,6 +31,7 @@ export function inferGraph(
   path: string[] = [],
   budget = { remaining: 20000 },
   attributeContext?: AttributeContext,
+  lineageEnabled = false,
 ): GraphResult {
   const result: GraphResult = { order: [], nodes: {}, outputs: {}, issues: [] };
   if (depth > 12) {
@@ -45,6 +49,7 @@ export function inferGraph(
   if (result.issues.length) return result;
   result.order = orderGraph(graph, implicit);
   const byId = new Map(graph.nodes.map((n) => [n.id, n]));
+  const roots = new Map((lineageEnabled && depth === 0 && path.length === 0 ? rootInputSources(graph) : []).map(source => [source.id, source]));
   for (const id of result.order) {
     const stored = byId.get(id)!;
     // Also accept legacy nodes passed directly to inference, without mutating the graph.
@@ -147,14 +152,17 @@ export function inferGraph(
         if (!value) throw new Error(`属性 ${binding.name} 尚无有效写入结果；请检查对应 SET 的上游数据。`);
         r.outputs = { out: clone(value) };
         r.notes = [`从属性 ${JSON.stringify(binding.owner)}.${binding.name} 的唯一 SET 读取同一个 Tensor 引用。`, '只复制规格以隔离编辑，不代表 Python 中 clone；保留上游形状和梯度标注，不新增 forward 参数。'];
+      } else if (node.type === 'ForLoop' && node.subgraph) {
+        Object.assign(r, inferForLoop(node, r.inputs, external =>
+          inferGraph(node.subgraph!, registry, external, depth + 1, hyperparameters, runtime, [...path, id], budget, attributes, lineageEnabled)));
       } else if (node.type === 'WhileLoop' && node.subgraph) {
         Object.assign(r, inferWhile(node, r.inputs, external =>
-          inferGraph(node.subgraph!, registry, external, depth + 1, hyperparameters, runtime, [...path, id], budget, attributes)));
+          inferGraph(node.subgraph!, registry, external, depth + 1, hyperparameters, runtime, [...path, id], budget, attributes, lineageEnabled), lineageEnabled));
       } else if (node.type === 'ForEachTensor' && node.subgraph) {
         Object.assign(r, inferForEach(node.subgraph, r.inputs, external =>
-          inferGraph(node.subgraph!, registry, external, depth + 1, hyperparameters, runtime, [...path, id], budget, attributes)));
+          inferGraph(node.subgraph!, registry, external, depth + 1, hyperparameters, runtime, [...path, id], budget, attributes, lineageEnabled)));
       } else if (node.subgraph) {
-        r.child = inferGraph(node.subgraph, registry, r.inputs, depth + 1, hyperparameters, runtime, [...path,id], budget, attributes);
+        r.child = inferGraph(node.subgraph, registry, r.inputs, depth + 1, hyperparameters, runtime, [...path,id], budget, attributes, lineageEnabled);
         const failures = Object.entries(r.child.nodes).filter(
           ([, v]) => v.status === 'error' || v.status === 'blocked',
         );
@@ -198,6 +206,7 @@ export function inferGraph(
         r.outputs = { out: clone(observed.value) };
         r.notes.push(`运行快照：${runtime!.name} · ${runtime!.capturedAt}；不修改静态图。`);
       } else r.outputs = annotateTensorOutputs(node, r.inputs, r.outputs);
+      if (lineageEnabled) r.outputs = annotateInformationSources(node, r.inputs, r.outputs, roots.get(id));
       if (node.type === 'SetAttribute') {
         const binding = attributes.plan.bindings.get(attributePath)!;
         attributes.values.set(binding.key, clone(tensorInputs.in));
@@ -220,7 +229,7 @@ export function inferProject(project: Project, registry: Registry, loaded?: Runt
     try { checkSnapshotBindings(project,runtime); }
     catch(error) { return {order:[],nodes:{},outputs:{},issues:[(error as Error).message]}; }
   }
-  const result = inferGraph(project.graph, registry, {}, 0, project.hyperparameters ?? {}, runtime);
+  const result = inferGraph(project.graph, registry, {}, 0, project.hyperparameters ?? {}, runtime, [], undefined, undefined, project.lineageEnabled === true);
   if (project.runtime?.active && !runtime) result.issues.push('选中的运行快照尚未加载；当前仅有静态图信息，请在“运行数据”中加载快照或切换为静态图。');
   return result;
 }

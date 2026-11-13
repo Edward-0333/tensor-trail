@@ -1,4 +1,5 @@
-import type { DictionarySpec, Dim, TensorSpec, NoneSpec } from './types';
+import type { DictionarySpec, Dim } from './types';
+import { isTensorSpec } from './types';
 import { validateAutograd } from './tensorAppearance';
 
 export const DICTIONARY_SCHEMA_LIMIT = 64_000;
@@ -75,12 +76,25 @@ export function parseDictionarySchema(text: unknown): DictionarySpec {
     catch { throw new Error('字典结构描述格式无效。'); }
   } else source = text;
   let count = 0;
-  const walk = (value: unknown, depth: number): DictionarySpec | TensorSpec | NoneSpec => {
+  const walk = (value: unknown, depth: number): DictionarySpec['fields'][string] => {
     check(++count <= 256 && depth <= 8, '字典最多 256 个条目、8 层嵌套。');
-    check(record(value), '字段必须是字典或 Tensor 描述。');
+    check(record(value), '字段必须是字典、Tensor、Tensor 序列或 None 描述。');
     if (value.kind === 'none') {
       check(Object.keys(value).length === 1, 'None 描述只包含 kind="none"。');
       return { kind: 'none' };
+    }
+    if (value.kind === 'list' || value.kind === 'tuple') {
+      check(
+        Object.keys(value).every((key) => ['kind', 'items'].includes(key)) && Array.isArray(value.items),
+        'Tensor 序列描述需要 kind="list" / "tuple" 和 items。',
+      );
+      check(value.items.length <= 256, 'Tensor 序列最多 256 个元素，仍受字典总条目数限制。');
+      const items = value.items.map((item) => {
+        const child = walk(item, depth + 1);
+        check(isTensorSpec(child), 'Tensor 序列的每个元素必须是 Tensor 描述。');
+        return child;
+      });
+      return { kind: value.kind, items };
     }
     if (value.kind === 'dict') {
       check(

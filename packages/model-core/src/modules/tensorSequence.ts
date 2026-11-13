@@ -29,6 +29,8 @@ function sequencePorts(p: Params) {
 }
 
 export function tensorSequenceCode(node: ModelNode): string | undefined {
+  if (node.type === 'TensorListAppend')
+    return 'items.append(item)\nout = items\n# 输出表示 append 后的列表状态；保留各元素 shape/梯度，不做 stack/concat。';
   if (node.type === 'TensorSequenceGet')
     return `out = items[${node.params.index}]\n# 读取 list/tuple 中已有的 Tensor，保留其形状、类型和梯度标注。\n# 不是 Tensor 轴索引，不移除 Tensor 的 batch 轴，也不 stack 或复制真实张量。`;
   if (node.type !== 'TensorSequencePack') return;
@@ -88,5 +90,17 @@ export const tensorSequenceGet: ModuleDefinition = {
       outputs: { out: clone(tensorValue(source.items[index < 0 ? index + count : index])) },
       notes: [`读取 ${source.kind}[${index}]；不移除 Tensor 轴，不创建新的真实 Tensor。`],
     };
+  },
+};
+
+export const tensorListAppend: ModuleDefinition = {
+  type: 'TensorListAppend', label: 'append', category: '组合计算',
+  description: '向 Tensor 列表追加一个元素，输出更新后的列表规格；不堆叠，不复制真实 Tensor。',
+  fields: [], inputs: [{ id: 'items', label: 'list' }, { id: 'item', label: 'Tensor' }], outputs: output,
+  inferValue: ({ items, item }) => {
+    requireThat(items && isTensorSequenceSpec(items) && items.kind === 'list', 'append 需要 Tensor list。');
+    requireThat(items.items.length < 256, 'append 结果最多支持 256 个 Tensor。');
+    return { outputs: { out: { kind: 'list', items: [...clone(items.items), clone(tensorValue(item))] } },
+      notes: ['列表状态更新，保留元素的独立形状、梯度和信息来源；不模拟 Python 对象身份。'] };
   },
 };

@@ -74,7 +74,7 @@ export function planAttributes(root: Graph): AttributePlan {
     for (const node of graph.nodes) {
       const path = [...scope, node.id];
       if (attributeTypes.has(node.type)) entries.push({ node, path, inLoop });
-      if (node.subgraph) walk(node.subgraph, path, inLoop || node.type === 'ForEachTensor');
+      if (node.subgraph) walk(node.subgraph, path, inLoop || ['ForEachTensor', 'ForLoop', 'WhileLoop'].includes(node.type));
     }
   };
   walk(root);
@@ -86,15 +86,15 @@ export function planAttributes(root: Graph): AttributePlan {
       let graph = root;
       for (const id of binding.owner) {
         const owner = graph.nodes.find((node) => node.id === id);
-        if (!owner?.subgraph || owner.type === 'ForEachTensor')
+        if (!owner?.subgraph || ['ForEachTensor', 'ForLoop', 'WhileLoop'].includes(owner.type))
           throw new Error(
             `属性所属模块路径不存在，或目标不是模块子图：${binding.owner.join('/')}。`,
           );
         graph = owner.subgraph;
       }
       if (entry.inLoop && entry.node.type === 'SetAttribute') {
-        plan.issues.push('暂不支持 ForEach 循环体中的模块属性写入。');
-        throw new Error('暂不支持在 ForEach 循环体中写入模块属性；循环内可读取外部已写入的属性。');
+        plan.issues.push('暂不支持 For/ForEach/While 循环体中的模块属性写入。');
+        throw new Error('暂不支持在 For/ForEach/While 循环体中写入模块属性；循环内可读取外部已写入的属性。');
       }
       plan.bindings.set(key, binding);
       if (entry.node.type === 'SetAttribute') {

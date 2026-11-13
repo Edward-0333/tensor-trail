@@ -116,10 +116,18 @@ export function getSchemas() {
   );
   const path = { type: 'array', maxItems: 12, items: identifier };
   const ops = [
+    object({ op: { const: 'assign_region' }, path, ids: { type: 'array', minItems: 1, maxItems: 500, uniqueItems: true, items: identifier },
+      region: { anyOf: [identifier, { type: 'null' }] } }, ['op', 'ids', 'region']),
+    object({ op: { const: 'fit_region' }, path, id: identifier }, ['op', 'id']),
+    object({ op: { const: 'resize_region' }, path, id: identifier, position,
+      width: { type: 'number', minimum: 360, maximum: 1000000 }, height: { type: 'number', minimum: 200, maximum: 1000000 } }, ['op', 'id', 'width', 'height']),
     object({ op: { const: 'add_node' }, path, node: { $ref: '#/$defs/node' } }, ['op', 'node']),
     object({ op: { const: 'replace_node' }, path, id: identifier, node: { $ref: '#/$defs/node' } }, ['op', 'id', 'node']),
     object({ op: { const: 'duplicate_linked' }, path, source: identifier, id: identifier, position }, ['op', 'source', 'id']),
+    object({ op: { const: 'link_value' }, path, source: identifier, id: identifier }, ['op', 'source', 'id']),
     object({ op: { const: 'remove_node' }, path, id: identifier }, ['op', 'id']),
+    object({ op: { const: 'set_lineage_enabled' }, enabled: { type: 'boolean' } }, ['op', 'enabled']),
+    object({ op: { const: 'set_information_source' }, path, id: identifier, source: { type: 'null', description: '仅用于清除旧声明；输入来源由根层接口自动编号。' } }, ['op', 'id', 'source']),
     object(
       {
         op: { const: 'set_params' },

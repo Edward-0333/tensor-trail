@@ -50,9 +50,13 @@ function Grid({ x, y, columns, rows }: { x: number; y: number; columns: number; 
 
 function diagram(type: string): { label: string; content: ReactNode } {
   switch (type) {
+    case 'LayoutRegion':
+      return { label: '圆角布局分区', content: <><rect x="12" y="18" width="76" height="64" rx="12" /><path d="M12 36h76" />
+        <rect x="24" y="47" width="20" height="20" rx="3" /><rect x="56" y="47" width="20" height="20" rx="3" /></> };
     case 'Linear':
       return { label: '全连接映射', content: <DenseLayers layers={[3, 3]} /> };
     case 'FFN':
+    case 'MMCVFFNContract':
       return { label: '升维与降维的前馈网络', content: <DenseLayers layers={[2, 4, 2]} /> };
     case 'MultiheadAttention':
       return {
@@ -176,6 +180,85 @@ function diagram(type: string): { label: string; content: ReactNode } {
             <Grid x={9} y={10} columns={2} rows={3} />
             <path d="M35 24H53M49 20L53 24L49 28" />
             <Grid x={62} y={15} columns={3} rows={2} />
+          </>
+        ),
+      };
+    case 'BooleanIndexAxis':
+      return {
+        label: '按布尔条件保留整项并保持顺序（筛选示意）',
+        content: (
+          <>
+            <rect x="6" y="4" width="24" height="7" rx="1.5" className="glyph-fill" />
+            <rect x="6" y="16" width="24" height="7" rx="1.5" opacity="0.25" />
+            <rect x="6" y="28" width="24" height="7" rx="1.5" className="glyph-fill" />
+            <rect x="6" y="40" width="24" height="5" rx="1.5" opacity="0.25" />
+            <path d="M37 24H56M51 19L56 24L51 29" />
+            <rect x="64" y="13" width="26" height="8" rx="1.5" className="glyph-fill" />
+            <rect x="64" y="28" width="26" height="8" rx="1.5" className="glyph-fill" />
+          </>
+        ),
+      };
+    case 'Detach':
+      return {
+        label: '数据继续传递，梯度在此截断',
+        content: (
+          <>
+            <path d="M8 12H88M81 5L88 12L81 19" />
+            <path d="M88 36H56" strokeDasharray="5 4" />
+            <path d="M63 29L56 36L63 43M48 27V45" />
+            <path d="M34 36H8" strokeDasharray="5 4" opacity="0.25" />
+          </>
+        ),
+      };
+    case 'DictionaryPack':
+      return {
+        label: '按字段名组装字典，不堆叠或融合张量',
+        content: (
+          <>
+            <path d="M6 10H22M6 24H22M6 38H22" />
+            <path d="M28 10H40M36 6L40 10L36 14M28 24H40M36 20L40 24L36 28M28 38H40M36 34L40 38L36 42" opacity="0.65" />
+            <path d="M53 4H50Q47 4 47 8V17Q47 24 43 24Q47 24 47 31V40Q47 44 50 44H53M81 4H84Q87 4 87 8V17Q87 24 91 24Q87 24 87 31V40Q87 44 84 44H81" />
+            <path d="M57 10H62M70 10H79M57 24H62M70 24H79M57 38H62M70 38H79" />
+            <g fill="currentColor" stroke="none">
+              <circle cx="66" cy="10" r="1" />
+              <circle cx="66" cy="24" r="1" />
+              <circle cx="66" cy="38" r="1" />
+            </g>
+          </>
+        ),
+      };
+    case 'DictionaryGet':
+      return {
+        label: '按键读取字典字段',
+        content: (
+          <>
+            <path d="M14 5H11Q8 5 8 9V17Q8 24 4 24Q8 24 8 31V39Q8 43 11 43H14M48 5H51Q54 5 54 9V17Q54 24 58 24Q54 24 54 31V39Q54 43 51 43H48" opacity="0.5" />
+            <g opacity="0.35">
+              <path d="M20 11H27M34 11H44M20 37H27M34 37H44" />
+              <circle cx="30" cy="11" r="0.7" />
+              <circle cx="30" cy="37" r="0.7" />
+            </g>
+            <path d="M20 24H27" />
+            <circle cx="30" cy="24" r="0.7" />
+            <rect x="34" y="20" width="10" height="8" rx="1.5" className="glyph-fill" />
+            <path d="M60 24H72M67 19L72 24L67 29" />
+            <rect x="78" y="18" width="12" height="12" rx="2" />
+          </>
+        ),
+      };
+    case 'TensorSequenceGet':
+      return {
+        label: '从 list/tuple 中按索引取一个 Tensor',
+        content: (
+          <>
+            <path d="M13 5H8V43H13M49 5H54V43H49" opacity="0.5" />
+            <g opacity="0.35">
+              <rect x="18" y="8" width="26" height="6" rx="1.5" />
+              <rect x="18" y="34" width="26" height="6" rx="1.5" />
+            </g>
+            <rect x="18" y="21" width="26" height="6" rx="1.5" className="glyph-fill" />
+            <path d="M48 24H72M67 19L72 24L67 29" />
+            <rect x="78" y="18" width="12" height="12" rx="2" />
           </>
         ),
       };

@@ -2,7 +2,8 @@ import type { Graph, ModelEdge, ModelNode, Registry } from './types';
 import { clone, uid } from './types';
 import { orderGraph, ports } from './graph';
 import { isCalculation } from '../modules/libraryCategories';
-import { ifRegionMembers } from './ifRegions';
+import { ifRegionMembers, isCodeRegion } from './ifRegions';
+import { isLayoutRegion, layoutRegionOf, layoutRegionOutputs } from './layoutRegions';
 
 const boundary = (node: ModelNode) => ['Inlet', 'Outlet'].includes(node.type);
 const key = (node: string, port: string) => JSON.stringify([node, port]);
@@ -15,8 +16,9 @@ export function canMergeCalculations(
   registry: Registry,
 ): boolean {
   if (a === b) return false;
-  const regionOf = (id: string) => graph.nodes.find(n => n.type === 'IfRegion' && ifRegionMembers(n).includes(id))?.id;
+  const regionOf = (id: string) => graph.nodes.find(n => isCodeRegion(n) && ifRegionMembers(n).includes(id))?.id;
   if (regionOf(a) !== regionOf(b)) return false;
+  if (layoutRegionOf(graph, a)?.id !== layoutRegionOf(graph, b)?.id) return false;
   const members = new Set([a, b]);
   if (
     [a, b].some(
@@ -129,8 +131,14 @@ export function splitCalculationGroup(graph: Graph, id: string): string[] {
       edges.push({ id: edge.id, ...source, target: edge.target, targetPort: edge.targetPort });
   }
   graph.nodes = [...graph.nodes.filter((n) => n.id !== id), ...nodes];
-  for (const region of graph.nodes.filter(n => n.type === 'IfRegion'))
+  for (const region of graph.nodes.filter(n => isCodeRegion(n) || isLayoutRegion(n))) {
     region.params.members = ifRegionMembers(region).flatMap(member => member === id ? nodes.map(n => n.id) : [member]).join(',');
+    if (isLayoutRegion(region) && region.params.outputs !== undefined) {
+      const outlets = new Set(child.nodes.filter(n => n.type === 'Outlet').map(n => n.id));
+      const exposed = [...new Set(child.edges.filter(e => outlets.has(e.target)).flatMap(e => ids.has(e.source) ? [ids.get(e.source)!] : []))];
+      region.params.outputs = layoutRegionOutputs(region).flatMap(member => member === id ? exposed : [member]).join(',');
+    }
+  }
   graph.edges = edges;
   return nodes.map((n) => n.id);
 }
@@ -245,10 +253,15 @@ export function mergeCalculations(
       customized: true,
     },
   ];
-  for (const region of graph.nodes.filter(n => n.type === 'IfRegion')) {
+  for (const region of graph.nodes.filter(n => isCodeRegion(n) || isLayoutRegion(n))) {
     const contained = ifRegionMembers(region);
     if (contained.some(member => selected.has(member)))
       region.params.members = [...contained.filter(member => !selected.has(member)), id].join(',');
+    if (isLayoutRegion(region) && region.params.outputs !== undefined) {
+      const outputs = layoutRegionOutputs(region);
+      if (outputs.some(member => selected.has(member)))
+        region.params.outputs = [...outputs.filter(member => !selected.has(member)), id].join(',');
+    }
   }
   return id;
 }

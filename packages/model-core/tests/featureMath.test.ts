@@ -81,6 +81,27 @@ describe('Cos / Sin', () => {
   });
 });
 
+describe('IntegerFloorDivide', () => {
+  const divide = rule('IntegerFloorDivide').inferValue!;
+  it.each([
+    [256, 4, 64], [7, 3, 2], [-7, 3, -3], [7, -3, -3], [-7, -3, 2],
+    [0, -3, 0], [-6, 3, -2], [Number.MAX_SAFE_INTEGER, 3, 3002399751580330],
+  ])('computes %s // %s = %s using floor division', (a, b, expected) => {
+    expect(divide({ a: integer(a), b: integer(b) }, {}).outputs.out).toEqual(integer(expected));
+  });
+  it('keeps symbolic dimensions without inventing a concrete count', () => {
+    const result = divide({ a: integer('GC'), b: integer('G') }, {});
+    expect(result.outputs.out).toEqual(integer('(GC) // (G)'));
+    expect(result.warnings).toHaveLength(1);
+  });
+  it('rejects a zero divisor and non-integer inputs', () => {
+    expect(() => divide({ a: integer(256), b: integer(0) }, {})).toThrow('不能为 0');
+    expect(() => divide({ a: tensor([]), b: integer(4) }, {})).toThrow('局部整数');
+    expect(() => divide({ a: integer(1.5), b: integer(4) }, {})).toThrow('安全整数');
+    expect(() => divide({ a: integer(256) }, {})).toThrow('b');
+  });
+});
+
 describe('局部整数乘法', () => {
   it('计算 bs × A 并保留负整数、符号与零乘积', () => {
     expect(multiply({ a: integer(2), b: integer(49) }, {}).outputs.out).toEqual(integer(98));

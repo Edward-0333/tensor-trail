@@ -51,6 +51,7 @@ export function tensorInk(background: string): string {
 }
 
 const valueReads = new Set([
+  'TensorFieldContract', 'ArrayToTensorExplicit', 'SelectValue', 'TensorToDevice', 'ZerosLike',
   'Input',
   'Inlet',
   'Outlet',
@@ -67,17 +68,27 @@ const valueReads = new Set([
   'GetAttribute',
   // This factory declares its own requires_grad, independently of its reference.
   'NewZeros',
+  'NewOnes',
   'BufferSource',
   'OnesScaled',
   'Arange',
+  'Detach',
+  'NoGradResult',
+  'BatchMetaTensor',
+  'ArrayToTensor',
   'TensorRowAt', 'Argmax', 'ScalarIndexWrite', 'TensorEqualInt',
   'BranchValue', 'ZeroTailColumn', 'SliceRowsFrom', 'WriteTailRows', 'MergeBranches',
 ]);
 const shapeOnly = new Set([
+  'Unflatten', 'DynamicSlice', 'ReshapeLike',
+  'BooleanIndexAxis',
+  'PointRangeTransform',
+  'ReduceMean',
   'View',
   'Reshape',
   'Permute',
   'Contiguous',
+  'ExpandAs',
   'Flatten',
   'Unsqueeze',
   'Squeeze',
@@ -87,7 +98,7 @@ const shapeOnly = new Set([
   'AlignTrailingDims',
   'Cast',
 ]);
-const parameterFreeMath = new Set(['ReduceSum', 'Divide', 'Concat', 'SortRowsByMax', 'MaxWithIndices', 'Sort', 'RowIndex']);
+const parameterFreeMath = new Set(['MatrixInverse', 'Exp', 'Softplus', 'L2Norm', 'Add', 'Mul', 'Subtract', 'Dropout', 'Function', 'NanToNum', 'MatMul', 'ReduceSum', 'Divide', 'Concat', 'SortRowsByMax', 'MaxWithIndices', 'Sort', 'RowIndex']);
 
 /** Conservative metadata propagation, not a PyTorch autograd simulator. */
 export function annotateTensorOutputs(

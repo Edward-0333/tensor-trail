@@ -172,6 +172,35 @@ async function run() {
     );
     assert.equal((await model()).graph.nodes.length, fixture.graph.nodes.length);
     cases.push('unicode-bom-open');
+    const inputIds = fixture.graph.nodes
+      .filter(node => node.valueSource === undefined && ['Input', 'ForwardInput', 'DictionaryInput'].includes(node.type))
+      .map(node => node.id);
+    await until(async () => (await js("document.querySelectorAll('.level-inputs-list button').length")) === inputIds.length,
+      'Root input navigation did not match actual inputs');
+    assert.deepEqual(await js("[...document.querySelectorAll('.level-inputs-list button')].map(b=>b.dataset.inputId)"), inputIds);
+    assert.equal(await js("document.querySelectorAll('.level-input-badge').length"), inputIds.length);
+    const beforeInputNavigation = await js('window.tensorTrail.getModel()');
+    await js(`document.querySelector('[data-input-id="${inputIds[0]}"]').click()`);
+    await until(async () => await js(`document.querySelector('[data-input-id="${inputIds[0]}"]').getAttribute('aria-pressed') === 'true' && !!document.querySelector('.react-flow__node[data-id="${inputIds[0]}"].selected')`),
+      'Input navigation did not select the original node');
+    assert.deepEqual(await js('window.tensorTrail.getModel()'), beforeInputNavigation);
+    assert.ok(clean(), 'Input navigation must not mark the document dirty');
+    cases.push('input-badges', 'input-navigation-no-document-edit');
+    await js(`document.querySelector('[aria-label="显示信息来源"]').click()`);
+    await until(async () => (await model()).lineageEnabled === true && await js(`!!document.querySelector('[data-testid="node-${inputIds[0]}"] .lineage-badges')`),
+      'Information source toggle did not enable badges');
+    for (const [index, id] of inputIds.entries()) {
+      assert.equal(await js(`document.querySelector('[data-testid="node-${id}"] .lineage-source').textContent`), String(index + 1));
+      assert.equal(await js(`document.querySelector('[data-testid="node-${id}"] .lineage-source').dataset.sourceId`), id);
+    }
+    assert.equal(await js(`document.querySelector('[aria-label="信息来源声明"]') === null`), true);
+    assert.equal((await model()).graph.nodes.find(n => n.id === inputIds[0]).informationSource, undefined);
+    assert.equal(await js("document.querySelectorAll('.level-input-badge').length"), inputIds.length);
+    menuClick('撤销');
+    await until(async () => !(await model()).lineageEnabled && await js("document.querySelectorAll('.lineage-badges').length === 0"),
+      'Undo did not disable source badges');
+    assert.deepEqual(await model(), beforeInputNavigation.project);
+    cases.push('input-source-toggle', 'root-input-auto-numbering', 'input-source-undo');
     await rename('原路径保存');
     const before = commits.filter((x) => x === original).length;
     press('S');

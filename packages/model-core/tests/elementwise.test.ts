@@ -174,7 +174,7 @@ describe('逐元素运算与掩码维度对齐', () => {
       const source = spec(shape, dtype),
         before = structuredClone(source);
       const result = out('ZerosLike', { in: source });
-      expect(result).toEqual(source);
+      expect(result).toEqual({ ...source, autograd: { requiresGrad: false, source: 'inferred' } });
       expect(result.shape).not.toBe(source.shape);
       expect(result.axes).not.toBe(source.axes);
       expect(source).toEqual(before);

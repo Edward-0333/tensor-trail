@@ -147,7 +147,8 @@ export const elementwiseModules: ModuleDefinition[] = [
     outputs: output,
     infer: ({ in: value }) => {
       const source = checked(value);
-      return { outputs: { out: tensor([...source.shape], [...source.axes], source.dtype) } };
+      return { outputs: { out: { ...tensor([...source.shape], [...source.axes], source.dtype),
+        autograd: { requiresGrad: false, source: 'inferred' } } } };
     },
   },
   {

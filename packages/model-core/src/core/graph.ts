@@ -2,10 +2,13 @@ import type { Graph, ModelNode, Port, Registry } from './types';
 import { valueLinkIssues } from './valueLinks';
 import { forEachPorts } from './forEach';
 import { whilePorts } from './whileLoop';
+import { forLoopPorts } from './forLoop';
 import { ifRegionIssues } from './ifRegions';
+import { layoutRegionIssues } from './layoutRegions';
 
 export function ports(node: ModelNode, registry: Registry): { inputs: Port[]; outputs: Port[] } {
   if (node.type === 'ForEachTensor') return forEachPorts(node);
+  if (node.type === 'ForLoop') return forLoopPorts(node);
   if (node.type === 'WhileLoop') return whilePorts(node);
   if (node.subgraph) {
     const boundary = (type: string) =>
@@ -53,7 +56,7 @@ export function orderGraph(graph: Graph, implicit: { source: string; target: str
 }
 
 export function graphIssues(graph: Graph, registry: Registry, implicit: { source: string; target: string }[] = []): string[] {
-  const issues: string[] = [...valueLinkIssues(graph), ...ifRegionIssues(graph)];
+  const issues: string[] = [...valueLinkIssues(graph), ...ifRegionIssues(graph), ...layoutRegionIssues(graph)];
   const nodes = new Map(graph.nodes.map((n) => [n.id, n]));
   if (nodes.size !== graph.nodes.length) issues.push('节点 ID 重复。');
   const occupied = new Set<string>();

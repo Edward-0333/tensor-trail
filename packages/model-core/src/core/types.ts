@@ -5,11 +5,33 @@ export interface TensorAutograd {
 }
 export type TensorGradState = 'on' | 'off' | 'unknown';
 export type TensorPalette = Record<TensorGradState, string>;
+export interface RootInputSource {
+  /** Stable node identity; the display number follows root interface order, not layout. */
+  id: string;
+  index: number;
+  label: string;
+}
+export type ValueOrigin = 'parameter' | 'constant' | 'random' | 'state' | 'metadata';
+export type InitializationKind = 'random' | 'zeros' | 'ones' | 'checkpoint';
+/** Legacy declarations are read for compatibility, never used to assign source IDs. */
+export interface InformationSource {
+  kind: 'image' | 'ego' | 'input' | 'metadata' | 'target' | ValueOrigin | 'unknown';
+  initialization?: InitializationKind;
+}
+/** Static value dependencies, not gradient flow, tensor contents or feature quality. */
+export interface ValueLineage {
+  sources: RootInputSource[];
+  origins: ValueOrigin[];
+  initializations: InitializationKind[];
+  unknown: boolean;
+  evidence: 'root' | 'inferred';
+}
 export interface TensorSpec {
   shape: Dim[];
   axes: string[];
   dtype: string;
   autograd?: TensorAutograd;
+  lineage?: ValueLineage;
   /** Registered parameter reference, not inherited by derived Tensor operations. */
   parameterRef?: { module: string; name: string };
   /** Registration role of a held module buffer, not a Tensor subclass. */
@@ -30,7 +52,7 @@ export interface DictionarySpec {
   kind: 'dict';
   /** JSON field names stay strings; this preserves the original Python key type. */
   keyType?: 'str' | 'int';
-  fields: Record<string, TensorSpec | DictionarySpec | NoneSpec>;
+  fields: Record<string, TensorSpec | DictionarySpec | TensorSequenceSpec | NoneSpec>;
 }
 /** Python values used by control flow; distinct from scalar tensors. */
 export interface BooleanSpec {
@@ -61,17 +83,29 @@ export interface SizeSpec {
   kind: 'size';
   dims: Dim[];
 }
-/** A symbolic torch.device read, not a Tensor or an observed CUDA/CPU placement. */
+/** A symbolic device read or explicit torch.device literal; not a Tensor or runtime observation. */
 export interface DeviceSpec {
   kind: 'device';
   reference: string;
+}
+/** Static NumPy array description, deliberately not a TensorSpec. */
+export interface NumpyArraySpec {
+  kind: 'ndarray';
+  dims: Dim[];
+  axes: string[];
+  dtype: string;
+}
+/** torch.dtype metadata, read from a Tensor or explicitly declared; not tensor contents. */
+export interface DtypeSpec {
+  kind: 'dtype';
+  value: string;
 }
 /** Ordered Tensor references with independent shapes; not a stacked Tensor. */
 export interface TensorSequenceSpec {
   kind: 'tuple' | 'list';
   items: TensorSpec[];
 }
-export type ValueSpec =
+export type ValueSpec = (
   | TensorSpec
   | ContainerSpec
   | DictionarySpec
@@ -80,10 +114,12 @@ export type ValueSpec =
   | ControlSpec
   | SizeSpec
   | DeviceSpec
+  | NumpyArraySpec
+  | DtypeSpec
   | TensorSequenceSpec
   | ModuleSpec
   | BooleanSpec
-  | NoneSpec;
+  | NoneSpec) & { lineage?: ValueLineage };
 export const isTensorSpec = (value: ValueSpec): value is TensorSpec => 'shape' in value;
 export const isModuleSpec = (value: ValueSpec): value is ModuleSpec =>
   !isTensorSpec(value) && value.kind === 'module';
@@ -97,6 +133,10 @@ export const isSizeSpec = (value: ValueSpec): value is SizeSpec =>
   !isTensorSpec(value) && value.kind === 'size';
 export const isDeviceSpec = (value: ValueSpec): value is DeviceSpec =>
   !isTensorSpec(value) && value.kind === 'device';
+export const isNumpyArraySpec = (value: ValueSpec): value is NumpyArraySpec =>
+  !isTensorSpec(value) && value.kind === 'ndarray';
+export const isDtypeSpec = (value: ValueSpec): value is DtypeSpec =>
+  !isTensorSpec(value) && value.kind === 'dtype';
 export const isTensorSequenceSpec = (value: ValueSpec): value is TensorSequenceSpec =>
   !isTensorSpec(value) && (value.kind === 'tuple' || value.kind === 'list') && 'items' in value;
 export const isDictionarySpec = (value: ValueSpec): value is DictionarySpec =>
@@ -121,6 +161,12 @@ export interface PortLayout {
   input?: PortSide;
   output?: PortSide;
 }
+/** Layout only: these return paths never belong to the executable edge graph. */
+export interface LoopFeedbackLayout {
+  targetSide: 'left' | 'right';
+  waypoints: { x: number; y: number }[];
+  labelPosition?: number;
+}
 export interface Port {
   id: string;
   label: string;
@@ -143,11 +189,14 @@ export interface ModelNode {
   params: Params;
   position: { x: number; y: number };
   portLayout?: PortLayout;
+  loopFeedbackRoutes?: Record<string, LoopFeedbackLayout>;
   /** Legacy background color; migrated to tensorBorderColor on load. */
   tensorColor?: string;
   tensorBorderColor?: string;
   /** Explicit annotation for the single out Tensor, not an executed backward. */
   tensorAutograd?: TensorAutograd;
+  /** Legacy semantic annotation, retained for compatibility but ignored by provenance. */
+  informationSource?: InformationSource;
   /** Another placement of the same value, owned by a canonical node in this graph. */
   valueSource?: string;
   /** Called module's forward, a helper function body, or an explicitly merged calculation group. */
@@ -228,6 +277,8 @@ export interface Project {
   name: string;
   hyperparameters?: Hyperparameters;
   tensorPalette?: TensorPalette;
+  /** Opt in to conservative information-source propagation; old projects remain unchanged. */
+  lineageEnabled?: boolean;
   runtime?: {
     active?: string;
     snapshots: RuntimeReference[];
@@ -269,6 +320,10 @@ export const shapeText = (s?: ValueSpec) =>
         ? `list[int] · [${s.values.join(', ')}]`
       : isDeviceSpec(s)
         ? `Device · ${s.reference}`
+      : isNumpyArraySpec(s)
+        ? `np.ndarray [${s.dims.join(', ')}] · ${s.dtype === 'unknown' ? 'dtype 未采集' : s.dtype}`
+      : isDtypeSpec(s)
+        ? `torch.${s.value}`
       : isModuleSpec(s)
         ? `Module · ${s.moduleType}`
         : isTensorSequenceSpec(s)

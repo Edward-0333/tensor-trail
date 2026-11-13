@@ -12,12 +12,14 @@ import { graphAt, markAncestors, orderGraph } from '../core/graph';
 import { inferProject } from '../core/engine';
 import { parseProject, serializeProject } from '../core/serialization';
 import { isValueNode, syncValueLinks, valueOwner } from '../core/valueLinks';
-import { removeValueNodes } from '../editing/valueLinkEditing';
+import { linkValueInGraph, removeValueNodes } from '../editing/valueLinkEditing';
 import { identifierPattern } from './catalog';
 import { parseDictionarySchema } from '../core/dictionary';
 import { activeRuntimeSnapshot, parseRuntimeSnapshot } from '../core/runtimeSnapshot';
 import { incompleteNodes } from './draft';
 import { placeNewNodes, preserveGeneratedLayout } from './layout';
+import { assignLayoutRegion, fitLayoutRegion, isLayoutRegion, layoutRegionMembers, layoutRegionOf,
+  layoutRegionRect, moveLayoutNodes, resizeLayoutRegion } from '../core/layoutRegions';
 import { isHexColor } from '../core/tensorAppearance';
 import type {
   DefaultApplied,
@@ -134,9 +136,12 @@ function countNodes(g: Graph): number {
 }
 export function layoutGraph(g: Graph) {
   const order = orderGraph(g);
+  const regions = g.nodes.filter(isLayoutRegion);
+  const baseX = regions.length ? Math.max(...regions.map(n => { const r = layoutRegionRect(g, n); return r.x + r.width + 310; })) : 0;
   const levels = new Map<string, number>();
   const rows = new Map<number, number>();
   for (const key of order) {
+    if (regions.some(n => n.id === key) || layoutRegionOf(g, key)) continue;
     const level = Math.max(
       0,
       ...g.edges.filter((e) => e.target === key).map((e) => (levels.get(e.source) ?? 0) + 1),
@@ -144,7 +149,7 @@ export function layoutGraph(g: Graph) {
     levels.set(key, level);
     const row = rows.get(level) ?? 0;
     rows.set(level, row + 1);
-    g.nodes.find((n) => n.id === key)!.position = { x: level * 310, y: row * 230 };
+    g.nodes.find((n) => n.id === key)!.position = { x: baseX + level * 310, y: row * 230 };
   }
 }
 function endpoint(v: unknown): [string, string] {
@@ -379,11 +384,17 @@ export function patchModel(
       add_node: ['node'],
       replace_node: ['id', 'node'],
       duplicate_linked: ['source', 'id', 'position'],
+      link_value: ['source', 'id'],
       remove_node: ['id'],
       set_params: ['id', 'params'],
       rename_node: ['id', 'label'],
       set_position: ['id', 'position'],
+      assign_region: ['ids', 'region'],
+      fit_region: ['id'],
+      resize_region: ['id', 'position', 'width', 'height'],
       set_tensor_border: ['id', 'color'],
+      set_lineage_enabled: ['enabled'],
+      set_information_source: ['id', 'source'],
       connect: ['from', 'to'],
       disconnect: ['from', 'to'],
       layout: [],
@@ -393,7 +404,12 @@ export function patchModel(
       const op = record(raw, 'operation');
       if (typeof op.op !== 'string' || !Object.hasOwn(fields, op.op))
         fail('UNKNOWN_OPERATION', `未知操作 ${String(op.op)}`);
-      keys(op, ['op', ...(op.op === 'rename_project' ? [] : ['path']), ...fields[op.op]]);
+      keys(op, ['op', ...(['rename_project', 'set_lineage_enabled'].includes(op.op) ? [] : ['path']), ...fields[op.op]]);
+      if (op.op === 'set_lineage_enabled') {
+        if (typeof op.enabled !== 'boolean') fail('INVALID_ARGUMENT', 'enabled 必须为布尔值。');
+        project.lineageEnabled = op.enabled;
+        continue;
+      }
       if (op.op === 'rename_project') {
         project.name = name(op.name);
         continue;
@@ -402,6 +418,8 @@ export function patchModel(
         fail('INVALID_PATH', 'path 必须是最多 12 层的节点 ID 数组。');
       const path = ((op.path ?? []) as unknown[]).map(id);
       const g = graphAt(project.graph, path);
+      const layoutOnly = (op.op === 'add_node' && record(op.node, 'node').type === 'LayoutRegion') ||
+        (['set_params', 'remove_node'].includes(op.op) && g.nodes.some(n => n.id === op.id && isLayoutRegion(n)));
       const find = () => {
         const key = id(op.id),
           node = g.nodes.find((n) => n.id === key);
@@ -425,6 +443,8 @@ export function patchModel(
           fail('INVALID_MODULE', '有关联副本的节点不能直接替换，请先解除链接或移除副本。', [...path, previous.id]);
         const node = makeNode({ ...replacement, position: replacement.position ?? previous.position }, path, defaults);
         if (previous.portLayout) node.portLayout = clone(previous.portLayout);
+        if (node.type === 'ForLoop' && previous.loopFeedbackRoutes)
+          node.loopFeedbackRoutes = clone(previous.loopFeedbackRoutes);
         if (previous.tensorBorderColor) node.tensorBorderColor = previous.tensorBorderColor;
         g.nodes[g.nodes.indexOf(previous)] = node;
         if (opts.layout === 'auto') layouts.set(JSON.stringify(path), path);
@@ -444,6 +464,8 @@ export function patchModel(
           if (!unplaced.has(key)) unplaced.set(key, { path, ids: new Set() });
           unplaced.get(key)!.ids.add(copy.id);
         }
+      } else if (op.op === 'link_value') {
+        linkValueInGraph(g, find().id, id(op.source));
       } else if (op.op === 'remove_node') {
         const node = find();
         if (!node.valueSource && ['Inlet', 'Outlet'].includes(node.type))
@@ -455,7 +477,21 @@ export function patchModel(
           at = [...path, requested.id];
         if (node.subgraph && node.customized)
           fail('CUSTOMIZED_COMPOSITE', '此组合模块已手动修改，请用 path 修改内部算子。', at);
-        Object.assign(node.params, params(node.type, op.params, at));
+        const changes = params(node.type, op.params, at);
+        if (isLayoutRegion(node)) {
+          const oldMembers = layoutRegionMembers(node);
+          Object.assign(node.params, changes);
+          if (changes.members !== undefined) {
+            const requestedMembers = layoutRegionMembers(node);
+            node.params.members = oldMembers.join(',');
+            assignLayoutRegion(g, oldMembers.filter(member => !requestedMembers.includes(member)), null);
+            assignLayoutRegion(g, requestedMembers, node.id);
+            if (changes.outputs !== undefined) node.params.outputs = changes.outputs;
+          }
+          if (changes.width !== undefined || changes.height !== undefined)
+            resizeLayoutRegion(g, node.id, { ...node.position, width: Number(node.params.width), height: Number(node.params.height) });
+          if (changes.sizing === 'auto') fitLayoutRegion(g, node.id);
+        } else Object.assign(node.params, changes);
         const def = registry.get(node.type)!;
         if (def.build) {
           const generated = def.build(node.params);
@@ -470,10 +506,28 @@ export function patchModel(
         delete node.tensorColor;
         if (op.color === null) delete node.tensorBorderColor;
         else node.tensorBorderColor = op.color as string;
+      } else if (op.op === 'set_information_source') {
+        if (op.source !== null) fail('INVALID_ARGUMENT', '输入来源由根层接口自动编号；此迁移操作只接受 source: null 清除旧声明。');
+        const node = valueOwner(g, find());
+        delete node.informationSource;
       } else if (op.op === 'rename_node') valueOwner(g, find()).label = name(op.label);
       else if (op.op === 'set_position') {
-        find().position = position(op.position);
+        moveLayoutNodes(g, [{ id: find().id, position: position(op.position) }]);
         unplaced.get(JSON.stringify(path))?.ids.delete(String(op.id));
+      } else if (op.op === 'assign_region') {
+        if (!Array.isArray(op.ids) || !op.ids.length || op.ids.length > 500) fail('INVALID_ARGUMENT', 'ids 需要 1-500 个同层节点 ID。');
+        const ids = op.ids.map(id);
+        if (new Set(ids).size !== ids.length) fail('INVALID_ARGUMENT', 'ids 不能重复。');
+        assignLayoutRegion(g, ids, op.region === null ? null : id(op.region));
+        for (const key of ids) unplaced.get(JSON.stringify(path))?.ids.delete(key);
+      } else if (op.op === 'fit_region') {
+        fitLayoutRegion(g, find().id);
+      } else if (op.op === 'resize_region') {
+        const node = find();
+        if (typeof op.width !== 'number' || typeof op.height !== 'number' || !Number.isFinite(op.width) || !Number.isFinite(op.height) ||
+            op.width < 360 || op.height < 200 || op.width > 1000000 || op.height > 1000000)
+          fail('INVALID_ARGUMENT', '分区宽度需要 360-1000000，高度需要 200-1000000。');
+        resizeLayoutRegion(g, node.id, { ...(op.position === undefined ? node.position : position(op.position)), width: op.width, height: op.height });
       } else if (op.op === 'connect' || op.op === 'disconnect') {
         let i = 0;
         while (g.edges.some((e) => e.id === `edge_${i}`)) i++;
@@ -489,7 +543,7 @@ export function patchModel(
           g.edges = g.edges.filter((old) => !matches(old));
         }
       } else if (op.op === 'layout') layouts.set(JSON.stringify(path), path);
-      if (!['rename_node', 'layout', 'set_position', 'set_tensor_border'].includes(op.op))
+      if (!layoutOnly && !['rename_node', 'layout', 'set_position', 'set_tensor_border', 'set_information_source', 'assign_region', 'fit_region', 'resize_region'].includes(op.op))
         markAncestors(project.graph, path);
       if (countNodes(project.graph) > 2000) fail('LIMIT_EXCEEDED', '展开后的节点数不能超过 2000。');
     }

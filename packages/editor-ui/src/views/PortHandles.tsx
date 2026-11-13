@@ -16,6 +16,8 @@ export function PortHandles({
   outputSide,
   horizontalArea,
   labels = true,
+  inputLabels,
+  outputLabels,
 }: {
   inputs: Port[];
   outputs: Port[];
@@ -23,6 +25,8 @@ export function PortHandles({
   outputSide: PortSide;
   horizontalArea?: { top: number; height: number };
   labels?: boolean;
+  inputLabels?: Record<string, string>;
+  outputLabels?: Record<string, string>;
 }) {
   const handles = [
     ...inputs.map((port) => ({ port, side: inputSide, kind: 'target' as const })),
@@ -55,10 +59,11 @@ export function PortHandles({
             {labels && (
               <span
                 className={`node-port-label port-label-${side}`}
+                data-port-id={port.id}
                 style={offset}
                 title={port.label}
               >
-                {port.id}
+                {(kind === 'target' ? inputLabels : outputLabels)?.[port.id] ?? port.id}
               </span>
             )}
           </Fragment>

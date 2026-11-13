@@ -3,7 +3,8 @@ import { clone, uid } from '../core/types';
 import { parseProject } from '../core/serialization';
 import { registry } from '../modules/index';
 import { effectiveValueNode } from '../core/valueLinks';
-import { ifRegionMembers, pruneIfRegions } from '../core/ifRegions';
+import { ifRegionMembers, isCodeRegion, pruneIfRegions } from '../core/ifRegions';
+import { isLayoutRegion, layoutRegionOutputs, pruneLayoutRegions } from '../core/layoutRegions';
 
 const prefix = 'tensor-trail-fragment-v1\n';
 export const clipboardText = (fragment: Graph) => prefix + JSON.stringify(fragment);
@@ -58,9 +59,13 @@ export function readClipboard(text: string): Graph | null {
 
 export function copySelection(graph: Graph, ids: string[]): Graph {
   const chosen = new Set(ids);
-  for (const node of graph.nodes)
-    if (chosen.has(node.id) && node.type === 'IfRegion')
+  const byId = new Map(graph.nodes.map((node) => [node.id, node]));
+  // Set iteration visits newly added descendants once, independent of graph order.
+  for (const id of chosen) {
+    const node = byId.get(id);
+    if (node && (isCodeRegion(node) || isLayoutRegion(node)))
       for (const member of ifRegionMembers(node)) chosen.add(member);
+  }
   const nodes = graph.nodes
     .filter((node) => chosen.has(node.id))
     .map((node) => {
@@ -89,6 +94,7 @@ export function copySelection(graph: Graph, ids: string[]): Graph {
   }
   const kept = new Set(nodes.map((n) => n.id));
   pruneIfRegions({ nodes, edges: [] });
+  pruneLayoutRegions({ nodes, edges: [] });
   return clone({
     nodes,
     edges: graph.edges.filter((e) => kept.has(e.source) && kept.has(e.target)),
@@ -99,7 +105,9 @@ export function duplicateSelection(fragment: Graph, offset: number): Graph {
   const copy = clone(fragment),
     ids = new Map(copy.nodes.map((n) => [n.id, uid()]));
   for (const node of copy.nodes) {
-    if (node.type === 'IfRegion')
+    if (isLayoutRegion(node) && node.params.outputs !== undefined)
+      node.params.outputs = layoutRegionOutputs(node).map(id => ids.get(id) ?? id).join(',');
+    if (isCodeRegion(node) || isLayoutRegion(node))
       node.params.members = ifRegionMembers(node).map(id => ids.get(id) ?? id).join(',');
     node.id = ids.get(node.id)!;
     if (node.valueSource !== undefined && ids.has(node.valueSource))
