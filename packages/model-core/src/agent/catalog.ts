@@ -21,7 +21,7 @@ function fieldSchema(f: Field) {
     };
   return {
     ...(f.kind === 'number'
-      ? { type: 'integer', minimum: f.min ?? 1, maximum: Number.MAX_SAFE_INTEGER }
+      ? { type: f.integer === false ? 'number' : 'integer', minimum: f.min ?? 1, maximum: f.max ?? Number.MAX_SAFE_INTEGER }
       : f.kind === 'boolean'
         ? { type: 'boolean' }
         : f.kind === 'select'

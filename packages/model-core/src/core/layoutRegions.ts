@@ -1,5 +1,6 @@
 import type { Graph, ModelNode } from './types';
 import { ifRegionMembers, isCodeRegion } from './ifRegions';
+import { isValueNode } from './valueLinks';
 
 export type NodeSizes = Record<string, { width: number; height: number }>;
 export type NodeMove = { id: string; position: { x: number; y: number } };
@@ -9,6 +10,8 @@ export const REGION_HEADER = 60;
 export const isLayoutRegion = (node: Pick<ModelNode, 'type'>) => node.type === 'LayoutRegion';
 export const canJoinLayoutRegion = (node: ModelNode) => !isLayoutRegion(node) && !isCodeRegion(node);
 export const layoutRegionMembers = ifRegionMembers;
+export const REGION_IMPORTANCE_LABELS = ['未评级', '辅助信息', '数据整理', '关键支撑', '重要计算', '核心计算'] as const;
+export const layoutRegionImportance = (node: ModelNode): number => Number(node.params.importance ?? 0);
 export const layoutRegionOutputs = (node: ModelNode): string[] =>
   ifRegionMembers({ ...node, params: { members: node.params.outputs ?? '' } });
 export const layoutRegionOf = (graph: Graph, id: string) =>
@@ -17,6 +20,24 @@ export const layoutRegionOf = (graph: Graph, id: string) =>
 export function layoutRegionOutputOwners(graph: Graph): Map<string, ModelNode> {
   return new Map(graph.nodes.filter(isLayoutRegion).flatMap(region =>
     layoutRegionOutputs(region).map(id => [id, region] as const)));
+}
+
+/** Display roles include the linked owner's role, without changing membership. */
+export function layoutRegionOutputRegions(graph: Graph): Map<string, ModelNode[]> {
+  const explicit = layoutRegionOutputOwners(graph);
+  const nodes = new Map(graph.nodes.map(node => [node.id, node]));
+  const result = new Map<string, ModelNode[]>();
+  for (const node of graph.nodes) {
+    const local = explicit.get(node.id), regions = local ? [local] : [];
+    const source = node.valueSource === undefined ? undefined : nodes.get(node.valueSource);
+    if (source && source.id !== node.id && source.valueSource === undefined
+      && isValueNode(node.type) && source.type === node.type) {
+      const inherited = explicit.get(source.id);
+      if (inherited && inherited.id !== local?.id) regions.push(inherited);
+    }
+    if (regions.length) result.set(node.id, regions);
+  }
+  return result;
 }
 
 function pruneRegionOutputs(region: ModelNode): void {
@@ -37,6 +58,11 @@ export function checkLayoutRegion(node: ModelNode): void {
     throw Error('分区注释需要不超过 240 字符的文本。');
   if (node.params.outputs !== undefined && typeof node.params.outputs !== 'string')
     throw Error('分区输出需要以逗号分隔的节点 ID 文本。');
+  if (node.params.importance !== undefined && (typeof node.params.importance !== 'number'
+    || !Number.isInteger(node.params.importance) || node.params.importance < 0 || node.params.importance > 5))
+    throw Error('分区重要性需要 1-5 的整数；0 表示未评级，仅在当前层级比较。');
+  if (node.params.importance_note !== undefined && (typeof node.params.importance_note !== 'string' || node.params.importance_note.length > 240))
+    throw Error('评级依据需要不超过 240 字符的文本。');
   layoutRegionMembers(node);
   layoutRegionOutputs(node);
 }
@@ -74,19 +100,22 @@ const nodeSize = (id: string, sizes: NodeSizes) => {
     ? size : { width: 250, height: 160 };
 };
 
-/** Absolute positions remain unchanged by rendering; measured cards determine the safe minimum. */
+/** Auto regions grow around members in all directions without moving the members. */
 export function layoutRegionRect(graph: Graph, region: ModelNode, sizes: NodeSizes = {}): RegionRect {
   const ids = new Set(layoutRegionMembers(region));
   const members = graph.nodes.filter(n => ids.has(n.id));
-  const { x, y } = region.position;
-  const requiredWidth = Math.max(360, ...members.map(n => n.position.x - x + nodeSize(n.id, sizes).width + REGION_PADDING));
-  const requiredHeight = Math.max(200, ...members.map(n => n.position.y - y + nodeSize(n.id, sizes).height + REGION_PADDING));
-  const auto = region.params.sizing === 'auto' && members.length > 0;
-  return { x, y, width: Math.max(requiredWidth, auto ? 0 : Number(region.params.width)),
-    height: Math.max(requiredHeight, auto ? 0 : Number(region.params.height)) };
+  const auto = region.params.sizing === 'auto';
+  const x = auto ? Math.min(region.position.x, ...members.map(n => n.position.x - REGION_PADDING)) : region.position.x;
+  const y = auto ? Math.min(region.position.y, ...members.map(n => n.position.y - REGION_HEADER)) : region.position.y;
+  return { x, y,
+    width: Math.max(360, region.position.x + Number(region.params.width) - x,
+      ...members.map(n => n.position.x - x + nodeSize(n.id, sizes).width + REGION_PADDING)),
+    height: Math.max(200, region.position.y + Number(region.params.height) - y,
+      ...members.map(n => n.position.y - y + nodeSize(n.id, sizes).height + REGION_PADDING)),
+  };
 }
 
-/** Clamp against pre-drag bounds, so auto-sizing cannot let a member escape by expanding. */
+/** Manual regions constrain members; auto regions expand while retaining membership. */
 export function constrainLayoutMoves(graph: Graph, moves: NodeMove[], sizes: NodeSizes = {}): NodeMove[] {
   const proposed = new Map(moves.map(move => [move.id, { ...move.position }]));
   const owners = new Map<string, ModelNode>();
@@ -103,7 +132,7 @@ export function constrainLayoutMoves(graph: Graph, moves: NodeMove[], sizes: Nod
   }
   for (const [id, position] of proposed) {
     const region = owners.get(id);
-    if (!region || proposed.has(region.id)) continue;
+    if (!region || region.params.sizing === 'auto' || proposed.has(region.id)) continue;
     const rect = layoutRegionRect(graph, region, sizes), size = nodeSize(id, sizes);
     position.x = Math.max(rect.x + REGION_PADDING, Math.min(position.x, rect.x + rect.width - REGION_PADDING - size.width));
     position.y = Math.max(rect.y + REGION_HEADER, Math.min(position.y, rect.y + rect.height - REGION_PADDING - size.height));
@@ -125,7 +154,8 @@ function applyMoves(graph: Graph, moves: NodeMove[]): void {
   for (const edge of graph.edges) {
     const a = deltas.get(edge.source), b = deltas.get(edge.target);
     if (!a && !b) continue;
-    if (a && b && a.x === b.x && a.y === b.y) {
+    // Subtracting translated fractional positions can differ by floating-point roundoff.
+    if (a && b && Math.abs(a.x - b.x) < 1e-7 && Math.abs(a.y - b.y) < 1e-7) {
       if (edge.waypoints) edge.waypoints = edge.waypoints.map(p => ({ x: p.x + a.x, y: p.y + a.y }));
     } else { delete edge.waypoints; delete edge.labelPosition; }
   }
@@ -139,6 +169,14 @@ export function moveLayoutNodes(graph: Graph, moves: NodeMove[], sizes: NodeSize
   else for (const move of constrained) {
     const node = graph.nodes.find(n => n.id === move.id);
     if (node) node.position = { ...move.position };
+  }
+  const moved = new Set(constrained.map(move => move.id));
+  for (const region of graph.nodes.filter(isLayoutRegion)) {
+    if (region.params.sizing !== 'auto' || !(moved.has(region.id) || layoutRegionMembers(region).some(id => moved.has(id)))) continue;
+    const rect = layoutRegionRect(graph, region, sizes);
+    // Growing the frame is not a group translation: other members stay in place.
+    region.position = { x: rect.x, y: rect.y };
+    region.params.width = rect.width; region.params.height = rect.height;
   }
 }
 
@@ -204,10 +242,14 @@ export function fitLayoutRegion(graph: Graph, id: string, sizes: NodeSizes = {})
   const region = graph.nodes.find(n => n.id === id && isLayoutRegion(n));
   if (!region) throw Error('布局分区不存在。');
   const ids = new Set(layoutRegionMembers(region)), members = graph.nodes.filter(n => ids.has(n.id));
-  if (members.length) region.position = {
-    x: Math.min(...members.map(n => n.position.x)) - REGION_PADDING,
-    y: Math.min(...members.map(n => n.position.y)) - REGION_HEADER,
-  };
+  if (members.length) {
+    region.position = {
+      x: Math.min(...members.map(n => n.position.x)) - REGION_PADDING,
+      y: Math.min(...members.map(n => n.position.y)) - REGION_HEADER,
+    };
+    // Explicit fit tightens the frame; ordinary member drags only expand it.
+    region.params.width = 360; region.params.height = 200;
+  }
   region.params.sizing = 'auto';
   const rect = layoutRegionRect(graph, region, sizes);
   region.params.width = rect.width; region.params.height = rect.height;

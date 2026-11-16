@@ -4,6 +4,7 @@ import type { ModelNode } from '@tensor-trail/model-core/core/types';
 import { layoutRegionMembers, REGION_HEADER, REGION_PADDING } from '@tensor-trail/model-core/core/layoutRegions';
 import { useEditor } from '../editor/store';
 import type { TrailNode } from './ModuleNode';
+import { RegionImportance } from './RegionImportance';
 
 export function LayoutRegionNode({ model, selected }: { model: ModelNode; selected: boolean }) {
   const { getNodes } = useReactFlow<TrailNode>();
@@ -17,8 +18,9 @@ export function LayoutRegionNode({ model, selected }: { model: ModelNode; select
         n.position.x + (n.measured?.width ?? 250) <= rect.x + rect.width - REGION_PADDING &&
         n.position.y + (n.measured?.height ?? 160) <= rect.y + rect.height - REGION_PADDING)}
       onResizeEnd={(_, rect) => useEditor.getState().resizeLayoutRegion(model.id, rect)} />
-    <header className="layout-region-heading" title="拖动标题整体移动；选中后拖动边框调节大小。成员只能在分区内部拖动。">
-      <div className="layout-region-title"><strong>{model.label}</strong><span>{ids.size} 个模块 · {model.params.sizing === 'auto' ? '自动适配' : '手动尺寸'}</span></div>
+    <header className="layout-region-heading" title={`拖动标题整体移动；选中后拖动边框调节大小。${model.params.sizing === 'auto' ? '成员向外拖动时分区自动扩大，归属不变。' : '手动尺寸下，成员限制在分区内部拖动。'}`}>
+      <div className="layout-region-title"><strong>{model.label}</strong><RegionImportance model={model} />
+        <span className="layout-region-count">{ids.size} 个模块 · {model.params.sizing === 'auto' ? '自动适配' : '手动尺寸'}</span></div>
       {model.params.note && <p className="layout-region-note" title={String(model.params.note)}>{String(model.params.note)}</p>}
     </header>
     {!ids.size && <p className="layout-region-empty">在右侧添加成员，或选中模块后设置「所属分区」。</p>}

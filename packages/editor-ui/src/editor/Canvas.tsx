@@ -15,12 +15,13 @@ import {
   useReactFlow,
   useViewport,
   ViewportPortal,
+  type Viewport,
 } from '@xyflow/react';
 import { Maximize } from 'lucide-react';
 import type { Graph, GraphResult, ModelNode } from '@tensor-trail/model-core/core/types';
 import { layoutIfRegions } from '../views/ifRegionLayout';
 import { layoutRegions, measuredNodeSizes } from '../views/layoutRegions';
-import { constrainLayoutMoves, isLayoutRegion, layoutRegionOf, layoutRegionOutputOwners, layoutRegionRect } from '@tensor-trail/model-core/core/layoutRegions';
+import { constrainLayoutMoves, isLayoutRegion, layoutRegionOf, layoutRegionOutputRegions, layoutRegionRect } from '@tensor-trail/model-core/core/layoutRegions';
 import { isCodeRegion } from '@tensor-trail/model-core/core/ifRegions';
 import { isCountContract, valueEdgeLabel, valueEdgeStyle } from '../views/valueEdgeStyle';
 import { ports } from '@tensor-trail/model-core/core/graph';
@@ -46,6 +47,10 @@ import { finalOutputValues } from '../views/finalOutputs';
 import { createRoutes } from '../views/routeStore';
 import { layoutLoopFeedback, loopFeedback } from '../views/loopFeedback';
 import { LoopFeedbackOverlay } from '../views/LoopFeedbackOverlay';
+import { CanvasContextMenu } from './CanvasContextMenu';
+import { contextNodeSelection, type CanvasMenuState } from './canvasContext';
+import type { createModuleClipboard } from './moduleClipboard';
+import type { createViewportMemory } from './viewportMemory';
 import {
   nodeWirePreview,
   nodeDragRoutes,
@@ -82,17 +87,31 @@ export function Canvas({
   step,
   theme,
   owner,
+  clipboard,
+  viewports,
 }: {
   graph: Graph;
   result?: GraphResult;
   step: number;
   theme: 'dark' | 'light';
   owner?: ModelNode;
+  clipboard: ReturnType<typeof createModuleClipboard>;
+  viewports: ReturnType<typeof createViewportMemory>;
 }) {
   const selected = useEditor((s) => s.selected),
+    nodeFocus = useEditor((s) => s.nodeFocus),
     selectedIds = useEditor((s) => s.selectedIds),
     pasteCount = useEditor((s) => s.pasteCount),
     path = useEditor((s) => s.path);
+  // The provider remounts for each level. Capture its identity once so outgoing
+  // animation callbacks can never store a parent viewport under a child's path.
+  const [view] = useState(() => {
+    const { documentId, path } = useEditor.getState();
+    return { documentId, path: [...path], initial: viewports.get(documentId, path) };
+  });
+  const rememberViewport = useCallback((next: Viewport) => {
+    viewports.set(view.documentId, view.path, next);
+  }, [viewports, view]);
   const initialized = useNodesInitialized();
   const { fitView, fitBounds, screenToFlowPosition, getNodes } = useReactFlow<TrailNode>();
   const knownRegions = useRef(new Set(graph.nodes.filter(isLayoutRegion).map(n => n.id)));
@@ -108,6 +127,9 @@ export function Canvas({
   }, [graph, fitBounds]);
   const feedback = useMemo(() => loopFeedback(graph, owner), [graph, owner]);
   const [selectedFeedback, setSelectedFeedback] = useState<string>();
+  const [contextMenu, setContextMenu] = useState<CanvasMenuState | null>(null);
+  const closeContextMenu = useCallback(() => setContextMenu(null), []);
+  useEffect(closeContextMenu, [graph, path, closeContextMenu]);
   const fitGraph = useCallback(() => {
     const { bounds } = layoutLoopFeedback(feedback, getNodes(), owner?.loopFeedbackRoutes);
     if (bounds) void fitBounds(bounds, { padding: 0.18 });
@@ -160,20 +182,20 @@ export function Canvas({
       window.removeEventListener('drop', clearDrop);
     };
   }, []);
-  const fitted = useRef(false);
+  const fitted = useRef(!!view.initial);
   useEffect(() => {
-    if (!initialized || fitted.current) return;
-    // Wait for measured cards before fitting a newly opened graph.
+    if (!initialized || fitted.current || nodeFocus) return;
+    // Only unseen levels auto-fit. Revisited levels start at their saved viewport.
     const frame = requestAnimationFrame(() => {
       fitGraph();
       fitted.current = true;
     });
     return () => cancelAnimationFrame(frame);
-  }, [initialized, fitGraph]);
+  }, [initialized, fitGraph, nodeFocus]);
   const derived = useMemo(() => {
     const localColors = localParameterColors(graph);
     const finalOutputs = finalOutputValues(graph, result, owner);
-    const regionOutputs = layoutRegionOutputOwners(graph);
+    const regionOutputs = layoutRegionOutputRegions(graph);
     const inputBoundaries = new Map(levelInputs(graph, path.length === 0).map(input => [input.id, input]));
     const linked = new Set(
       graph.nodes.flatMap((node) => (node.valueSource ? [node.id, node.valueSource] : [])),
@@ -189,7 +211,7 @@ export function Canvas({
     return graph.nodes.map((stored) => {
       const model = effectiveValueNode(graph, stored),
         nodePorts = ports(model, registry);
-      const outputRegion = regionOutputs.get(model.id);
+      const outputRegions = regionOutputs.get(model.id);
       return {
         id: model.id,
         type: 'module' as const,
@@ -207,7 +229,7 @@ export function Canvas({
           model,
           inputBoundary: inputBoundaries.get(model.id),
           finalOutput: finalOutputs.has(model.id),
-          regionOutput: outputRegion ? { id: outputRegion.id, label: outputRegion.label, color: String(outputRegion.params.color) } : undefined,
+          regionOutputs: outputRegions?.map(region => ({ id: region.id, label: region.label, color: String(region.params.color) })),
           localParameterColor: localColors.get(model.id),
           result: result?.nodes[model.id],
           inputs: stored.valueSource ? [] : nodePorts.inputs,
@@ -255,9 +277,10 @@ export function Canvas({
   }, [pasteCount, setNodes]);
   const rememberSelection = useCallback(({ nodes }: { nodes: TrailNode[] }) => {
     const ids = nodes.map((node) => node.id);
+    if (ids.length) renderedRoutes.select(null);
     if (JSON.stringify(ids) !== JSON.stringify(useEditor.getState().selectedIds))
       useEditor.setState({ selectedIds: ids });
-  }, []);
+  }, [renderedRoutes]);
   const derivedEdges: TrailEdge[] = useMemo(
     () =>
       graph.edges.map((edge) => {
@@ -295,6 +318,46 @@ export function Canvas({
     [graph, result, step],
   );
   const [edges, setEdges, onEdgesChange] = useEdgesState<TrailEdge>(derivedEdges);
+  useEffect(() => {
+    if (!nodeFocus || !initialized) return;
+    const frame = requestAnimationFrame(() => {
+      const state = useEditor.getState();
+      if (state.nodeFocus !== nodeFocus) return;
+      const valid = state.documentId === nodeFocus.documentId &&
+        JSON.stringify(state.path) === JSON.stringify(nodeFocus.path) &&
+        getNodes().some(node => node.id === nodeFocus.nodeId);
+      state.finishNodeFocus(nodeFocus);
+      if (!valid) return;
+      fitted.current = true;
+      setSelectedFeedback(undefined); renderedRoutes.select(null);
+      setNodes(current => current.map(node => ({ ...node, selected: node.id === nodeFocus.nodeId })));
+      setEdges(current => current.map(edge => ({ ...edge, selected: false })));
+      void fitView({ nodes: [{ id: nodeFocus.nodeId }], padding: 0.6, maxZoom: 1.1, duration: 240 });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [nodeFocus, initialized, getNodes, fitView, renderedRoutes, setNodes, setEdges]);
+  const chooseNodes = (ids: string[]) => {
+    const chosen = new Set(ids);
+    setSelectedFeedback(undefined); renderedRoutes.select(null);
+    setNodes(current => current.map(node => ({ ...node, selected: chosen.has(node.id) })));
+    setEdges(current => current.map(edge => ({ ...edge, selected: false })));
+    useEditor.getState().selectMany(ids);
+  };
+  const openContextMenu = (event: { clientX: number; clientY: number; target: EventTarget | null; preventDefault: () => void; stopPropagation: () => void }, nodeId?: string, edgeId?: string) => {
+    if (event.target instanceof Element && event.target.closest('input,textarea,select,[contenteditable="true"]')) return;
+    event.preventDefault(); event.stopPropagation();
+    const current = getNodes().filter(node => node.selected).map(node => node.id);
+    const ids = contextNodeSelection(graph, current, nodeId);
+    const useEdges = edgeId && (!edges.find(e => e.id === edgeId)?.selected || !ids.length);
+    const edgeIds = useEdges ? (edges.find(e => e.id === edgeId)?.selected
+      ? edges.filter(e => e.selected).map(e => e.id) : [edgeId])
+      : ids.length ? [] : edges.filter(e => e.selected).map(e => e.id);
+    const nodeIds = useEdges ? [] : ids;
+    chooseNodes(nodeIds);
+    if (edgeIds.length) setEdges(current => current.map(edge => ({ ...edge, selected: edgeIds.includes(edge.id) })));
+    setContextMenu({ x: event.clientX, y: event.clientY,
+      position: screenToFlowPosition({ x: event.clientX, y: event.clientY }), nodeIds, edgeIds });
+  };
   useEffect(
     () =>
       setEdges((current) => {
@@ -342,6 +405,8 @@ export function Canvas({
       <ReactFlow<TrailNode, TrailEdge>
         className={dropActive ? 'module-drop-active' : undefined}
         colorMode={theme}
+        defaultViewport={view.initial}
+        onViewportChange={rememberViewport}
         ariaLabelConfig={ariaLabelConfig}
         nodes={layoutRegions(layoutIfRegions(nodes)).map((node) => ({
           ...node,
@@ -378,11 +443,16 @@ export function Canvas({
           useEditor.getState().add(module.type, module.variantId, position);
         }}
         onNodesChange={onNodesChange}
+        onNodeContextMenu={(event, node) => openContextMenu(event, node.id)}
+        onSelectionContextMenu={event => openContextMenu(event)}
+        onPaneContextMenu={event => openContextMenu(event)}
+        onEdgeContextMenu={(event, edge) => openContextMenu(event, undefined, edge.id)}
+        onMoveStart={closeContextMenu}
         onNodeClick={(_, node) => { setSelectedFeedback(undefined); useEditor.setState({ selected: node.id }); }}
         onSelectionChange={rememberSelection}
         onEdgeClick={() => { setSelectedFeedback(undefined); useEditor.getState().select(null); }}
         onPaneClick={() => { setSelectedFeedback(undefined); useEditor.getState().select(null); }}
-        onSelectionStart={() => { setSelectedFeedback(undefined); useEditor.getState().select(null); }}
+        onSelectionStart={() => { closeContextMenu(); renderedRoutes.select(null); setSelectedFeedback(undefined); useEditor.getState().select(null); }}
         onNodeDoubleClick={(_, node) => node.data.open()}
         onNodeDragStart={startNodeDrag}
         onNodeDrag={dragNodes}
@@ -489,6 +559,8 @@ export function Canvas({
           zoomable
         />
       </ReactFlow>
+      {contextMenu && <CanvasContextMenu menu={contextMenu} graph={graph} clipboard={clipboard}
+        close={closeContextMenu} selectAll={() => chooseNodes(graph.nodes.map(n => n.id))} fitView={fitGraph} />}
     </EdgeRoutesProvider>
   );
 }

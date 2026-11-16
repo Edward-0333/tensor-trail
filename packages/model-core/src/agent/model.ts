@@ -121,7 +121,10 @@ function params(type: string, value: unknown, path: string[]): Params {
     }
     const valid =
       f.kind === 'number'
-        ? typeof v === 'number' && Number.isSafeInteger(v) && (!active.has(k) || v >= (f.min ?? 1))
+        ? typeof v === 'number'
+          && (f.integer === false ? Number.isFinite(v) && Math.abs(v) <= Number.MAX_SAFE_INTEGER : Number.isSafeInteger(v))
+          && (!active.has(k) || v >= (f.min ?? 1))
+          && (f.max === undefined || v <= f.max)
         : f.kind === 'boolean'
           ? typeof v === 'boolean'
           : f.kind === 'select'

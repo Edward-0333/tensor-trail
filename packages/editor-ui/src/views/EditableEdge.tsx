@@ -190,11 +190,11 @@ export function EditableEdge(props: EdgeProps<TrailEdge>) {
 
   function selectSection(index: number) {
     wireSelection.select(selectWireSection(rendered, getRenderedEdges(), index));
+    data?.select();
+    setNodes((nodes) => nodes.map((node) => (node.selected ? { ...node, selected: false } : node)));
     // An already selected edge may own pointer capture for a segment/label drag.
     // Keep that DOM node mounted instead of requesting a new React Flow selection.
     if (selected) return;
-    data?.select();
-    setNodes((nodes) => nodes.map((node) => (node.selected ? { ...node, selected: false } : node)));
     setEdges((edges) => edges.map((edge) => ({ ...edge, selected: edge.id === id })));
   }
 
@@ -566,7 +566,7 @@ export function EditableEdge(props: EdgeProps<TrailEdge>) {
               }}
             />
           ))}
-          <div
+          {wireSelection.selection?.edgeId === id && <div
             className="edge-route-toolbar nodrag nopan"
             style={{
               transform: `translate(${toolbar.x + (toolbar.horizontal ? 0 : 8 / zoom)}px, ${toolbar.y + 18 / zoom}px) scale(${1 / zoom}) translate(${toolbar.horizontal ? '-50%' : '0'}, 0)`,
@@ -592,7 +592,7 @@ export function EditableEdge(props: EdgeProps<TrailEdge>) {
                 恢复自动
               </button>
             ) : null}
-          </div>
+          </div>}
         </EdgeLabelRenderer>
       )}
     </>

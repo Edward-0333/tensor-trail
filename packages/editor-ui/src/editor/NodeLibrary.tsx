@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode, type RefObject } from 'react';
-import { Boxes, Calculator, Search } from 'lucide-react';
+import { Boxes, Calculator, GripVertical, Search } from 'lucide-react';
 import type { ModuleDefinition } from '@tensor-trail/model-core/core/types';
 import { registry } from '@tensor-trail/model-core/modules/index';
 import { tone } from '../views/ModuleNode';
@@ -99,6 +99,7 @@ export function NodeLibrary({ searchRef }: { searchRef: RefObject<HTMLInputEleme
                 onDragStart={(event) => startModuleDrag(event, { type: definition.type })}
               >
                 <strong>{definition.label}</strong>
+                <GripVertical className="library-drag-grip" size={13} aria-hidden="true" />
               </div>
             ))}
           </div>
@@ -109,6 +110,11 @@ export function NodeLibrary({ searchRef }: { searchRef: RefObject<HTMLInputEleme
 
   return (
     <aside className="library" aria-label="模块库与计算库">
+      <div className="panel-heading library-heading">
+        <Boxes size={16} />
+        <h2>模块与计算</h2>
+        <span className="tiny-badge">LIBRARY</span>
+      </div>
       <label className="search-field library-search">
         <Search size={15} />
         <input

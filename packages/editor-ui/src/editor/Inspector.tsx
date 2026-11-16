@@ -384,7 +384,7 @@ function ParamField({
           disabled={disabled}
           type={field.kind === 'number' ? 'number' : 'text'}
           min={field.min}
-          step={1}
+          step={field.integer === false ? 'any' : 1}
           value={String(value ?? '')}
           onChange={(e) =>
             update(field.kind === 'number' ? Number(e.target.value) : e.target.value)
@@ -679,7 +679,7 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
                     <strong>值关联</strong>
                     <span>{linkedMembers.length} 个节点</span>
                   </div>
-                  <p className="microcopy">修改名称或数据参数会同步整个关联组。</p>
+                  <p className="microcopy">点击列表可定位节点；修改名称或数据参数会同步整个关联组。</p>
                   {storedNode?.valueSource && (
                     <p className="microcopy">此副本直接使用主节点的数据。</p>
                   )}
@@ -689,8 +689,8 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
                         <button
                           type="button"
                           aria-current={member.id === node.id ? 'true' : undefined}
-                          onClick={() => state.select(member.id)}
-                          title={`${effectiveValueNode(graph, member).label} · ${member.id}`}
+                          onClick={() => state.focusNode(member.id)}
+                          title={`定位到 ${effectiveValueNode(graph, member).label} · ${member.id}`}
                         >
                           <span>{effectiveValueNode(graph, member).label}</span>
                           <code>{member.id}</code>
@@ -704,7 +704,7 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
                   </ul>
                   <div className="value-link-actions">
                     {node.id !== linkedOwner.id && (
-                      <button className="soft-button" onClick={() => state.select(linkedOwner.id)}>
+                      <button className="soft-button" onClick={() => state.focusNode(linkedOwner.id)}>
                         <ArrowUpRight size={13} />
                         跳转主节点
                       </button>

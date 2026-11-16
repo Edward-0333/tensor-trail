@@ -42,8 +42,8 @@ describe('Layout regions', () => {
     expect(layoutRegionIssues(f.graph)).toEqual([]);
   });
 
-  it.each(['auto', 'manual'])('clamps individual and multi-selection movement in %s mode until explicitly released', sizing => {
-    const f = fixture(); f.region.params.sizing = sizing;
+  it('clamps individual and multi-selection movement in manual mode until explicitly released', () => {
+    const f = fixture(); f.region.params.sizing = 'manual';
     assignLayoutRegion(f.graph, ['a', 'b'], 'region', f.sizes);
     const rect = layoutRegionRect(f.graph, f.region, f.sizes);
     const moves = constrainLayoutMoves(f.graph, [
@@ -58,6 +58,66 @@ describe('Layout regions', () => {
     moveLayoutNodes(f.graph, [{ id: 'a', position: { x: -999, y: -999 } }], f.sizes);
     expect(f.graph.nodes.find(n => n.id === 'a')!.position).toEqual({ x: -999, y: -999 });
     expect(layoutRegionOf(f.graph, 'a')).toBeUndefined();
+  });
+
+  it.each([
+    { x: 1800, y: -200 }, { x: 3100, y: 900 },
+  ])('grows auto bounds around a member moved to %j without translating other nodes', position => {
+    const f = fixture(); assignLayoutRegion(f.graph, ['a', 'b'], 'region', f.sizes);
+    const before = structuredClone(f.graph), rect = layoutRegionRect(f.graph, f.region, f.sizes);
+    f.region.params.outputs = 'a';
+    const moves = [{ id: 'a', position }];
+    expect(constrainLayoutMoves(f.graph, moves, f.sizes)).toEqual(moves);
+    moveLayoutNodes(f.graph, moves, f.sizes);
+    const grown = layoutRegionRect(f.graph, f.region, f.sizes);
+    expect(f.graph.nodes[1].position).toEqual(position);
+    expect(grown.x).toBeLessThanOrEqual(position.x - 24);
+    expect(grown.y).toBeLessThanOrEqual(position.y - 60);
+    expect(grown.x + grown.width).toBeGreaterThanOrEqual(position.x + f.sizes.a.width + 24);
+    expect(grown.y + grown.height).toBeGreaterThanOrEqual(position.y + f.sizes.a.height + 24);
+    expect(grown.x).toBeLessThanOrEqual(rect.x);
+    expect(grown.y).toBeLessThanOrEqual(rect.y);
+    expect(grown.x + grown.width).toBeGreaterThanOrEqual(rect.x + rect.width);
+    expect(grown.y + grown.height).toBeGreaterThanOrEqual(rect.y + rect.height);
+    expect(f.region.position).toEqual({ x: grown.x, y: grown.y });
+    expect(f.region.params).toMatchObject({ width: grown.width, height: grown.height, members: 'a,b', outputs: 'a', sizing: 'auto' });
+    expect(f.graph.nodes.filter(n => !['a', 'region'].includes(n.id)))
+      .toEqual(before.nodes.filter(n => !['a', 'region'].includes(n.id)));
+    expect(parseProject(serializeProject(f.project), registry)).toEqual(f.project);
+  });
+
+  it('grows both sides for multi-selection, keeps inward drags stable and explicitly fits tightly', () => {
+    const f = fixture(); assignLayoutRegion(f.graph, ['a', 'b'], 'region', f.sizes);
+    moveLayoutNodes(f.graph, [
+      { id: 'a', position: { x: 1600, y: -300 } }, { id: 'b', position: { x: 3200, y: 900 } },
+    ], f.sizes);
+    const grown = layoutRegionRect(f.graph, f.region, f.sizes);
+    expect(grown).toEqual({ x: 1576, y: -360, width: 1918, height: 1424 });
+    moveLayoutNodes(f.graph, [
+      { id: 'a', position: { x: 2000, y: 100 } }, { id: 'b', position: { x: 2300, y: 100 } },
+    ], f.sizes);
+    expect(layoutRegionRect(f.graph, f.region, f.sizes)).toEqual(grown);
+    fitLayoutRegion(f.graph, 'region', f.sizes);
+    expect(layoutRegionRect(f.graph, f.region, f.sizes)).toEqual({ x: 1976, y: 40, width: 618, height: 224 });
+  });
+
+  it('moves an expanded frame exactly once and preserves unrelated regions and manual routes', () => {
+    const f = fixture(); assignLayoutRegion(f.graph, ['a', 'b'], 'region', f.sizes);
+    moveLayoutNodes(f.graph, [{ id: 'a', position: { x: 1600, y: -300 } }], f.sizes);
+    const other = registry.create('LayoutRegion', {}, 'other'); f.graph.nodes.push(other);
+    f.graph.edges[1].waypoints = [{ x: 1800, y: 200 }];
+    const before = structuredClone(f.graph), rect = layoutRegionRect(f.graph, f.region, f.sizes);
+    moveLayoutNodes(f.graph, [
+      { id: 'region', position: { x: rect.x + 100, y: rect.y + 50 } },
+      { id: 'a', position: { x: 0, y: 0 } },
+    ], f.sizes);
+    for (const id of ['a', 'b', 'region']) {
+      const old = before.nodes.find(n => n.id === id)!.position;
+      expect(f.graph.nodes.find(n => n.id === id)!.position).toEqual({ x: old.x + 100, y: old.y + 50 });
+    }
+    expect(f.region.params).toMatchObject({ width: rect.width, height: rect.height });
+    expect(other).toEqual(before.nodes.find(n => n.id === 'other'));
+    expect(f.graph.edges[1].waypoints).toEqual([{ x: 1900, y: 250 }]);
   });
 
   it('moves the frame and members once, preserving internal routes and unrelated geometry', () => {
@@ -170,7 +230,8 @@ describe('Region editing API', () => {
   });
 
   it('assigns, constrains moves, resizes, fits and releases without modifying the input project', () => {
-    const f = fixture(), original = structuredClone(f.project);
+    const f = fixture(); f.region.params.sizing = 'manual';
+    const original = structuredClone(f.project);
     const assigned = patchModel(f.project, { operations: [
       { op: 'assign_region', ids: ['a', 'b'], region: 'region' },
       { op: 'set_position', id: 'a', position: { x: -1000, y: -1000 } },
@@ -185,6 +246,21 @@ describe('Region editing API', () => {
       { op: 'set_position', id: 'a', position: { x: -1000, y: -1000 } },
     ] });
     expect(released.ok).toBe(true); expect(released.project!.graph.nodes[1].position.x).toBe(-1000);
+  });
+
+  it('expands an auto region via set_position with preserved membership and persisted bounds', () => {
+    const f = fixture(), before = structuredClone(f.project);
+    const result = patchModel(f.project, { operations: [
+      { op: 'assign_region', ids: ['a', 'b'], region: 'region' },
+      { op: 'set_position', id: 'a', position: { x: -1000, y: -1000 } },
+    ] }, { mode: 'draft', layout: 'preserve' });
+    expect(result.ok, JSON.stringify(result.diagnostics)).toBe(true);
+    const graph = result.project!.graph, region = graph.nodes.find(n => n.id === 'region')!;
+    expect(graph.nodes[1].position).toEqual({ x: -1000, y: -1000 });
+    expect(region.position).toEqual({ x: -1024, y: -1060 });
+    expect(layoutRegionMembers(region)).toEqual(['a', 'b']);
+    expect(validateModel(result.project!).ok).toBe(true);
+    expect(f.project).toEqual(before);
   });
 
   it('does not break containment when applying explicit automatic layout or moving an unplaced new region', () => {

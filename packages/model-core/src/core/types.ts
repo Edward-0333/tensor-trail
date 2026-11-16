@@ -177,6 +177,9 @@ export interface Field {
   kind: 'number' | 'text' | 'select' | 'boolean';
   default: string | number | boolean;
   min?: number;
+  max?: number;
+  /** Numeric model fields default to integers; visual geometry may opt out. */
+  integer?: boolean;
   options?: string[];
   help?: string;
   maxLength?: number;

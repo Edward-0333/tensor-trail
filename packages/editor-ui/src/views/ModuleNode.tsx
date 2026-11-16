@@ -45,7 +45,7 @@ export type TrailNode = Node<
     model: ModelNode;
     inputBoundary?: LevelInput;
     finalOutput?: boolean;
-    regionOutput?: RegionOutputInfo;
+    regionOutputs?: RegionOutputInfo[];
     localParameterColor?: LocalParameterColor;
     result?: NodeResult;
     inputs: Port[];
@@ -224,7 +224,9 @@ function operationText(node: ModelNode, result?: NodeResult): string {
 export function ModuleNode(props: NodeProps<TrailNode>) {
   return <>
     <ModuleNodeContent {...props} />
-    {props.data.regionOutput && <RegionOutputBadge region={props.data.regionOutput} />}
+    {!!props.data.regionOutputs?.length && <div className="region-output-badges nodrag nopan">
+      {props.data.regionOutputs.map(region => <RegionOutputBadge key={region.id} region={region} />)}
+    </div>}
   </>;
 }
 
@@ -270,9 +272,16 @@ function ModuleNodeContent({ data, selected }: NodeProps<TrailNode>) {
   const verticalPorts = Math.max(sideCount('left'), sideCount('right'));
   const horizontalPorts = Math.max(sideCount('top'), sideCount('bottom'));
   const updateNodeInternals = useUpdateNodeInternals();
+  const portSignature = JSON.stringify([inputSide, outputSide, inputs.map(p => p.id), outputs.map(p => p.id)]);
+  const previousPorts = useRef(portSignature);
   useEffect(() => {
-    updateNodeInternals(model.id);
-  }, [model.id, inputSide, outputSide, inputs.length, outputs.length, updateNodeInternals]);
+    // React Flow measures new nodes in a single ResizeObserver batch. Only force
+    // a remeasurement for edits that may move handles without resizing the card.
+    if (previousPorts.current !== portSignature) {
+      previousPorts.current = portSignature;
+      updateNodeInternals(model.id);
+    }
+  }, [model.id, portSignature, updateNodeInternals]);
   const bad = result?.status === 'error' || result?.status === 'blocked';
   const container = isContainerInput(model.type);
   if (isCodeRegion(model)) return <IfRegionNode model={model} selected={selected} />;

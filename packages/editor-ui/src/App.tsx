@@ -31,6 +31,7 @@ import { registry } from '@tensor-trail/model-core/modules/index';
 import { example, type ExampleKind } from '@tensor-trail/model-core/modules/examples';
 import { useEditor } from './editor/store';
 import { Canvas } from './editor/Canvas';
+import { createViewportMemory } from './editor/viewportMemory';
 import { Inspector } from './editor/Inspector';
 import { ForwardHierarchyHelp } from './editor/ForwardHierarchyHelp';
 import { HierarchyNavigation } from './editor/HierarchyNavigation';
@@ -60,6 +61,7 @@ import { isLayoutRegion } from '@tensor-trail/model-core/core/layoutRegions';
 export default function App() {
   const state = useEditor();
   const moduleClipboard = useMemo(() => createModuleClipboard(), []);
+  const [viewports] = useState(createViewportMemory);
   const fileState = useSyncExternalStore(projectFiles.subscribe, projectFiles.getSnapshot);
   const [agentOpen, setAgentOpen] = useState(false);
   const [flowExpanded, setFlowExpanded] = useState(false);
@@ -75,7 +77,7 @@ export default function App() {
     editorPlatform.preferences.setTheme(theme);
   }, [theme]);
   const fileRef = useRef<HTMLInputElement>(null),
-    pathKey = state.path.join('/');
+    pathKey = JSON.stringify(state.path);
   const openProject = () =>
     canOpenSourceFile() ? void openSourceProject() : fileRef.current?.click();
   const rootResult = useMemo(() => inferProject(state.project, registry, state.runtimeSnapshot), [state.project, state.runtimeSnapshot]);
@@ -231,10 +233,10 @@ export default function App() {
           </div>
           <div>
             <strong>Tensor Trail</strong>
+            <small className="brand-caption">MODEL WORKSPACE</small>
           </div>
         </div>
         <div className="project-heading">
-          <span className="project-dot" />
           <input
             aria-label="项目名称"
             disabled={!state.hasProject}
@@ -242,7 +244,19 @@ export default function App() {
             defaultValue={state.project.name}
             onBlur={(e) => state.renameProject(e.target.value)}
           />
-          <span className="version">MIT</span>
+          <span
+            className="save-state"
+            data-status={fileState.busy ? 'busy' : !state.hasProject ? 'empty'
+              : fileState.fileName && !fileState.dirty ? 'saved' : 'unsaved'}
+            title={fileState.fileName || (state.hasProject ? '当前项目尚未保存到文件' : '打开已有项目，或新建项目')}
+          >
+            <span />{' '}
+            {fileState.busy
+              ? '文件处理中…'
+              : fileState.fileName
+                ? `${fileState.dirty ? '待保存' : '已保存'} · ${fileState.fileName}`
+                : state.hasProject ? '未保存文件' : '未打开项目'}
+          </span>
         </div>
         <div className="header-actions">
           <button
@@ -281,22 +295,6 @@ export default function App() {
           >
             {theme === 'dark' ? <Sun size={17} /> : <Moon size={17} />}
           </button>
-          <span
-            className="save-state"
-            title={
-              fileState.fileName ||
-              (state.hasProject ? '当前项目尚未保存到文件' : '打开已有项目，或新建项目')
-            }
-          >
-            <span />{' '}
-            {fileState.busy
-              ? '文件处理中…'
-              : fileState.fileName
-                ? `${fileState.dirty ? '待保存' : '已保存'} · ${fileState.fileName}`
-                : state.hasProject
-                  ? '未保存文件'
-                  : '未打开项目'}
-          </span>
           <div className="history-buttons">
             <button
               className="icon-button"
@@ -456,7 +454,7 @@ export default function App() {
           {owner?.type === 'WhileLoop' && <div className="while-loop-notice" role="note">
             while i &lt; num_points · 一轮符号模板，未执行循环。状态出口反馈给下一轮；虚线为条件依赖，True/False 实际结果未采集。
           </div>}
-          <ReactFlowProvider key={`${pathKey}:${state.canvasVersion}`}>
+          <ReactFlowProvider key={JSON.stringify([state.documentId, state.path, state.canvasVersion])}>
             {state.hasProject && <LevelInputsBar graph={graph} root={state.path.length === 0} />}
             <div className="canvas-region">
               {state.hasProject && (
@@ -467,7 +465,7 @@ export default function App() {
                   </small>
                 </div>
               )}
-              <Canvas graph={graph} result={result} step={step} theme={theme} owner={owner} />
+              <Canvas graph={graph} result={result} step={step} theme={theme} owner={owner} clipboard={moduleClipboard} viewports={viewports} />
               {!state.hasProject && (
                 <div className="canvas-empty-state">
                   <div>

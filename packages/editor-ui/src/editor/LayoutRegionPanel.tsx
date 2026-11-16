@@ -1,12 +1,15 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
+import { Star } from 'lucide-react';
 import type { Graph, ModelNode } from '@tensor-trail/model-core/core/types';
 import {
-  canJoinLayoutRegion, isLayoutRegion, layoutRegionMembers, layoutRegionOf, layoutRegionOutputs, layoutRegionRect,
+  canJoinLayoutRegion, isLayoutRegion, layoutRegionMembers, layoutRegionOf, layoutRegionOutputOwners, layoutRegionOutputs, layoutRegionRect,
+  layoutRegionImportance, REGION_IMPORTANCE_LABELS,
 } from '@tensor-trail/model-core/core/layoutRegions';
 import { useEditor } from './store';
 
 export function LayoutRegionPanel({ graph, node }: { graph: Graph; node: ModelNode }) {
   const state = useEditor(), [search, setSearch] = useState('');
+  const ratingId = useId(), importance = layoutRegionImportance(node);
   const selected = new Set(layoutRegionMembers(node));
   const outputs = new Set(layoutRegionOutputs(node));
   const rect = layoutRegionRect(graph, node, state.nodeSizes);
@@ -16,10 +19,35 @@ export function LayoutRegionPanel({ graph, node }: { graph: Graph; node: ModelNo
     <label>分区注释<textarea key={`${node.id}-${node.params.note ?? ''}`} aria-label="分区注释" rows={2} maxLength={240}
       defaultValue={String(node.params.note ?? '')} placeholder="用一句话描述本分区的工作"
       onBlur={e => { const note = e.target.value.trim(); if (note !== (node.params.note ?? '')) state.setParam(node.id, 'note', note); }} /></label>
+    <fieldset className="region-importance-field" aria-describedby={`${ratingId}-scope`}>
+      <legend>重要性 · 仅本层比较</legend>
+      <div className="region-importance-editor">
+        <div className="region-importance-options" role="radiogroup" aria-label="分区重要性">
+          {[1, 2, 3, 4, 5].map(value => <label key={value} title={`${value}星 · ${REGION_IMPORTANCE_LABELS[value]}`}>
+            <input type="radio" name={ratingId} value={value} aria-label={`${value}星：${REGION_IMPORTANCE_LABELS[value]}`}
+              checked={importance === value} onChange={() => state.setParam(node.id, 'importance', value)} />
+            <Star size={21} aria-hidden="true" className={value <= importance ? 'filled' : ''} />
+          </label>)}
+        </div>
+        <button className="text-button" disabled={!importance} onClick={() => state.setParam(node.id, 'importance', 0)}>清除评级</button>
+      </div>
+      <p className="region-importance-description">{importance ? `${importance}/5星 · ${REGION_IMPORTANCE_LABELS[importance]}` : '未评级'}</p>
+      <p className="microcopy" id={`${ratingId}-scope`}>只和当前节点内部、同一画布的其他分区比较，不与父层或子层比较。星级是可调整的阅读重点，不代表计算量、梯度或运行结果；低星不表示可以删除。</p>
+      <details className="region-importance-guide"><summary>评级参考</summary>
+        <p>1星：形状读取、索引说明、结果打包。2星：类型转换、维度重排等数据整理。3星：几何投影等关键支撑。4星：重要的特征变换或融合。5星：本层核心表征、推理或预测。</p>
+        <p>结合代码职责人工判断，允许并列，不要求每层用满1-5星，也不按算子数量自动评分。</p>
+      </details>
+    </fieldset>
+    <label>评级依据（可选）<textarea key={`${node.id}-${node.params.importance_note ?? ''}`} aria-label="评级依据" rows={2} maxLength={240}
+      defaultValue={String(node.params.importance_note ?? '')} placeholder="为什么它在本层更重要或偏辅助？"
+      onBlur={e => { const note = e.target.value.trim(); if (note !== (node.params.importance_note ?? '')) state.setParam(node.id, 'importance_note', note); }} /></label>
     <label>尺寸模式<select aria-label="分区尺寸模式" value={String(node.params.sizing)} onChange={e => {
       if (e.target.value === 'auto') state.fitLayoutRegion(node.id);
       else state.resizeLayoutRegion(node.id, rect);
     }}><option value="auto">自动适配成员</option><option value="manual">手动尺寸</option></select></label>
+    <p className="microcopy">{node.params.sizing === 'auto'
+      ? '向外拖动成员时分区自动扩大，归属不变；向内移动不收缩，可点击“自动适配大小”收紧。'
+      : '成员拖动受分区边界限制；切换自动适配后可随拖动扩大。'}</p>
     <div className="layout-region-dimensions">
       {(['width', 'height'] as const).map(key => <label key={key}>{key === 'width' ? '宽度' : '高度'}
         <input key={`${node.id}-${rect[key]}`} type="number" min={key === 'width' ? 360 : 200} max={1000000}
@@ -54,7 +82,7 @@ export function LayoutRegionPanel({ graph, node }: { graph: Graph; node: ModelNo
         <span>{member.label}</span>
       </label>)}
     </div>
-    <p className="microcopy">输出标记只说明分区对外提供的结果，不新增 forward 接口、不代表最终返回值或停止梯度。</p>
+    <p className="microcopy">输出标记只说明分区对外提供的结果，不新增 forward 接口、不代表最终返回值或停止梯度。关联副本同步显示主节点标记，但不继承分区归属。</p>
     <p className="microcopy">分区不嵌套；if/for 虚线框仍独立表示代码范围，不作为布局成员。</p>
   </section>;
 }
@@ -64,6 +92,7 @@ export function LayoutRegionMembership({ graph, node }: { graph: Graph; node: Mo
   const ids = (state.selectedIds.length > 1 ? state.selectedIds : [node.id])
     .filter(id => graph.nodes.some(n => n.id === id && canJoinLayoutRegion(n)));
   const owner = layoutRegionOf(graph, node.id);
+  const inheritedOutput = node.valueSource === undefined ? undefined : layoutRegionOutputOwners(graph).get(node.valueSource);
   const mixed = ids.some(id => layoutRegionOf(graph, id)?.id !== owner?.id);
   return <section className="layout-region-membership">
     <label>{ids.length > 1 ? `所选 ${ids.length} 个模块的分区` : '所属分区'}
@@ -81,5 +110,8 @@ export function LayoutRegionMembership({ graph, node }: { graph: Graph; node: Mo
           ? [...layoutRegionOutputs(owner), node.id] : layoutRegionOutputs(owner).filter(id => id !== node.id)).join(','))} />
       标记为分区输出
     </label>}
+    {inheritedOutput && ids.length === 1 && <p className="microcopy" aria-label="关联分区输出">
+      关联来源的分区输出：{inheritedOutput.label}。随主节点同步；修改请选中主节点，此标记不改变当前节点的分区归属。
+    </p>}
   </section>;
 }

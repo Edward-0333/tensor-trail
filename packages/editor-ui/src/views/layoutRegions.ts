@@ -16,6 +16,7 @@ export function layoutRegions(nodes: TrailNode[]): TrailNode[] {
     const rect = layoutRegionRect(graph, graph.nodes.find(n => n.id === node.id)!, sizes);
     return {
       ...node,
+      position: node.resizing ? node.position : { x: rect.x, y: rect.y },
       style: { ...node.style,
         pointerEvents: 'none',
         width: node.resizing ? node.measured?.width ?? rect.width : rect.width,

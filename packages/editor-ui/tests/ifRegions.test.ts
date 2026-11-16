@@ -28,6 +28,18 @@ function flow(id: string, type: string, x: number, y: number, width = 200, heigh
   };
 }
 describe('if range-frame UI', () => {
+  it.each(['IfRegion', 'LoopRegion'])('keeps the %s wrapper transparent to pointer events, including empty frames', type => {
+    const frame = flow('scope', type, 0, 0);
+    frame.style = { pointerEvents: 'all', opacity: .8 };
+    for (const members of ['', 'a,b']) {
+      frame.data.model.params.members = members;
+      const shown = layoutIfRegions([flow('a', 'Input', 100, 200), flow('b', 'Cast', 500, 260), frame]);
+      expect(shown[2].style).toMatchObject({ pointerEvents: 'none', opacity: .8 });
+      expect(shown[2].dragHandle).toBe('.if-region-heading');
+      expect(shown[2].draggable).toBe(!members);
+      expect(frame.style.pointerEvents).toBe('all');
+    }
+  });
   it('renders a loop scope as a dashed frame with a for heading, not a nested callable', () => {
     const model = registry.create('LoopRegion', { statement: 'for interval in range(num_fu_frames)', members: 'a,b' });
     const html = renderToStaticMarkup(createElement(IfRegionNode, { model, selected: true }));

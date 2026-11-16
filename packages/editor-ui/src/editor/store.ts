@@ -62,6 +62,11 @@ function documentId(project: Project, id: string = uid()): string {
   documentIds.set(project, id);
   return id;
 }
+interface NodeFocusRequest {
+  nodeId: string;
+  path: string[];
+  documentId: string;
+}
 interface EditorState {
   project: Project;
   runtimeSnapshot?: RuntimeSnapshot;
@@ -77,6 +82,9 @@ interface EditorState {
   selectLoopIteration: (path: string[], index: number) => void;
   selected: string | null;
   selectedIds: string[];
+  nodeFocus?: NodeFocusRequest;
+  focusNode: (id: string) => void;
+  finishNodeFocus: (request: NodeFocusRequest) => void;
   nodeSizes: NodeSizes;
   setNodeSizes: (sizes: NodeSizes) => void;
   createLayoutRegion: (ids: string[]) => void;
@@ -89,7 +97,7 @@ interface EditorState {
   pasteCount: number;
   selectMany: (ids: string[]) => void;
   copy: () => void;
-  paste: (mode?: 'local' | 'requested') => void;
+  paste: (mode?: 'local' | 'requested', position?: { x: number; y: number }) => void;
   duplicateLinked: (id: string) => boolean;
   newProject: () => void;
   setAxis: (id: string, axis: number, name: string) => void;
@@ -159,7 +167,7 @@ export const useEditor = create<EditorState>((set, get) => ({
     const id = uid();
     documentIds.set(get().project, id);
     activeDocuments.add(get().project);
-    set({ documentId: id, hasProject: true });
+    set({ documentId: id, hasProject: true, nodeFocus: undefined });
   },
   canvasVersion: 0,
   path: [],
@@ -184,6 +192,7 @@ export const useEditor = create<EditorState>((set, get) => ({
         : { x: Math.max(0, ...graph.nodes.map(n => n.position.x + 300)), y: 0 };
       graph.nodes.push(region); id = region.id;
       assignLayoutRegion(graph, members.map(n => n.id), id, get().nodeSizes);
+      fitLayoutRegion(graph, id, get().nodeSizes);
     }, false)) set({ selected: id, selectedIds: [id], notice: '已创建布局分区；可在属性中添加成员，拖动标题整体移动。' });
   },
   assignLayoutRegion: (ids, region) => get().edit(graph => assignLayoutRegion(graph, ids, region, get().nodeSizes), false),
@@ -194,15 +203,26 @@ export const useEditor = create<EditorState>((set, get) => ({
   pasteCount: 0,
   past: [],
   future: [],
-  select: (id) => set({ selected: id, selectedIds: id ? [id] : [] }),
+  select: (id) => set({ selected: id, selectedIds: id ? [id] : [], nodeFocus: undefined }),
+  focusNode: (id) => {
+    const state = get();
+    const { graph } = resolveForwardView(state.project.graph, state.path);
+    if (!graph.nodes.some(node => node.id === id)) return;
+    // A fresh request also allows re-centering the already selected node.
+    set({ selected: id, selectedIds: [id],
+      nodeFocus: { nodeId: id, path: [...state.path], documentId: state.documentId } });
+  },
+  finishNodeFocus: (request) => {
+    if (get().nodeFocus === request) set({ nodeFocus: undefined });
+  },
   selectMany: (ids) => {
     if (JSON.stringify(ids) !== JSON.stringify(get().selectedIds))
-      set({ selected: ids[0] ?? null, selectedIds: ids });
+      set({ selected: ids[0] ?? null, selectedIds: ids, nodeFocus: undefined });
   },
   navigate: (path) => {
     try {
       resolveForwardView(get().project.graph, path);
-      set({ path: [...path], selected: null, selectedIds: [], nodeSizes: {} });
+      set({ path: [...path], selected: null, selectedIds: [], nodeSizes: {}, nodeFocus: undefined });
     } catch (e) {
       set({ notice: (e as Error).message });
     }
@@ -233,9 +253,12 @@ export const useEditor = create<EditorState>((set, get) => ({
       notice: `已复制 ${fragment.nodes.length} 个模块，Ctrl+V 粘贴。`,
     });
   },
-  paste: (mode = 'local') => {
+  paste: (mode = 'local', position) => {
     const { clipboard, clipboardOrigin, pasteCount, documentId, path, project } = get();
     if (!clipboard?.nodes.length) return;
+    if (position && (!Number.isFinite(position.x) || !Number.isFinite(position.y))) {
+      set({ notice: '粘贴位置必须是有限坐标。' }); return;
+    }
     const sameScope =
       clipboardOrigin?.fragment === clipboard &&
       clipboardOrigin.documentId === documentId &&
@@ -247,6 +270,13 @@ export const useEditor = create<EditorState>((set, get) => ({
       sameScope,
       mode,
     );
+    if (position) {
+      const dx = position.x - Math.min(...fragment.nodes.map(n => n.position.x));
+      const dy = position.y - Math.min(...fragment.nodes.map(n => n.position.y));
+      for (const node of fragment.nodes) node.position = { x: node.position.x + dx, y: node.position.y + dy };
+      for (const edge of fragment.edges)
+        if (edge.waypoints) edge.waypoints = edge.waypoints.map(p => ({ x: p.x + dx, y: p.y + dy }));
+    }
     if (
       get().edit((g) => {
         g.nodes.push(...fragment.nodes);
@@ -665,6 +695,7 @@ export const useEditor = create<EditorState>((set, get) => ({
         selected: null,
         selectedIds: [],
         notice: '已撤销。',
+        nodeFocus: undefined,
         nodeSizes: {},
       });
   },
@@ -684,6 +715,7 @@ export const useEditor = create<EditorState>((set, get) => ({
         selected: null,
         selectedIds: [],
         notice: '已重做。',
+        nodeFocus: undefined,
         nodeSizes: {},
       });
   },
@@ -708,6 +740,7 @@ export const useEditor = create<EditorState>((set, get) => ({
       past: [...past.slice(-39), previous],
       future: [],
       notice: '项目已载入；可撤销返回上一项目。',
+      nodeFocus: undefined,
     });
   },
   importText: (text) => {

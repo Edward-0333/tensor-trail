@@ -7,14 +7,14 @@ import { clipboardText, readClipboard } from '@tensor-trail/model-core/editing/c
  */
 export function createModuleClipboard() {
   let localCopy = false;
-  const paste = () => {
+  const paste = (position?: { x: number; y: number }) => {
     const state = useEditor.getState();
     if (!state.clipboard?.nodes.length) {
       state.toast('请先选中模块并复制，再粘贴。');
       return false;
     }
     const before = state.project;
-    state.paste();
+    state.paste('local', position);
     return useEditor.getState().project !== before;
   };
   return {

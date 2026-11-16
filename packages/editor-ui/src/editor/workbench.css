@@ -1541,9 +1541,28 @@
   background: color-mix(in srgb, var(--region-color) 9%, transparent);
   pointer-events: auto; cursor: grab; user-select: none;
 }
-.layout-region-title { display: flex; align-items: center; gap: 16px; min-width: 0; }
-.layout-region-heading strong { color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.layout-region-heading span { margin-left: auto; color: var(--text-secondary); font-size: 11px; white-space: nowrap; }
+.layout-region-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.layout-region-heading strong { flex: 1; min-width: 0; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.layout-region-count { flex-shrink: 0; color: var(--text-secondary); font-size: 11px; white-space: nowrap; }
+.region-importance, .region-importance-field { --importance-star: #dfb66d; }
+:root[data-theme='light'] .region-importance, :root[data-theme='light'] .region-importance-field { --importance-star: #92621c; }
+.region-importance { display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0; color: var(--text-secondary); white-space: nowrap; }
+.region-importance small { font-size: 10px; }
+.region-importance-stars { display: inline-flex; align-items: center; gap: 2px; color: var(--muted); }
+.region-importance .filled, .region-importance-options .filled { fill: var(--importance-star); color: var(--importance-star); }
+.region-importance-field { min-width: 0; margin: 0; padding: 12px 0; border: 0; border-top: 1px solid var(--border-subtle); border-bottom: 1px solid var(--border-subtle); }
+.region-importance-field legend { padding: 0 6px 0 0; font-size: 12px; font-weight: 600; }
+.region-importance-editor { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.region-importance-options { display: flex; gap: 2px; }
+.layout-region-panel .region-importance-options label { position: relative; display: flex; align-items: center; justify-content: center; width: 28px; height: 32px; color: var(--muted); cursor: pointer; border-radius: 6px; }
+.region-importance-options input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.region-importance-options svg { pointer-events: none; }
+.region-importance-options label:hover { background: var(--surface-hover); }
+.region-importance-options label:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 1px; }
+.region-importance-description { margin: 8px 0; color: var(--text-secondary); font-size: 12px; }
+.region-importance-guide { margin-top: 8px; color: var(--text-secondary); font-size: 11px; line-height: 1.7; }
+.region-importance-guide summary { cursor: pointer; }
+.region-importance-guide p { margin: 6px 0; }
 .layout-region-note { margin: 0; font-size: 11px; line-height: 16px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .layout-region-empty { margin: 24px; font-size: 12px; color: var(--text-secondary); }
 .layout-region-node .react-flow__resize-control { pointer-events: auto; }
@@ -1556,8 +1575,11 @@
 .layout-region-panel textarea { resize: vertical; min-height: 52px; }
 .layout-region-output-list { max-height: 200px; overflow-y: auto; display: grid; gap: 8px; }
 .layout-region-output-list label, .layout-region-membership .layout-region-output-toggle { display: flex; align-items: flex-start; gap: 8px; overflow-wrap: anywhere; }
-.region-output-badge {
+.region-output-badges {
   position: absolute; right: 0; bottom: calc(100% + 5px); z-index: 4;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 3px;
+}
+.region-output-badge {
   max-width: 230px; padding: 2px 7px; border: 1px solid var(--region-color); border-radius: 5px;
   background: var(--surface); color: var(--text-primary); font: 600 10px/15px sans-serif;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -1566,3 +1588,27 @@
 .layout-region-panel .layout-region-color { display: flex; justify-content: space-between; align-items: center; }
 .layout-region-color input { width: 40px; height: 28px; padding: 2px; cursor: pointer; }
 .attribute-version { color: var(--tensor-ink, var(--text-secondary)); font-size: 10px; }
+
+.canvas-context-menu {
+  position: fixed; z-index: 10000; width: 268px; max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px); overflow: auto; padding: 6px; box-sizing: border-box;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--surface);
+  color: var(--text-primary); box-shadow: 0 10px 36px #0003; font: inherit;
+}
+.canvas-context-title { padding: 6px 9px; font-size: 11px; color: var(--text-secondary); }
+.canvas-context-menu button {
+  display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 9px;
+  border: 0; border-radius: 5px; background: transparent; color: inherit; text-align: left;
+  font: inherit; font-size: 12px; cursor: pointer;
+}
+.canvas-context-menu button > span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.canvas-context-menu button > svg { flex: none; width: 15px; height: 15px; }
+.canvas-context-menu button:not(:disabled):hover,
+.canvas-context-menu button:focus-visible { background: var(--surface-hover, var(--bg)); outline: 1px solid var(--accent); }
+.canvas-context-menu button:disabled { opacity: .4; cursor: default; }
+.canvas-context-menu button.danger { color: var(--danger, #d94848); }
+.canvas-context-menu kbd { color: var(--text-secondary); font-size: 10px; }
+.canvas-context-menu [role="separator"] { height: 1px; margin: 5px 4px; background: var(--border); }
+.canvas-context-menu .expanded { transform: rotate(180deg); }
+.canvas-region-choices { margin-left: 16px; border-left: 1px solid var(--border); max-height: 180px; overflow: auto; }
+.canvas-region-choices i { width: 8px; height: 8px; flex: none; border-radius: 50%; }

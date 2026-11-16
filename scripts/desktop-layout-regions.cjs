@@ -31,7 +31,7 @@ async function run() {
   const button = label => js(`(()=>{const b=[...document.querySelectorAll('button')].find(x=>x.textContent.trim()===${JSON.stringify(label)});if(!b||b.disabled)throw Error('Button '+${JSON.stringify(label)});b.click();})()`);
   const selector = id => `.react-flow__node[data-id="${id}"]`;
   const bounds = sel => js(`(()=>{const e=document.querySelector(${JSON.stringify(sel)});if(!e)throw Error('Missing '+${JSON.stringify(sel)});const r=e.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,w:e.offsetWidth,h:e.offsetHeight};})()`);
-  async function pointer(sel, dx = 0, dy = 0) {
+  async function pointer(sel, dx = 0, dy = 0, held) {
     const r = await bounds(sel), start = { x: Math.round(r.x + Math.min(70, r.width / 2)), y: Math.round(r.y + r.height / 2) };
     web.sendInputEvent({ type: 'mouseMove', ...start });
     web.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...start, modifiers: ['alt'] });
@@ -39,12 +39,13 @@ async function run() {
       web.sendInputEvent({ type: 'mouseMove', x: Math.round(start.x + dx * i / 10), y: Math.round(start.y + dy * i / 10),
         modifiers: ['leftButtonDown', 'alt'] }); await wait(35);
     }
+    if (held) { await wait(150); await held(); }
     web.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, x: start.x + dx, y: start.y + dy, modifiers: ['alt'] });
     await wait(300);
   }
-  const press = keyCode => {
-    web.sendInputEvent({ type: 'keyDown', keyCode, modifiers: ['control'] });
-    web.sendInputEvent({ type: 'keyUp', keyCode, modifiers: ['control'] });
+  const press = (keyCode, modifiers = ['control']) => {
+    web.sendInputEvent({ type: 'keyDown', keyCode, modifiers });
+    web.sendInputEvent({ type: 'keyUp', keyCode, modifiers });
   };
   await until(async () => !web.isLoadingMainFrame() && await js('!!window.tensorTrail').catch(() => false), 'ready');
   await button('打开'); await until(async () => (await model()).name === built.project.name, 'open'); await wait(700);
@@ -52,6 +53,36 @@ async function run() {
   let p = await model(), region = p.graph.nodes.find(n => n.type === 'LayoutRegion');
   assert(region && region.params.members === 'a', 'toolbar creation must include selection'); const id = region.id;
   await wait(700);
+  const autoBefore = await model();
+  async function autoDrag(dx, dy) {
+    const before = await model(), oldFrame = await bounds(selector(id)), oldCard = await bounds(selector('a'));
+    const scale = oldCard.width / oldCard.w, original = before.graph.nodes.find(n => n.id === 'a').position;
+    let livePosition;
+    await pointer(`${selector('a')} .tensor-node-label`, dx, dy, async () => {
+      assert.deepEqual(await model(), before, 'drag preview must not commit history');
+      const frame = await bounds(selector(id)), card = await bounds(selector('a'));
+      assert(frame.width > oldFrame.width && frame.height > oldFrame.height, 'auto frame did not grow while dragging');
+      assert(frame.x <= card.x - 24 * scale + 2 && frame.y <= card.y - 60 * scale + 2, 'live frame missed top/left padding');
+      assert(frame.x + frame.width >= card.x + card.width + 24 * scale - 2, 'live frame missed right padding');
+      assert(frame.y + frame.height >= card.y + card.height + 24 * scale - 2, 'live frame missed bottom padding');
+      livePosition = { x: original.x + (card.x - oldCard.x) / scale, y: original.y + (card.y - oldCard.y) / scale };
+    });
+    const after = await model(), card = after.graph.nodes.find(n => n.id === 'a');
+    const frame = after.graph.nodes.find(n => n.id === id);
+    assert(Math.abs(card.position.x - livePosition.x) < 3, 'auto member x snapped back on drop');
+    assert(Math.abs(card.position.y - livePosition.y) < 3, 'auto member y snapped back on drop');
+    assert.equal(frame.params.members, 'a'); assert.equal(frame.params.sizing, 'auto');
+    assert.deepEqual(after.graph.nodes.filter(n => n.id !== 'a' && n.id !== id),
+      before.graph.nodes.filter(n => n.id !== 'a' && n.id !== id), 'auto growth moved unrelated nodes');
+  }
+  await autoDrag(480, 200);
+  await autoDrag(-620, -340);
+  const autoAfter = await model();
+  press('Z'); await wait(200); press('Z'); await wait(200);
+  assert.deepEqual(await model(), autoBefore, 'auto drag undo must restore member and frame');
+  press('Z', ['control', 'shift']); await wait(200); press('Z', ['control', 'shift']); await wait(200);
+  assert.deepEqual(await model(), autoAfter, 'auto drag redo must restore member and frame');
+  p = await model();
   const originalA = { ...p.graph.nodes.find(n => n.id === 'a').position };
   await pointer(`${selector(id)} .layout-region-heading`, 80, 40);
   p = await model(); region = p.graph.nodes.find(n => n.id === id);
@@ -104,20 +135,33 @@ async function run() {
   await button('打开'); await wait(600); assert.deepEqual(await model(), expected);
   assert(sdk.validateModel(await model()).ok);
   await js(`(()=>{const api=window.tensorTrail,s=api.getModel();const r=api.patchModel(s.project,
-    {operations:[{op:'duplicate_linked',source:'a',id:'alias',position:{x:600,y:600}}]},
+    {operations:[{op:'duplicate_linked',source:'a',id:'alias',position:{x:600,y:600}},
+      {op:'set_params',id:${JSON.stringify(id)},params:{outputs:'a,b'}}]},
     {mode:'draft',layout:'preserve'});if(!r.ok)throw Error(JSON.stringify(r.diagnostics));
     api.applyModel({project:r.project,expectedRevision:s.revision,mode:'draft',allowWarnings:true});})()`);
   await wait(300); await js(`document.querySelector('button[aria-label="适配全图"]').click()`); await wait(500);
+  const aliasBadge = `${selector('alias')} [data-region-output="${id}"]`;
+  assert(await js(`!!document.querySelector(${JSON.stringify(aliasBadge)})`), 'linked output badge missing');
+  assert(!(await model()).graph.nodes.find(n => n.id === id).params.members.split(',').includes('alias'));
+  fs.writeFileSync(path.join(directory, 'linked-output.png'), (await web.capturePage()).toPNG());
   await pointer(`${selector('alias')} .tensor-node-label`);
+  assert(await js(`!!document.querySelector('[aria-label="关联分区输出"]')`));
   const beforeUnlink = await model();
   await js(`void(window.confirm=message=>{window.__unlinkWarning=message;return false;})`);
   await button('解除值关联'); assert.deepEqual(await model(), beforeUnlink);
   assert((await js('window.__unlinkWarning')).includes('输入数量增加 1'));
   await js('void(window.confirm=()=>true)'); await button('解除值关联');
   assert.equal((await model()).graph.nodes.filter(n => n.type === 'Input' && !n.valueSource).length, 2);
+  assert(!await js(`!!document.querySelector(${JSON.stringify(aliasBadge)})`), 'unlinked badge remained');
   press('Z'); await wait(300); assert.deepEqual(await model(), beforeUnlink);
+  assert(await js(`!!document.querySelector(${JSON.stringify(aliasBadge)})`), 'undo did not restore badge');
+  press('S');
+  await until(() => JSON.parse(fs.readFileSync(fixture)).graph.nodes.some(n => n.id === 'alias'), 'save alias');
+  await button('打开'); await wait(600);
+  assert.deepEqual(await model(), beforeUnlink);
+  assert(await js(`!!document.querySelector(${JSON.stringify(aliasBadge)})`), 'reopen did not restore badge');
   assert.deepEqual(errors.filter(e => !e.includes('ResizeObserver')), []);
-  console.log(JSON.stringify({ ok: true, directory, cases: ['create-from-selection', 'group-drag', 'manual-resize', 'member-clamp', 'add-member', 'auto-fit', 'release-and-move', 'reassign', 'region-note', 'region-output-badge', 'themes', 'save-reopen', 'input-unlink-confirmation'] }));
+  console.log(JSON.stringify({ ok: true, directory, cases: ['create-from-selection', 'auto-live-growth-four-directions', 'auto-drag-undo-redo', 'group-drag', 'manual-resize', 'member-clamp', 'add-member', 'auto-fit', 'release-and-move', 'reassign', 'region-note', 'region-output-badge', 'themes', 'save-reopen', 'input-unlink-confirmation', 'linked-output-badge', 'unlink-undo-reopen-badge'] }));
   clearTimeout(timer); app.exit(0);
 }
 run().catch(async error => {

@@ -63,7 +63,8 @@ export function layoutIfRegions(nodes: TrailNode[]): TrailNode[] {
     laidOut.set(node.id, {
       ...node,
       position: { x: left, y: top },
-      style: { ...node.style, width: Math.max(440, right - left), height: bottom - top },
+      // Override React Flow's inline hit area; only the heading opts back into events.
+      style: { ...node.style, pointerEvents: 'none', width: Math.max(440, right - left), height: bottom - top },
       zIndex: Math.min(
         -1,
         ...members.filter((n) => isCodeRegion(n.data.model)).map((n) => n.zIndex! - 1),
