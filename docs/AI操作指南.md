@@ -1,7 +1,7 @@
 ---
 title: "Tensor Trail AI 操作指南"
 created: 2026-10-19
-last_updated: 2026-11-14
+last_updated: 2026-11-17
 authors:
   human: "用户"
   ai: "Codex"
@@ -19,6 +19,8 @@ tags: [项目, Tensor, AI, API]
 
 # AI 操作指南
 
+模型绘图先按 [模型绘图规范与验收清单](模型绘图规范与验收清单.md) 确定范围、语义和验收方式；本文提供具体的 API 与算子操作方法。通用规范末尾包含可复用的自动绘图任务模板和交付记录模板。
+
 本版提供纯 JavaScript/TypeScript API、命令行和 `window.tensorTrail` 画布 API。外部 AI 负责理解架构并生成 JSON，程序共用原有模块注册表进行构建和形状校验。无需在本程序中配置模型密钥。
 
 **尚未提供 MCP、HTTP REST 服务或内置大模型聊天框。** 当前仅做形状推导，不运行真实张量、训练或 PyTorch 前向。普通聊天模型需由具备文件、命令行或页面调用能力的工具连接程序。
@@ -30,7 +32,7 @@ tags: [项目, Tensor, AI, API]
 模块内部从形参 Inlet 开始，不重复创建这些实参，不把参数准备藏进被调用模块。
 
 例如 `ego_cross_attn(ego_feat.new_ones(B,1,3)*0.5, ego_feat, curr_query_pos.detach(), curr_query_feat.detach())`：
-调用侧应直接显示 `GetDtype/GetDevice -> NewOnes -> *0.5`、原始 `ego_feat` 和两条 `Detach` 路径；
+调用侧应直接显示 `NewOnes -> *0.5`、原始 `ego_feat` 和两条 `Detach` 路径；已核实的 dtype/device 用 `DtypeConstant/DeviceConstant` 并注明依据，未知时才保留 `GetDtype/GetDevice` 读取路径。
 注意力内部从 `query_points/query_feat/key_points/key_feat` 开始。
 
 额外的循环封装也不应隐藏用户要求观察的调用参数。需要在父画布显示时，优先将循环展开为同层范围，
