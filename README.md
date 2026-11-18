@@ -8,6 +8,26 @@ Windows / Ubuntu 桌面开发版共用同一套编辑器：Windows 双击 [start
 
 ![Tensor Trail 架构工作台](docs/assets/ui-current.png)
 
+## 首次使用
+
+在仓库根目录安装和启动网页版。推荐使用仓库登记的 Node.js 24.22.2 和 npm 11.19.1，项目要求 Node.js 22.12.0 或更高版本。
+
+```sh
+git clone https://github.com/Edward-0333/tensor-trail.git
+cd tensor-trail
+npm ci
+npm run dev:web -- --port 5178
+```
+
+1. 在浏览器访问终端显示的本地地址，通常为 `http://127.0.0.1:5178/`。首次进入时，画布显示“开始绘制架构”，下方有“打开项目”和“新建项目”。
+2. 点击画布上方的“探索示例”，选择“Transformer → CNN → LSTM”。画布会出现已连线的网络，输入形状为 `[8, 100, 64]`，输出形状为 `[8, 100, 32]`。
+3. 单击画布中的模块，在右侧查看参数和形状。双击 Transformer 模块可以进入子图，点击顶部面包屑可返回。想自己搭建时，点击“新建项目”，再从左侧的模块库或计算库拖入节点。
+4. 要保存自己的编辑，点击顶部“另存为”，选择保存位置或下载 JSON 副本。之后可以通过顶部“打开”或空白页的“打开项目”重新载入。
+
+上手只需 Node.js 和 npm。Python 适配器仅用于按需采集 PyTorch 运行输入，内置示例可直接使用。
+
+Windows 也可双击根目录的 `start.cmd` 启动网页，首次运行会安装根工作区依赖。原 `app/start.cmd` 和 `apps/web/start.cmd` 仍转到这一入口。配置了可选的 `.tools/` 本地工具链时，可用 `node scripts/npm.cjs` 代替 `npm`。
+
 ## v0.1 功能
 
 - 算子覆盖线性层、卷积、RNN/GRU/LSTM、维度操作与分支合并。画布按当前层级显示可添加项，完整目录可通过下文的 CLI `describe` 查询，`describe --internal` 包含内部项。
@@ -52,22 +72,7 @@ Input            [8, 100, 64]
 Output           [8, 100, 32]
 ```
 
-## 运行
-
-仓库登记的开发工具链为 Node.js 24.22.2 LTS 与 npm 11.19.1，见 `.node-version` 和 `toolchain.json`。项目要求 Node.js 22.12.0 或更高版本。请在项目根目录安装和运行，依赖统一由根 `package-lock.json` 管理。
-
-```sh
-git clone https://github.com/Edward-0333/tensor-trail.git
-cd tensor-trail
-npm ci
-npm run dev:web -- --port 5178
-```
-
-访问终端显示的本地地址，通常为 `http://127.0.0.1:5178/`。Windows 双击根目录 `start.cmd`；原 `app/start.cmd` 和 `apps/web/start.cmd` 均转到这个入口，首次运行会安装根工作区依赖。
-
-`.tools/` 是可选的本地工具链。配置后可用 `node scripts/npm.cjs` 代替 `npm`，也可直接使用系统中满足版本要求的 Node.js 和 npm。
-
-网页开发服务默认只监听本机。启动或刷新后，在顶部点“打开”，或在空白页点“打开项目”，选择 JSON 项目文件。关闭或刷新前请先保存编辑。
+## 文件保存与桌面运行
 
 - 桌面端打开项目后，Ctrl+S 保存回已关联文件，Ctrl+Shift+S 打开“另存为”。
 - 网页端通过浏览器原生文件选择器打开项目时会关联源文件，授权写入后可用 Ctrl+S 写回。需要写回源文件时，建议使用支持该选择器的桌面版 Chrome 或 Edge。
@@ -77,6 +82,8 @@ npm run dev:web -- --port 5178
 桌面命令也在根目录执行：`npm run desktop` 构建并打开本地窗口，`npm run dev:desktop` 启动支持界面热更新的开发窗口，`npm run test:desktop` 执行真实 Electron 窗口文件流程检查，`npm run test:desktop:experience` 检查 DPI、画布交互和本地项目副本的大图表现。桌面普通运行使用本地界面资源，无需启动网页版服务。体验测试默认读取 `data/pluto.tensor-trail.json`，缺少该文件时，请用 `npm run test:desktop:experience -- --project <路径>` 指定本地项目。
 
 ## 开发与验证
+
+贡献前请参阅 [贡献指南](CONTRIBUTING.md)。
 
 在项目根目录执行：
 
