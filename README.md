@@ -10,7 +10,8 @@ Windows / Ubuntu 桌面开发版共用同一套编辑器：Windows 双击 [start
 
 ## v0.1 功能
 
-- 38 个可添加模块，覆盖线性层、卷积、RNN/GRU/LSTM、维度操作与分支合并。
+- 算子覆盖线性层、卷积、RNN/GRU/LSTM、维度操作与分支合并。画布按当前层级显示可添加项，完整目录可通过下文的 CLI `describe` 查询，`describe --internal` 包含内部项。
+- 用 `For`、`ForEach`、`While` 循环子图表达控制流并分析形状。用 `if` 条件范围框标记代码范围，用布局分区组织同层节点。见[模型绘图规范与验收清单](docs/模型绘图规范与验收清单.md)。
 - 计算库的“读取维度 Size”可查询多个轴并分别输出整数尺寸，支持变量名称、负轴和符号尺寸；见[读取维度](docs/读取维度.md)。
 - 计算库的“函数”以数学公式封装单输入、单输出的浮点逐元素运算，画布只显示名称，公式在右侧编辑；支持 PLUTO 的角度归一化以及 Python/PyTorch 语义的取模。见[函数模块](docs/函数模块.md)。
 - 计算库提供紧凑的 `Cos`、`Sin`、整数乘法与动态 `View`；`Cat` / `Stack` 可选择 1–16 路输入，保留输入顺序。`View` 可接局部整数作为目标维度，`Flatten` 可从轴 0 展开。见[特征拼接与动态形状](docs/特征拼接与动态形状.md)。
@@ -36,7 +37,6 @@ Windows / Ubuntu 桌面开发版共用同一套编辑器：Windows 双击 [start
 - 连线文字显示在线条侧边，随选中的连线一起高亮；可直接拖动文字沿折线滑动，双击文字恢复默认位置。文字位置按连线长度比例保存，支持 Escape 取消、一次撤销、复制和保存重开；拖动文字不会改变线路或模块位置。
 - 图编辑、撤销重做、JSON 打开与保存，以及宽屏和窄屏布局。
 - 静态图与运行输入快照分离；“运行数据”切换实际输入形状/梯度状态，支持导出携带当前快照的单文件副本。字典 schema 使用 JSON 对象，兼容旧字符串格式。见[静态图与运行快照](docs/使用与扩展.md#静态图与运行快照)。
-- 每次启动为空白工作区，选择 JSON 后关联文件；Ctrl+S 写回原文件，Ctrl+Shift+S 另存为。
 - 参考 TensorBloom 的深色工作台、可记忆的明暗主题、侧栏折叠、分类节点色标与当前层级概览；按 `/` 快速搜索模块。
 - AI 构建：简化 JSON 配方、模块目录和 JSON Schema、构建/校验/批量修改 API、CLI，以及带版本冲突检查的画布应用入口。
 
@@ -54,7 +54,7 @@ Output           [8, 100, 32]
 
 ## 运行
 
-开发工具链使用 Node.js 24.22.2 LTS 与 npm 11.19.1，版本登记在 `.node-version` 和 `toolchain.json`。请在项目根目录安装和运行，依赖统一由根 `package-lock.json` 管理。
+仓库登记的开发工具链为 Node.js 24.22.2 LTS 与 npm 11.19.1，见 `.node-version` 和 `toolchain.json`。项目要求 Node.js 22.12.0 或更高版本。请在项目根目录安装和运行，依赖统一由根 `package-lock.json` 管理。
 
 ```sh
 git clone https://github.com/Edward-0333/tensor-trail.git
@@ -65,11 +65,16 @@ npm run dev:web -- --port 5178
 
 访问终端显示的本地地址，通常为 `http://127.0.0.1:5178/`。Windows 双击根目录 `start.cmd`；原 `app/start.cmd` 和 `apps/web/start.cmd` 均转到这个入口，首次运行会安装根工作区依赖。
 
-本机保留原有全局 Node，启动脚本通过 `scripts/npm.cjs` 使用 `.tools/` 中的项目专用 Node。手动执行命令时，也可将下面的 `npm` 替换为 `node scripts/npm.cjs`。其他电脑安装上述 Node LTS 版本后可直接使用 npm。
+`.tools/` 是可选的本地工具链。配置后可用 `node scripts/npm.cjs` 代替 `npm`，也可直接使用系统中满足版本要求的 Node.js 和 npm。
 
-默认只监听本机。每次启动或刷新后需要手动选择 JSON 项目文件，关闭或刷新前请用 Ctrl+S 保存编辑。
+网页开发服务默认只监听本机。启动或刷新后，在顶部点“打开”，或在空白页点“打开项目”，选择 JSON 项目文件。关闭或刷新前请先保存编辑。
 
-桌面命令也在根目录执行：`npm run desktop` 构建并打开本地窗口，`npm run dev:desktop` 启动支持界面热更新的开发窗口，`npm run test:desktop` 执行真实 Electron 窗口文件流程检查，`npm run test:desktop:experience` 检查 DPI、画布交互和本地项目副本的大图表现。桌面普通运行使用打包在本地的界面资源，不依赖网页版的 5178 服务。
+- 桌面端打开项目后，Ctrl+S 保存回已关联文件，Ctrl+Shift+S 打开“另存为”。
+- 网页端通过浏览器原生文件选择器打开项目时会关联源文件，授权写入后可用 Ctrl+S 写回。需要写回源文件时，建议使用支持该选择器的桌面版 Chrome 或 Edge。
+- 网页端通过普通文件输入打开时只读取 JSON。可用“另存为”（Ctrl+Shift+S）选择保存目标，浏览器缺少原生保存选择器时会下载副本。
+- 桌面端可自动读取项目当前引用的旁置快照，网页端需在“运行数据”中手动选择快照文件。引用外部快照的项目会阻止普通“另存为”。要分享本次运行，可用“运行数据”中的“导出当前运行单文件”。要保留外部快照，请整体复制项目 JSON 和对应的快照目录。
+
+桌面命令也在根目录执行：`npm run desktop` 构建并打开本地窗口，`npm run dev:desktop` 启动支持界面热更新的开发窗口，`npm run test:desktop` 执行真实 Electron 窗口文件流程检查，`npm run test:desktop:experience` 检查 DPI、画布交互和本地项目副本的大图表现。桌面普通运行使用本地界面资源，无需启动网页版服务。体验测试默认读取 `data/pluto.tensor-trail.json`，缺少该文件时，请用 `npm run test:desktop:experience -- --project <路径>` 指定本地项目。
 
 ## 开发与验证
 
@@ -104,10 +109,11 @@ docs/             设计、使用指南和验证记录
 - [AI 操作指南](docs/AI操作指南.md)
 - [Windows 桌面版实施台账](docs/Windows桌面版实施台账.md)：已完成 M1 与 M2（D0～D5）；下一阶段 D6 制作 Windows 安装包。
 - [Windows 桌面体验验收](docs/Windows桌面体验验收.md)：三种进程 DPI、54 项体验观察、大图测量与验证边界。
+- [Ubuntu 桌面验证](docs/Ubuntu桌面验证.md)记录了在 Ubuntu 20.04.6 LTS x86_64 / X11 上的实测范围。
 
 ## 加载真实训练输入
 
-可选的 Python 适配器可以在 PyTorch 模型的 `forward(data)` 入口采集字典字段、shape 和 dtype，再更新保存的 Tensor Trail 项目。PLUTO 已提供复用当前训练配置的采集脚本；网页仍不依赖 PyTorch。操作和实际采集结果见[训练输入采集](docs/训练输入采集.md)。当前仅采集输入结构，不绘制反向传播图。
+可选的 Python 适配器可在 PyTorch 模型的 `forward(data)` 入口采集输入元数据，包括字典字段、shape、dtype 和 `requires_grad`。采集结果写入独立快照，主图登记运行引用并保留原有静态输入契约。网页可独立于 PyTorch 使用。采集流程及外部 PLUTO 项目的历史集成示例见[训练输入采集](docs/训练输入采集.md)。
 
 ## 让 AI 搭建模型
 
@@ -118,11 +124,16 @@ AI 生成 Recipe JSON 后，可在页面顶部“AI 构建”中粘贴，检查�
 ```sh
 npm run build:agent
 node packages/cli/scripts/agent.mjs describe
+node packages/cli/scripts/agent.mjs describe --internal
+node packages/cli/scripts/agent.mjs schema recipe
 node packages/cli/scripts/agent.mjs build examples/cnn-transformer.recipe.json --out model.json
+node packages/cli/scripts/agent.mjs validate model.json
 node packages/cli/scripts/agent.mjs patch model.json examples/swiglu.patch.json --out next.json
 ```
 
-生成的项目可用网页“导入”打开。页面 API 为 `window.tensorTrail`，提供读取、构建、校验、批量修改及携带 revision 的应用操作。CLI 只生成文件，不自动修改打开的网页。当前未接入内置大模型、MCP 或 HTTP REST 服务，接入步骤及可交给 AI 的工作指令见 [AI 操作指南](docs/AI操作指南.md)。
+生成的项目可在网页顶部点击“打开”，或在空白页点击“打开项目”。页面 API 为 `window.tensorTrail`，提供读取、构建、校验、批量修改及携带 revision 的应用操作。CLI 只生成文件，不自动修改打开的网页。当前未接入内置大模型、MCP 或 HTTP REST 服务，接入步骤及可交给 AI 的工作指令见 [AI 操作指南](docs/AI操作指南.md)。
+
+`--out` 默认拒绝覆盖已有文件，显式传入 `--force` 才允许覆盖。CLI 不会自动读取旁置快照。网页打开项目和 CLI 读取 JSON 时，每个输入均限 3,000,000 字节。节点数、边数、嵌套深度和 Patch 操作数的上限见 [CLI 约定与限制](docs/AI操作指南.md#cli-约定与限制)。
 
 增量绘图支持 `--draft` / `{mode: 'draft'}`：允许暂缺最终输出和未连完的节点，结构错误及已知尺寸错误仍会阻止应用。Patch 默认保留已有节点坐标、连线拐点及标签位置；新节点可指定 `position`，已有节点可用 `set_position` 移动。只有显式 `layout` 操作或 `--layout auto` 才重排。
 
@@ -136,7 +147,7 @@ node packages/cli/scripts/agent.mjs patch ../SparseWorld.tensor-trail.json examp
 
 ## 当前范围与后续方向
 
-当前为**形状模式**，不运行真实张量计算、训练、梯度或注意力权重。符号维度仅做有限传播；自定义变体保存具体子图快照，暂不提供内部参数提升或任意节点封装界面。
+当前为**形状模式**，提供形状推导与约束检查。真实张量数值计算、模型训练、梯度和注意力权重计算均超出当前范围。符号维度仅做有限传播；自定义变体保存具体子图快照，暂不提供内部参数提升或任意节点封装界面。
 
 后续计划包括 RoPE / GQA 等算子、更多 Transformer 变体、教学动画，以及用于数值前向和形状对照的 PyTorch 后端。具体支持范围见使用指南。
 
