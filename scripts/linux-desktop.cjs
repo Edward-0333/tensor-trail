@@ -1,7 +1,6 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const crypto = require('node:crypto');
 const { spawn, spawnSync } = require('node:child_process');
 const { installLauncher, launcherPath } = require('./linux-launcher.cjs');
 const root = path.resolve(__dirname, '..');
@@ -63,17 +62,7 @@ function main() {
   if (!process.env.DISPLAY && !process.env.WAYLAND_DISPLAY)
     throw Error('未检测到图形会话。请在 Ubuntu 桌面终端运行；仅 SSH 终端需要先配置图形显示。');
   if (process.getuid?.() === 0) throw Error('请以普通用户运行桌面端，不要使用 sudo。');
-  const fingerprint = crypto
-    .createHash('sha256')
-    .update(fs.readFileSync(path.join(root, 'package-lock.json')))
-    .update(`${process.platform}:${process.arch}`)
-    .digest('hex');
-  const stamp = path.join(root, 'node_modules/.tensor-trail-linux-lock');
-  const installed = fs.existsSync(path.join(root, 'node_modules/.package-lock.json'));
-  if (!installed || !fs.existsSync(stamp) || fs.readFileSync(stamp, 'utf8') !== fingerprint) {
-    run(['scripts/npm.cjs', 'ci', '--ignore-scripts', '--no-audit', '--no-fund']);
-    fs.writeFileSync(stamp, fingerprint);
-  }
+  run(['scripts/ensure-dependencies.cjs', '--ignore-scripts']);
   run(['scripts/npm.cjs', 'run', 'setup:desktop']);
   // Explain missing system libraries before Chromium can fail without a window.
   const binary = require('electron');

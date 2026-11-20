@@ -27,6 +27,7 @@ import { resolveForwardView } from '@tensor-trail/model-core/core/hierarchy';
 import { inferProject, resultAt } from '@tensor-trail/model-core/core/engine';
 import { forLoopCount } from '@tensor-trail/model-core/core/forLoop';
 import { shapeText } from '@tensor-trail/model-core/core/types';
+import { MAX_PROJECT_BYTES } from '@tensor-trail/model-core/core/serialization';
 import { registry } from '@tensor-trail/model-core/modules/index';
 import { example, type ExampleKind } from '@tensor-trail/model-core/modules/examples';
 import { useEditor } from './editor/store';
@@ -388,7 +389,7 @@ export default function App() {
             if (file) {
               const documentId = useEditor.getState().documentId;
               try {
-                if (file.size > 3_000_000) throw new Error('文件超过 3 MB。');
+                if (file.size > MAX_PROJECT_BYTES) throw new Error('文件超过 3 MB。');
                 const text = await file.text();
                 if (useEditor.getState().documentId === documentId)
                   useEditor.getState().importText(text);

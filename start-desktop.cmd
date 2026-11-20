@@ -8,10 +8,8 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-if not exist node_modules\.package-lock.json (
-  node scripts/npm.cjs ci --ignore-scripts --no-audit --no-fund
-  if errorlevel 1 goto failed
-)
+node scripts/ensure-dependencies.cjs --ignore-scripts
+if errorlevel 1 goto failed
 node scripts/npm.cjs run setup:desktop
 if errorlevel 1 goto failed
 node scripts/npm.cjs run build:desktop

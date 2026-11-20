@@ -2,12 +2,11 @@ import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import type { DocumentState, DocumentVersion } from '@tensor-trail/platform-api';
-import { parseProject } from '@tensor-trail/model-core/core/serialization';
+import { MAX_PROJECT_BYTES, parseProject } from '@tensor-trail/model-core/core/serialization';
 import { registry } from '@tensor-trail/model-core/modules';
 import type { FileToken } from '../shared/protocol';
 import { parseRuntimeSnapshot, safeSnapshotPath } from '@tensor-trail/model-core/core/runtimeSnapshot';
 
-const MAX = 3_000_000;
 export class FileFault extends Error {
   constructor(
     public code: string,
@@ -17,7 +16,7 @@ export class FileFault extends Error {
   }
 }
 export function checkProject(text: string) {
-  if (typeof text !== 'string' || Buffer.byteLength(text, 'utf8') > MAX)
+  if (typeof text !== 'string' || Buffer.byteLength(text, 'utf8') > MAX_PROJECT_BYTES)
     throw new FileFault('FILE_SIZE', '项目文件超过 3 MB。');
   const clean = text.replace(/^\uFEFF/, '');
   try {
@@ -36,17 +35,17 @@ export async function readLimited(file: string) {
   const info = await fs.lstat(file);
   if (!info.isFile() || info.isSymbolicLink())
     throw new FileFault('FILE_TYPE', '请选择实际的 JSON 项目文件。');
-  if (info.size > MAX) throw new FileFault('FILE_SIZE', '项目文件超过 3 MB。');
+  if (info.size > MAX_PROJECT_BYTES) throw new FileFault('FILE_SIZE', '项目文件超过 3 MB。');
   const handle = await fs.open(file, 'r');
   try {
     const chunks: Buffer[] = [];
     let total = 0;
     while (true) {
-      const buffer = Buffer.alloc(Math.min(65536, MAX + 1 - total));
+      const buffer = Buffer.alloc(Math.min(65536, MAX_PROJECT_BYTES + 1 - total));
       const { bytesRead } = await handle.read(buffer);
       if (!bytesRead) break;
       total += bytesRead;
-      if (total > MAX) throw new FileFault('FILE_SIZE', '项目文件超过 3 MB。');
+      if (total > MAX_PROJECT_BYTES) throw new FileFault('FILE_SIZE', '项目文件超过 3 MB。');
       chunks.push(buffer.subarray(0, bytesRead));
     }
     return Buffer.concat(chunks);
@@ -82,7 +81,8 @@ export async function replaceFile(
       'FILE_CHANGED',
       '文件已被其他程序修改或删除，请重新打开，或另存为以保留当前编辑。',
     );
-  if (expected !== null && !((await fs.stat(file)).mode & 0o200))
+  const original = expected === null ? undefined : await fs.stat(file);
+  if (original && !(original.mode & 0o200))
     throw new FileFault('FILE_READONLY', '文件为只读，请解除只读或另存为。');
   const temporary = path.join(path.dirname(file), `.${path.basename(file)}.${randomUUID()}.tmp`);
   let created = false;
@@ -91,6 +91,12 @@ export async function replaceFile(
     created = true;
     try {
       await handle.writeFile(text, 'utf8');
+      if (original && process.platform !== 'win32') {
+        // A replacement in a shared directory must stay accessible to the same group.
+        const temporaryInfo = await handle.stat();
+        if (temporaryInfo.gid !== original.gid) await handle.chown(temporaryInfo.uid, original.gid);
+        await handle.chmod(original.mode & 0o777);
+      }
       await handle.sync();
     } finally {
       await handle.close();

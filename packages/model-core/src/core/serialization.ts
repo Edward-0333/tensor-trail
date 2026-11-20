@@ -25,31 +25,46 @@ const identifier = (value: unknown): value is string =>
 const label = (value: unknown): value is string =>
   typeof value === 'string' && value.length > 0 && value.length <= 200;
 
+export const MAX_PROJECT_BYTES = 3_000_000;
+const encoder = new TextEncoder();
+function utf8Bytes(text: string): number {
+  return /[^\x00-\x7f]/.test(text) ? encoder.encode(text).byteLength : text.length;
+}
+function fitsProjectFile(text: string): boolean {
+  // A UTF-16 code unit takes at most three bytes in UTF-8.
+  return text.length <= MAX_PROJECT_BYTES / 3 ||
+    (text.length <= MAX_PROJECT_BYTES && utf8Bytes(text) <= MAX_PROJECT_BYTES);
+}
+
+export function checkProjectFileSize(text: string): void {
+  requireThat(fitsProjectFile(text), '项目文件超过 3 MB。');
+}
+
 export function parseProject(text: string, registry: Registry): Project {
-  requireThat(text.length <= 3_000_000, '项目文件超过 3 MB，第一版暂不支持如此大的项目。');
+  checkProjectFileSize(text);
   return validateProjectObject(JSON.parse(text), registry);
 }
 
 /** Validate a private draft directly, avoiding a stringify/parse clone on every edit. */
 export function validateProjectObject(value: unknown, registry: Registry): Project {
-  // Count pretty-printed JSON without allocating a project-sized string or parsing it again.
+  // Count compact UTF-8 JSON so existing files that fit without indentation remain editable.
   let size = 0;
   const ancestors = new Set<object>();
   const count = (item: unknown, depth = 0): void => {
     requireThat(depth <= 80, 'JSON 嵌套过深。');
     if (item && typeof item === 'object') {
-      requireThat(!ancestors.has(item), '项目不能包含循环引用。'); ancestors.add(item);
-      const entries = Array.isArray(item) ? item.map(child=>[undefined,child] as const)
-        : Object.entries(item).filter(([,child])=>child!==undefined);
-      size += 2;
-      for (const [key,child] of entries) {
-        size += 2 + (depth+1)*2 + (key === undefined ? 0 : JSON.stringify(key).length+2);
-        count(child,depth+1);
+      requireThat(!ancestors.has(item), '项目不能包含循环引用。');
+      ancestors.add(item);
+      const entries = Array.isArray(item) ? item.map(child => [undefined, child] as const)
+        : Object.entries(item).filter(([, child]) => child !== undefined);
+      size += 2 + Math.max(0, entries.length - 1); // Braces or brackets, and commas.
+      for (const [key, child] of entries) {
+        if (key !== undefined) size += utf8Bytes(JSON.stringify(key)) + 1;
+        count(child, depth + 1);
       }
-      if(entries.length) size += depth*2;
       ancestors.delete(item);
-    } else size += (JSON.stringify(item) ?? 'null').length;
-    requireThat(size <= 3_000_000, '项目文件超过 3 MB。');
+    } else size += utf8Bytes(JSON.stringify(item) ?? 'null');
+    requireThat(size <= MAX_PROJECT_BYTES, '项目文件超过 3 MB。');
   };
   count(value);
   requireThat(
@@ -251,4 +266,7 @@ export function validateProjectObject(value: unknown, registry: Registry): Proje
   }
   return value as unknown as Project;
 }
-export const serializeProject = (project: Project) => JSON.stringify(project, null, 2);
+export function serializeProject(project: Project): string {
+  const pretty = JSON.stringify(project, null, 2);
+  return fitsProjectFile(pretty) ? pretty : JSON.stringify(project);
+}

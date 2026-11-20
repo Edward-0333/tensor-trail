@@ -1,5 +1,7 @@
 import type { Project } from '@tensor-trail/model-core/core/types';
-import { parseProject, serializeProject } from '@tensor-trail/model-core/core/serialization';
+import {
+  checkProjectFileSize, parseProject, serializeProject,
+} from '@tensor-trail/model-core/core/serialization';
 import { registry } from '@tensor-trail/model-core/modules/index';
 import type { RuntimeReference, RuntimeSnapshot } from '@tensor-trail/model-core/core/types';
 import {
@@ -130,8 +132,7 @@ export class ProjectFiles {
 
   save = async (saveAs = false): Promise<boolean> => {
     if (!this.begin()) return false;
-    const doc = this.host.read(),
-      text = this.text(doc);
+    const doc = this.host.read();
     const previous = this.associations.get(doc.documentId);
     try {
       if (doc.hasProject === false) {
@@ -144,6 +145,8 @@ export class ProjectFiles {
         );
         return false;
       }
+      const text = this.text(doc);
+      checkProjectFileSize(text);
       let handle = saveAs ? undefined : previous?.handle;
       if (!handle) {
         if (!this.host.pickSave) {
@@ -221,6 +224,7 @@ export class ProjectFiles {
     try {
       if (!doc.hasProject) throw Error('请先打开或新建项目。');
       const text = serializeProject(portableProject(doc.project, snapshot));
+      checkProjectFileSize(text);
       const name = projectFileName(doc.project).replace(
         '.tensor-trail.json',
         '.portable.tensor-trail.json',

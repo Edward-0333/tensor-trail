@@ -8,17 +8,10 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-node scripts/npm.cjs --version >nul
+node scripts/ensure-dependencies.cjs
 if errorlevel 1 (
   pause
   exit /b 1
-)
-if not exist node_modules\.package-lock.json (
-  node scripts/npm.cjs ci --no-audit --no-fund
-  if errorlevel 1 (
-    pause
-    exit /b 1
-  )
 )
 node scripts/npm.cjs run dev:web -- --port 5178 --open
 pause

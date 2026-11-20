@@ -160,6 +160,20 @@ describe('桌面主进程文件会话', () => {
     expect(JSON.parse(await fs.readFile(target, 'utf8')).name).toBe('只读原件');
     await files.write(token.key, project('允许保存'), state());
   });
+  it.skipIf(process.platform === 'win32')('保存保留原项目的共享权限，新文件默认私有', async () => {
+    const files = new DocumentFiles();
+    files.update(state());
+    const target = path.join(directory, 'shared.json');
+    const token = await files.issue(target, 'save', state());
+    await files.write(token.key, project('首次保存'), state());
+    expect((await fs.stat(target)).mode & 0o777).toBe(0o600);
+    await fs.chmod(target, 0o664);
+    const original = await fs.stat(target);
+    await files.write(token.key, project('更新共享项目'), state());
+    const updated = await fs.stat(target);
+    expect(updated.mode & 0o777).toBe(0o664);
+    expect(updated.gid).toBe(original.gid);
+  });
   it('无效、超限 JSON 不建立可读文件关联', async () => {
     const files = new DocumentFiles();
     files.update(state());

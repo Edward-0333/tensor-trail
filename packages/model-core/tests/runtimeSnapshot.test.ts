@@ -135,6 +135,17 @@ describe('Independent runtime snapshots', () => {
     p.cycle = p;
     expect(() => validateProjectObject(p, registry)).toThrow('循环');
   });
+  it('round-trips compact UTF-8 JSON exactly at the file limit and rejects one extra byte', () => {
+    const p = { ...project(), '备注': '' };
+    const remaining = 3_000_000 - Buffer.byteLength(JSON.stringify(p));
+    p.备注 = '图'.repeat(Math.floor(remaining / 3)) + 'x'.repeat(remaining % 3);
+    const text = serializeProject(p);
+    expect(Buffer.byteLength(text)).toBe(3_000_000);
+    expect(parseProject(text, registry)).toEqual(p);
+    expect(() => parseProject(text + ' ', registry)).toThrow('3 MB');
+    p.备注 += 'x';
+    expect(() => validateProjectObject(p, registry)).toThrow('3 MB');
+  });
   it('accepts dictionary inputs up to the same depth as static schemas', () => {
     let value: unknown = { shape: [2], dtype: 'float32' };
     for (let i = 0; i < 8; i++) value = { kind: 'dict', fields: { x: value } };

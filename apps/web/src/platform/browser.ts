@@ -1,4 +1,5 @@
 import type { EditorPlatform, ProjectFile } from '@tensor-trail/platform-api';
+import { checkProjectFileSize, MAX_PROJECT_BYTES } from '@tensor-trail/model-core/core/serialization';
 
 export interface BrowserFileHandle {
   name: string;
@@ -21,10 +22,11 @@ export function browserProjectFile(handle: BrowserFileHandle): ProjectFile {
     name: handle.name,
     async readText() {
       const file = await handle.getFile();
-      if (file.size > 3_000_000) throw new Error('文件超过 3 MB。');
+      if (file.size > MAX_PROJECT_BYTES) throw new Error('文件超过 3 MB。');
       return file.text();
     },
     async writeText(text, stillCurrent) {
+      checkProjectFileSize(text);
       if (handle.requestPermission &&
           await handle.requestPermission({ mode: 'readwrite' }) !== 'granted')
         throw new Error('未获得文件写入权限，请允许访问后重试。');

@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -52,6 +53,37 @@ describe('跨平台 Node/npm 定位', () => {
     file('bin/npm', '#!/bin/sh\nexit 0');
     expect(() => resolveNpmCli(node, { PATH: path.dirname(node) })).toThrow('npm CLI not found');
   });
+});
+
+it('启动器按锁文件更新已有安装，安装失败后下次启动重试', () => {
+  const entry = file('scripts/ensure-dependencies.cjs',
+    fs.readFileSync(require.resolve('../scripts/ensure-dependencies.cjs'), 'utf8'));
+  const lock = file('package-lock.json', 'first lock');
+  const installed = file('node_modules/.package-lock.json');
+  const calls = file('calls', '');
+  const npm = file('scripts/npm.cjs', `
+    const fs = require('node:fs');
+    fs.appendFileSync('calls', process.argv.slice(2).join(' ') + '\\n');
+    if (fs.existsSync('fail')) process.exit(1);
+    fs.writeFileSync('node_modules/.package-lock.json', '{}');
+  `);
+  const run = (...args: string[]) => spawnSync(process.execPath, [entry, ...args], { encoding: 'utf8' });
+  expect(run('--ignore-scripts').status).toBe(0);
+  expect(fs.readFileSync(calls, 'utf8')).toBe('ci --no-audit --no-fund --ignore-scripts\n');
+  expect(run().status).toBe(0);
+  expect(fs.readFileSync(calls, 'utf8').trim().split('\n')).toHaveLength(1);
+
+  fs.writeFileSync(lock, 'new lock');
+  const failure = file('fail');
+  expect(run().status).toBe(1);
+  fs.unlinkSync(failure);
+  expect(run().status).toBe(0);
+  fs.unlinkSync(installed);
+  expect(run().status).toBe(0);
+  expect(fs.readFileSync(calls, 'utf8').trim().split('\n')).toHaveLength(4);
+  // A healthy tree should start without invoking npm at all.
+  fs.unlinkSync(npm);
+  expect(run().status).toBe(0);
 });
 
 describe.skipIf(process.platform !== 'linux')('Ubuntu 应用菜单', () => {

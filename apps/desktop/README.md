@@ -4,7 +4,7 @@ Windows 与 Ubuntu 共用同一套 Electron 主进程、编辑器、模型核心
 
 ## 启动
 
-Windows 双击项目根目录的 [start-desktop.cmd](../../start-desktop.cmd)。脚本检查依赖和 Electron、构建当前源码，再启动独立窗口，命令窗口随后退出。网页版仍使用根 `start.cmd`。
+Windows 双击项目根目录的 [start-desktop.cmd](../../start-desktop.cmd)。桌面和网页启动脚本会在首次运行或根 `package-lock.json` 变化后自动安装依赖。桌面脚本随后检查 Electron、构建当前源码并打开独立窗口。网页版使用根 `start.cmd`。
 
 开发环境使用 Node 24.22.2 LTS；本机启动脚本可使用 `.tools/` 中的项目专用 Node，未改变全局 Node 或 Conda。首次安装需要下载依赖与 Electron Windows 运行时，缓存位于 `.npm-cache/electron/`。
 
