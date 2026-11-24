@@ -34,6 +34,9 @@ export type Operation =
   | { op: 'duplicate_linked'; path?: string[]; source: string; id: string; position?: { x: number; y: number } }
   | { op: 'link_value'; path?: string[]; source: string; id: string }
   | { op: 'remove_node'; path?: string[]; id: string }
+  | { op: 'collapse_calculations'; path?: string[]; ids: string[]; id?: string; label?: string; summary?: string; formula?: string; position?: { x: number; y: number } }
+  | { op: 'expand_calculation'; path?: string[]; id: string }
+  | { op: 'auto_simplify'; path?: string[]; recursive?: boolean; min_size?: number }
   | { op: 'set_params'; path?: string[]; id: string; params: Params }
   | { op: 'rename_node'; path?: string[]; id: string; label: string }
   | { op: 'set_position'; path?: string[]; id: string; position: { x: number; y: number } }

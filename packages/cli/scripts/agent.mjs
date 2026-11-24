@@ -2,8 +2,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-const maxFileBytes = 3_000_000;
-
 // stdout is always one JSON document. No network, credentials or arbitrary-code execution.
 const help = {
   usage: [
@@ -19,27 +17,27 @@ const help = {
 function usage(message) {
   throw new Error(message);
 }
-async function read(file) {
+async function read(file, maxFileBytes) {
   let bytes;
   if (file === '-') {
     const chunks = [];
     let size = 0;
     for await (const chunk of process.stdin) {
       size += chunk.length;
-      if (size > maxFileBytes) usage('Input exceeds 3 MB.');
+      if (size > maxFileBytes) usage('Input exceeds 10 MB.');
       chunks.push(chunk);
     }
     bytes = Buffer.concat(chunks);
   } else {
     const handle = await fs.open(file, 'r');
     try {
-      if ((await handle.stat()).size > maxFileBytes) usage('Input exceeds 3 MB.');
+      if ((await handle.stat()).size > maxFileBytes) usage('Input exceeds 10 MB.');
       bytes = await handle.readFile();
     } finally {
       await handle.close();
     }
   }
-  if (bytes.length > maxFileBytes) usage('Input exceeds 3 MB.');
+  if (bytes.length > maxFileBytes) usage('Input exceeds 10 MB.');
   return JSON.parse(bytes.toString('utf8').replace(/^\uFEFF/, ''));
 }
 try {
@@ -82,6 +80,7 @@ try {
     } catch {
       usage('Agent bundle unavailable. Run npm run build:agent first.');
     }
+    const maxFileBytes = api.MAX_PROJECT_BYTES;
     let result;
     if (command === 'describe' && positional.length <= 1) {
       result = api.describeModules(internal);
@@ -98,11 +97,11 @@ try {
         usage('Schema must be recipe, patch, validationOptions or patchOptions.');
       result = positional.length ? schemas[positional[0]] : schemas;
     } else if (command === 'build' && positional.length === 1)
-      result = api.buildModel(await read(positional[0]), options);
+      result = api.buildModel(await read(positional[0], maxFileBytes), options);
     else if (command === 'validate' && positional.length === 1)
-      result = api.validateModel(await read(positional[0]), options);
+      result = api.validateModel(await read(positional[0], maxFileBytes), options);
     else if (command === 'patch' && positional.length === 2)
-      result = api.patchModel(await read(positional[0]), await read(positional[1]), {
+      result = api.patchModel(await read(positional[0], maxFileBytes), await read(positional[1], maxFileBytes), {
         ...options,
         ...(layout ? { layout } : {}),
       });
@@ -110,7 +109,7 @@ try {
     if (out && result.ok && result.project) {
       const text = api.serializeProject(result.project);
       const bytes = Buffer.byteLength(text);
-      if (bytes > maxFileBytes) usage('Output exceeds 3 MB.');
+      if (bytes > maxFileBytes) usage('Output exceeds 10 MB.');
       await fs.writeFile(out, bytes < maxFileBytes ? text + '\n' : text, {
         flag: force ? 'w' : 'wx',
       });

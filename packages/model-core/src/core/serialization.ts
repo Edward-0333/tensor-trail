@@ -1,3 +1,5 @@
+import { fitsProjectFile, MAX_PROJECT_BYTES, MAX_EXPANDED_NODES, MAX_EDGES_PER_GRAPH, utf8Bytes } from './limits';
+export { MAX_PROJECT_BYTES } from './limits';
 import type { Graph, ModelNode, Project, Registry } from './types';
 import { graphIssues, orderGraph } from './graph';
 import { planAttributes } from './attributes';
@@ -22,22 +24,11 @@ const identifier = (value: unknown): value is string =>
   typeof value === 'string' &&
   /^[A-Za-z0-9_-]{1,100}$/.test(value) &&
   !['__proto__', 'constructor', 'prototype'].includes(value);
-const label = (value: unknown): value is string =>
-  typeof value === 'string' && value.length > 0 && value.length <= 200;
-
-export const MAX_PROJECT_BYTES = 3_000_000;
-const encoder = new TextEncoder();
-function utf8Bytes(text: string): number {
-  return /[^\x00-\x7f]/.test(text) ? encoder.encode(text).byteLength : text.length;
-}
-function fitsProjectFile(text: string): boolean {
-  // A UTF-16 code unit takes at most three bytes in UTF-8.
-  return text.length <= MAX_PROJECT_BYTES / 3 ||
-    (text.length <= MAX_PROJECT_BYTES && utf8Bytes(text) <= MAX_PROJECT_BYTES);
-}
+const label = (value: unknown, maxLength = 200): value is string =>
+  typeof value === 'string' && value.length > 0 && value.length <= maxLength;
 
 export function checkProjectFileSize(text: string): void {
-  requireThat(fitsProjectFile(text), '项目文件超过 3 MB。');
+  requireThat(fitsProjectFile(text), '项目文件超过 10 MB。');
 }
 
 export function parseProject(text: string, registry: Registry): Project {
@@ -64,7 +55,7 @@ export function validateProjectObject(value: unknown, registry: Registry): Proje
       }
       ancestors.delete(item);
     } else size += utf8Bytes(JSON.stringify(item) ?? 'null');
-    requireThat(size <= MAX_PROJECT_BYTES, '项目文件超过 3 MB。');
+    requireThat(size <= MAX_PROJECT_BYTES, '项目文件超过 10 MB。');
   };
   count(value);
   requireThat(
@@ -92,7 +83,7 @@ export function validateProjectObject(value: unknown, registry: Registry): Proje
     );
     total += candidate.nodes.length;
     requireThat(
-      total <= 2000 && candidate.edges.length <= 8000,
+      total <= MAX_EXPANDED_NODES && candidate.edges.length <= MAX_EDGES_PER_GRAPH,
       '项目节点或连接数量超过第一版上限。',
     );
     const inlet = new Set<string>(),
@@ -102,7 +93,7 @@ export function validateProjectObject(value: unknown, registry: Registry): Proje
         record(node) &&
           identifier(node.id) &&
           label(node.type) &&
-          label(node.label) &&
+          label(node.label, node.type === 'CalculationGroup' ? 240 : 200) &&
           node.definitionVersion === 1,
         '节点 ID、名称或定义版本无效。',
       );
@@ -146,6 +137,12 @@ export function validateProjectObject(value: unknown, registry: Registry): Proje
         node.valueSource === undefined || identifier(node.valueSource),
         '共享值来源必须是有效节点 ID。',
       );
+      if (node.calculationOrigin !== undefined)
+        requireThat(type === 'CalculationGroup' && record(node.calculationOrigin) &&
+          Number.isFinite(node.calculationOrigin.x) && Number.isFinite(node.calculationOrigin.y), '组合原位置无效。');
+      if (node.calculationRegionOutputs !== undefined)
+        requireThat(type === 'CalculationGroup' && Array.isArray(node.calculationRegionOutputs) &&
+          node.calculationRegionOutputs.every(identifier), '组合内部分区输出 ID 无效。');
       const layout = node.portLayout;
       if (node.loopFeedbackRoutes !== undefined) {
         requireThat(type === 'ForLoop' && record(node.loopFeedbackRoutes) &&
@@ -204,6 +201,8 @@ export function validateProjectObject(value: unknown, registry: Registry): Proje
     if (depth > 0 && ['EmbeddingXYZInit', 'EmbeddingXYZModuleInit'].includes(ownerType ?? ''))
       requireThat(inlet.size === 0 && outlet.size === 1 && outlet.has('out'),
         'Embedding 初始化子图不能接收 forward 输入，且必须有唯一 out 出口。');
+    else if (depth > 0 && ownerType === 'CalculationGroup')
+      requireThat(outlet.size > 0, '计算组合子图至少需要一个 Outlet。');
     else if (depth > 0)
       requireThat(
         inlet.size > 0 && (outlet.size > 0 || ownerType === 'Submodule'),

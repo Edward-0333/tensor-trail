@@ -7,7 +7,7 @@ import {
 } from '@tensor-trail/model-core/editing/clipboard';
 import { example } from '@tensor-trail/model-core/modules/examples';
 import { clone, type Graph, type ModelNode } from '@tensor-trail/model-core/core/types';
-import { parseProject } from '@tensor-trail/model-core/core/serialization';
+import { MAX_PROJECT_BYTES, parseProject } from '@tensor-trail/model-core/core/serialization';
 import { registry } from '@tensor-trail/model-core/modules/index';
 
 function linkedCopy(source: ModelNode, id: string): ModelNode {
@@ -25,6 +25,12 @@ function boundaryGraph(): Graph {
 }
 
 describe('图形剪贴板协议', () => {
+  it('counts UTF-8 bytes including the fragment prefix', () => {
+    const empty = { nodes: [], edges: [] };
+    const text = clipboardText(empty);
+    expect(readClipboard(text.padEnd(MAX_PROJECT_BYTES))).toEqual(empty);
+    expect(() => readClipboard(text.padEnd(MAX_PROJECT_BYTES - 2) + '图')).toThrow('10 MB');
+  });
   it('往返保留模块、子图、端口方向与边框色', () => {
     const g = example().graph;
     g.nodes[0].tensorBorderColor = '#dbeafe';

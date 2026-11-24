@@ -6,6 +6,7 @@ import { ports } from '@tensor-trail/model-core/core/graph';
 import type { ModelNode, NodeResult, Params } from '@tensor-trail/model-core/core/types';
 import { registry } from '@tensor-trail/model-core/modules';
 import { ModuleNode, type TrailNode } from '../src/views/ModuleNode';
+import { NodeLibrary } from '../src/editor/NodeLibrary';
 import { ModuleGlyph } from '../src/views/ModuleGlyph';
 import { isCountContract, valueEdgeLabel, valueEdgeStyle } from '../src/views/valueEdgeStyle';
 
@@ -28,6 +29,24 @@ function render(type: string, params: Params = {}, options: {
   return html;
 }
 describe('Compact selection preparation operators', () => {
+  it('offers all six standard tensor operators in the node library', () => {
+    const html = renderToStaticMarkup(createElement(NodeLibrary, { searchRef: { current: null } }));
+    for (const type of ['Sigmoid', 'Log', 'Sqrt', 'Clamp', 'Chunk', 'TopK'])
+      expect(html).toContain(`aria-label="${type}，拖入画布添加"`);
+  });
+  it.each<[string, Params, string, string[]]>([
+    ['Sigmoid', {}, 'sigmoid()', ['out']],
+    ['Log', { log1p: true }, 'log1p()', ['out']],
+    ['Sqrt', {}, 'sqrt()', ['out']],
+    ['Clamp', { min: '0' }, 'clamp(0, None)', ['out']],
+    ['Chunk', { chunks: 9 }, 'chunk(9, dim=-1)', Array.from({ length: 9 }, (_, i) => 'out' + i)],
+    ['TopK', { largest: false }, 'topk(8, dim=-1, largest=False)', ['values', 'indices']],
+  ])('renders %s compactly with its named handles', (type, params, label, outputs) => {
+    const html = render(type, params);
+    expect(html).toContain('compact-operation-node');
+    expect(html).toContain(`<code>${label}</code>`);
+    for (const port of ['in', ...outputs]) expect(html).toContain(`data-handleid="${port}"`);
+  });
   it.each([
     ['IntegerSubtract', 'a - b'], ['IntegerMinimum', 'min(a, b)'], ['IntegerMaximum', 'max(a, b)'],
   ])('shows %s as a compact operation', (type, label) => {

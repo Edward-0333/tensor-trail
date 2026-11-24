@@ -11,6 +11,7 @@ import {
   Unlink,
 } from 'lucide-react';
 import type { Field, Graph, GraphResult, ModelNode, PortSide, ValueSpec } from '@tensor-trail/model-core/core/types';
+import { canMergeCalculationSet } from '@tensor-trail/model-core/core/calculationGroups';
 import { graphAt, ports } from '@tensor-trail/model-core/core/graph';
 import { resolveForwardView } from '@tensor-trail/model-core/core/hierarchy';
 import { registry } from '@tensor-trail/model-core/modules/index';
@@ -220,6 +221,8 @@ function ParamField({
       </label>
     );
   if (
+    (node.type === 'CalculationGroup' && ['summary', 'formula'].includes(field.key)) ||
+    (node.type === 'SemanticOp' && ['summary', 'formula', 'inputs', 'outputs', 'output_specs'].includes(field.key)) ||
     (['View', 'Reshape'].includes(node.type) && field.key === 'shape') ||
     (node.type === 'Repeat' && field.key === 'repeats')
   )
@@ -235,7 +238,8 @@ function ParamField({
           disabled={disabled}
           defaultValue={String(value ?? '')}
           spellCheck={false}
-          placeholder={node.type === 'Repeat' ? '1, d0, 1' : 'd0, d1, -1'}
+          maxLength={field.maxLength}
+          placeholder={field.key === 'repeats' ? '1, d0, 1' : field.key === 'shape' ? 'd0, d1, -1' : undefined}
           onBlur={(event) => {
             if (event.target.value !== value && !update(event.target.value))
               event.target.value = String(value ?? '');
@@ -253,7 +257,7 @@ function ParamField({
             }
           }}
         />
-        <small>完成后按 Enter 或移开焦点应用；d0、d1 等名称对应整数输入端口。</small>
+        {['shape', 'repeats'].includes(field.key) && <small>完成后按 Enter 或移开焦点应用；d0、d1 等名称对应整数输入端口。</small>}
       </label>
     );
   if (node.type === 'IntegerParameter' && field.key === 'expression')
@@ -383,7 +387,9 @@ function ParamField({
           aria-label={label}
           disabled={disabled}
           type={field.kind === 'number' ? 'number' : 'text'}
+          maxLength={field.maxLength}
           min={field.min}
+          max={field.max}
           step={field.integer === false ? 'any' : 1}
           value={String(value ?? '')}
           onChange={(e) =>
@@ -584,6 +590,11 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
                 <p>{def.description}</p>
               </div>
               <div className="inspector-actions">
+                {canMergeCalculationSet(graph, state.selectedIds, registry) && (
+                  <button className="soft-button" onClick={() => state.mergeCalculationNodes(state.selectedIds)}>
+                    合并为语义计算块
+                  </button>
+                )}
                 {node.subgraph && (
                   <button
                     className="soft-button"
@@ -823,7 +834,7 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
                       field={field}
                       node={node}
                       input={result?.nodes[node.id]?.inputs.in}
-                      disabled={Boolean(node.customized && node.subgraph)}
+                      disabled={Boolean(node.customized && node.subgraph && node.type !== 'CalculationGroup')}
                     />
                   ))}
                 </section>

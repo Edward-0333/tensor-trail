@@ -51,6 +51,7 @@ export function tensorInk(background: string): string {
 }
 
 const valueReads = new Set([
+  'SemanticOp', // Each output declares or infers its own autograd state.
   'TensorFieldContract', 'ArrayToTensorExplicit', 'SelectValue', 'TensorToDevice', 'ZerosLike',
   'Input',
   'Inlet',
@@ -99,6 +100,7 @@ const shapeOnly = new Set([
   'Cast',
 ]);
 const parameterFreeMath = new Set(['MatrixInverse', 'Exp', 'Softplus', 'L2Norm', 'Add', 'Mul', 'Subtract', 'Dropout', 'Function', 'NanToNum', 'MatMul', 'ReduceSum', 'Divide', 'Concat', 'SortRowsByMax', 'MaxWithIndices', 'Sort', 'RowIndex']);
+const differentiableUnary = new Set(['Sigmoid', 'Log', 'Sqrt', 'Clamp', 'Chunk', 'TopK']);
 
 /** Conservative metadata propagation, not a PyTorch autograd simulator. */
 export function annotateTensorOutputs(
@@ -117,8 +119,13 @@ export function annotateTensorOutputs(
           ...(source.bufferRef ? { bufferRef: source.bufferRef } : {}),
         }];
       const { autograd: _previous, parameterRef: _parameter, bufferRef: _buffer, ...tensor } = value;
-      if (['MaxWithIndices', 'Sort'].includes(node.type) && port === 'indices')
+      if (['MaxWithIndices', 'Sort', 'TopK'].includes(node.type) && port === 'indices')
         return [port, { ...tensor, autograd: { requiresGrad: false, source: 'inferred' as const } }];
+      if (differentiableUnary.has(node.type) && source && isTensorSpec(source)) {
+        const state = tensorGradState(source);
+        if (state !== 'unknown')
+          return [port, { ...tensor, autograd: { requiresGrad: state === 'on', source: 'inferred' as const } }];
+      }
       const input = inputs.in;
       // Known False is safe through shape/dtype operations and parameter-free arithmetic.
       // True cannot be inferred without knowing grad mode and view/checkpoint context.

@@ -1,3 +1,4 @@
+import { MAX_PROJECT_BYTES } from '@tensor-trail/model-core/core/limits';
 import {
   app,
   BrowserWindow,
@@ -221,7 +222,7 @@ function registerIpc() {
   handle(CHANNEL.read, 1, (key) => files.read(check.text(key)));
   handle(CHANNEL.readRelated, 2, (key, relativePath) => files.readRelated(check.text(key), check.text(relativePath,500)));
   handle(CHANNEL.write, 3, (key, text, state) =>
-    files.write(check.text(key), check.text(text, 3_000_000), check.version(state)),
+    files.write(check.text(key), check.text(text, MAX_PROJECT_BYTES), check.version(state)),
   );
   handle(CHANNEL.discard, 0, async () => {
     const result = await dialog.showMessageBox(window!, {
@@ -296,12 +297,14 @@ async function createWindow() {
       });
     });
   const workArea = screen.getPrimaryDisplay().workAreaSize;
+  const preview = !app.isPackaged && process.env.TENSOR_TRAIL_OFFSCREEN === '1';
   window = new BrowserWindow({
     width: Math.min(1440, workArea.width),
     height: Math.min(940, workArea.height),
     minWidth: Math.min(900, workArea.width),
     minHeight: Math.min(640, workArea.height),
-    show: true,
+    show: !preview,
+    ...(preview && { enableLargerThanScreen: true }),
     title: 'Tensor Trail',
     icon: path.resolve(
       __dirname,
@@ -310,6 +313,7 @@ async function createWindow() {
     ),
     backgroundColor: settings.theme === 'light' ? '#f5f5f7' : '#0f121a',
     webPreferences: {
+      ...(preview && { offscreen: true, backgroundThrottling: false }),
       preload: path.resolve(__dirname, '../preload/index.cjs'),
       sandbox: true,
       contextIsolation: true,

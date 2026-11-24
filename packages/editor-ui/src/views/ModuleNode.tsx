@@ -89,6 +89,7 @@ const elementwiseLabels: Record<string, string> = {
   Divide: 'a / b',
 };
 const featureOperations = [
+  'Sigmoid', 'Log', 'Sqrt', 'Clamp', 'Chunk', 'TopK',
   'Unflatten', 'TensorCompareScalar', 'LogicalAnd', 'MatrixInverse', 'TensorToDevice',
   'DictionaryUpdate', 'SequenceLength', 'SelectValue', 'DynamicSlice', 'BooleanParameter',
   'BooleanAnd', 'BooleanNot', 'IntegerCompare', 'SingleIterationPreview', 'ReshapeLike',
@@ -133,6 +134,11 @@ const featureOperations = [
 
 function operationText(node: ModelNode, result?: NodeResult): string {
   try {
+    if (node.type === 'Sigmoid') return 'sigmoid()';
+    if (node.type === 'Log') return node.params.log1p ? 'log1p()' : 'log()';
+    if (node.type === 'Sqrt') return 'sqrt()';
+    if (node.type === 'Clamp') return `clamp(${node.params.min || 'None'}, ${node.params.max || 'None'})`;
+    if (node.type === 'Chunk') return `chunk(${node.params.chunks}, dim=${node.params.dim})`;
     if (node.type === 'Unflatten') return `unflatten(${node.params.dim}, (${node.params.sizes}))`;
     if (node.type === 'TensorCompareScalar') return `x ${{ge:'>=',le:'<=',gt:'>',lt:'<'}[String(node.params.operator)] ?? '?'} ${node.params.value}`;
     if (node.type === 'LogicalAnd') return 'logical_and';
@@ -1041,6 +1047,39 @@ function ModuleNodeContent({ data, selected }: NodeProps<TrailNode>) {
         />
         {isDictionary && <ModuleGlyph type="DictionaryGet" />}
         <code>{expression}</code>
+      </div>
+    );
+  }
+
+  const summary = String(model.params.summary ?? '').trim();
+  if (model.type === 'SemanticOp' || (model.type === 'CalculationGroup' && model.subgraph && summary)) {
+    const steps = model.subgraph?.nodes.filter(n => !['Inlet', 'Outlet'].includes(n.type)).length;
+    const badge = steps === undefined ? '语义步骤' : `折叠 · ${steps} 步`;
+    const multi = inputs.length > 1 || outputs.length > 1;
+    const labelSpace = (side: string) => multi ? Math.max(0,
+      ...(inputSide === side ? inputs : []).map(p => p.id.length),
+      ...(outputSide === side ? outputs : []).map(p => p.id.length)) * 5 : 0;
+    const left = Math.min(100, labelSpace('left')), right = Math.min(100, labelSpace('right'));
+    const formula = String(model.params.formula ?? '').trim();
+    return (
+      <div className={`semantic-card calculation-group-node ${selected ? 'selected' : ''} ${bad ? 'invalid' : ''} ${data.active ? 'step-active' : ''} ${data.dimmed ? 'dimmed' : ''}`}
+        data-testid={`node-${model.id}`} aria-label={`${badge}，${summary}`}
+        title={bad ? result?.messages.join('\n') : steps !== undefined ? '双击查看内部操作' : model.label}
+        style={{
+          minHeight: (verticalPorts + 1) * 18,
+          width: Math.max(190 + left + right, (horizontalPorts + 1) * (14 + Math.min(100, Math.max(labelSpace('top'), labelSpace('bottom'))))),
+          paddingLeft: 14 + left, paddingRight: 14 + right,
+          paddingTop: sideCount('top') && multi ? 23 : 12, paddingBottom: sideCount('bottom') && multi ? 23 : 12,
+        }}>
+        <PortHandles inputs={inputs} outputs={outputs} inputSide={inputSide} outputSide={outputSide} labels={multi} />
+        <span className="semantic-card-badge">{badge}</span>
+        <strong>{summary || model.label}</strong>
+        {formula && <code className="semantic-card-formula">{formula}</code>}
+        {model.type === 'SemanticOp' && (
+          <div className="semantic-card-outputs">
+            {outputs.map(port => <span key={port.id}>{outputs.length > 1 && `${port.id} `}{shapeText(result?.outputs[port.id])}</span>)}
+          </div>
+        )}
       </div>
     );
   }

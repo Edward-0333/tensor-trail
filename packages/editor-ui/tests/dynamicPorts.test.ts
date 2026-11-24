@@ -67,6 +67,24 @@ beforeEach(() => {
 const currentNode = (id: string) =>
   useEditor.getState().project.graph.nodes.find((node) => node.id === id)!;
 
+it('grows Chunk outputs and rejects removing a connected one atomically', () => {
+  const project = viewProject();
+  project.graph = {
+    nodes: [registry.create('Chunk', {}, 'split'), registry.create('Output', {}, 'out')],
+    edges: [],
+  };
+  useEditor.setState({ project });
+  const editor = useEditor.getState();
+  expect(editor.setParam('split', 'chunks', 9)).toBe(true);
+  editor.connect({ source: 'split', sourcePort: 'out8', target: 'out', targetPort: 'in' });
+  const before = useEditor.getState();
+  for (const count of [2, 10]) {
+    expect(editor.setParam('split', 'chunks', count)).toBe(false);
+    expect(useEditor.getState().project).toBe(before.project);
+    expect(useEditor.getState().past).toBe(before.past);
+  }
+});
+
 describe('动态输入端口的原子编辑', () => {
   it('旧 Concat 仅含 dim 仍按两路推导，可增加第三个输入且保存恢复', () => {
     useEditor.setState({ project: joiningProject('Concat', true) });

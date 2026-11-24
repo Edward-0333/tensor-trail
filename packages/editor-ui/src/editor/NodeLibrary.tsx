@@ -11,6 +11,7 @@ const moduleCategories = [
   '输入输出',
   '网络结构',
   '基础层',
+  '激活函数',
   '卷积',
   '循环网络',
   'Transformer',

@@ -1,3 +1,4 @@
+import { MAX_NODE_VISITS } from '../src/core/limits';
 import { describe, expect, it } from 'vitest';
 import { buildModel, patchModel, validateModel } from '../src/agent';
 import { inferGraph, inferProject, resultAt } from '../src/core/engine';
@@ -214,7 +215,7 @@ describe('ForEach Tensor shape inference', () => {
       remaining: p.graph.nodes.length + 1,
     });
     expect(limited.nodes.loop.status).toBe('error');
-    expect(limited.nodes.loop.messages.join()).toContain('20000');
+    expect(limited.nodes.loop.messages.join()).toContain(String(MAX_NODE_VISITS));
   });
 });
 

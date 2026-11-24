@@ -17,7 +17,7 @@ export class FileFault extends Error {
 }
 export function checkProject(text: string) {
   if (typeof text !== 'string' || Buffer.byteLength(text, 'utf8') > MAX_PROJECT_BYTES)
-    throw new FileFault('FILE_SIZE', '项目文件超过 3 MB。');
+    throw new FileFault('FILE_SIZE', '项目文件超过 10 MB。');
   const clean = text.replace(/^\uFEFF/, '');
   try {
     parseProject(clean, registry);
@@ -35,7 +35,7 @@ export async function readLimited(file: string) {
   const info = await fs.lstat(file);
   if (!info.isFile() || info.isSymbolicLink())
     throw new FileFault('FILE_TYPE', '请选择实际的 JSON 项目文件。');
-  if (info.size > MAX_PROJECT_BYTES) throw new FileFault('FILE_SIZE', '项目文件超过 3 MB。');
+  if (info.size > MAX_PROJECT_BYTES) throw new FileFault('FILE_SIZE', '项目文件超过 10 MB。');
   const handle = await fs.open(file, 'r');
   try {
     const chunks: Buffer[] = [];
@@ -45,7 +45,7 @@ export async function readLimited(file: string) {
       const { bytesRead } = await handle.read(buffer);
       if (!bytesRead) break;
       total += bytesRead;
-      if (total > MAX_PROJECT_BYTES) throw new FileFault('FILE_SIZE', '项目文件超过 3 MB。');
+      if (total > MAX_PROJECT_BYTES) throw new FileFault('FILE_SIZE', '项目文件超过 10 MB。');
       chunks.push(buffer.subarray(0, bytesRead));
     }
     return Buffer.concat(chunks);

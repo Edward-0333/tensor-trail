@@ -1,3 +1,4 @@
+import { MAX_NODE_VISITS } from '../src/core/limits';
 import { describe, expect, it } from 'vitest';
 import { buildModel, validateModel } from '../src/agent';
 import { inferGraph, inferProject } from '../src/core/engine';
@@ -34,7 +35,7 @@ function run(loop: ModelNode, values: Record<string, ValueSpec>, enabled = true)
   const inputs = { i: integer(0), num_points: integer(1040), ...values };
   const before = clone({ loop, inputs });
   let passes = 0;
-  const budget = { remaining: 20000 };
+  const budget = { remaining: MAX_NODE_VISITS };
   const result = inferWhile(loop, inputs, external => {
     passes++;
     return inferGraph(loop.subgraph!, registry, external, 1, {}, undefined, ['loop'], budget, undefined, enabled);

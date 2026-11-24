@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DocumentFiles, readLimited, replaceFile } from '../apps/desktop/src/main/files';
 import { documentState, version } from '../apps/desktop/src/main/validation';
-import { serializeProject } from '@tensor-trail/model-core/core/serialization';
+import { MAX_PROJECT_BYTES, serializeProject } from '@tensor-trail/model-core/core/serialization';
 import { example } from '@tensor-trail/model-core/modules/examples';
 import type { DocumentState } from '@tensor-trail/platform-api';
 
@@ -182,7 +182,7 @@ describe('桌面主进程文件会话', () => {
     await expect(files.issue(target, 'open', state())).rejects.toMatchObject({
       code: 'INVALID_PROJECT',
     });
-    await fs.writeFile(target, 'x'.repeat(3_000_001));
+    await fs.writeFile(target, 'x'.repeat(MAX_PROJECT_BYTES + 1));
     await expect(readLimited(target)).rejects.toMatchObject({ code: 'FILE_SIZE' });
     await expect(files.read('unissued-key')).rejects.toMatchObject({ code: 'FILE_TOKEN' });
     expect(files.state?.documentId).toBe('document-a');

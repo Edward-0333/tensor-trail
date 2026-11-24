@@ -1,3 +1,4 @@
+import { fitsProjectFile } from '@tensor-trail/model-core/core/limits';
 import { useEffect, useRef, useState } from 'react';
 import { Braces, Check, Download, X } from 'lucide-react';
 import { canvasApi } from './agentBridge';
@@ -56,7 +57,7 @@ export function AgentPanel({ onClose }: { onClose: () => void }) {
     setMessage('');
     setAllowWarnings(false);
     try {
-      if (new TextEncoder().encode(text).length > 3_000_000) throw new Error('JSON 超过 3 MB。');
+      if (!fitsProjectFile(text)) throw new Error('JSON 超过 10 MB。');
       const value = JSON.parse(text),
         snapshot = canvasApi.getModel();
       const options = { mode: draft ? ('draft' as const) : ('strict' as const) };

@@ -6,6 +6,9 @@ import { parseDictionarySchema } from '../core/dictionary';
 
 export class ModuleRegistry {
   private definitions = new Map<string, ModuleDefinition>();
+  constructor(definitions: ModuleDefinition[] = []) {
+    for (const definition of definitions) this.register(definition);
+  }
   register(def: ModuleDefinition) {
     if (this.definitions.has(def.type)) throw new Error(`模块 ${def.type} 已注册。`);
     this.definitions.set(def.type, def);

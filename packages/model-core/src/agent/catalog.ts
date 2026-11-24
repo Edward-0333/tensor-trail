@@ -1,3 +1,4 @@
+import { MAX_EDGES_PER_GRAPH, MAX_EXPANDED_NODES, MAX_NODE_VISITS, MAX_PROJECT_BYTES } from '../core/limits';
 import { registry } from '../modules/index';
 import type { Field } from '../core/types';
 
@@ -32,6 +33,17 @@ function fieldSchema(f: Field) {
   };
 }
 
+const joiningPortDescription = 'input_count selects 1–16 ordered Tensor inputs a, b, c, ...; omitted count defaults to 2 for legacy Concat.';
+const dynamicPortDescriptions: Record<string, string> = {
+  SemanticOp: 'inputs declares 1–12 ordered value ports and outputs declares 1–8 Tensor ports. Both use comma-separated identifiers.',
+  TensorSize: 'Output ports depend on axes: dim0, dim1, ...; names changes labels only.',
+  Chunk: 'chunks selects 2–9 output ports out0, out1, ... . torch.chunk may return fewer values for a concrete axis length.',
+  Concat: joiningPortDescription,
+  Stack: joiningPortDescription,
+  View: 'Tensor input in plus integer inputs d0–d7 referenced in shape, each appearing once as a port; example shape: d0, d1, -1.',
+  TensorIndex: 'Slice mode with stopFromInput=true adds integer input stop alongside Tensor input in.',
+};
+
 export function describeModules(includeInternal = false) {
   return structuredClone({
     apiVersion: 1 as const,
@@ -56,27 +68,15 @@ export function describeModules(includeInternal = false) {
       internal: d.category === '内部',
       inputs: d.inputs,
       outputs: d.outputs,
-      ...(d.getPorts
-        ? {
-            dynamicPorts:
-              d.type === 'TensorSize'
-                ? 'Output ports depend on axes: dim0, dim1, ...; names changes labels only.'
-                : ['Concat', 'Stack'].includes(d.type)
-                  ? 'input_count selects 1–16 ordered Tensor inputs a, b, c, ...; omitted count defaults to 2 for legacy Concat.'
-                  : d.type === 'View'
-                    ? 'Tensor input in plus integer inputs d0–d7 referenced in shape, each appearing once as a port; example shape: d0, d1, -1.'
-                    : d.type === 'TensorIndex'
-                      ? 'Slice mode with stopFromInput=true adds integer input stop alongside Tensor input in.'
-                      : 'Ports depend on module parameters.',
-          }
-        : {}),
+      ...(d.getPorts ? { dynamicPorts: dynamicPortDescriptions[d.type] ?? 'Ports depend on module parameters.' } : {}),
       fields: d.fields,
       paramsSchema: object(Object.fromEntries(d.fields.map((f) => [f.key, fieldSchema(f)])), []),
     })),
     limits: {
-      maxBytes: 3_000_000,
-      maxExpandedNodes: 2000,
-      maxEdgesPerGraph: 8000,
+      maxBytes: MAX_PROJECT_BYTES,
+      maxExpandedNodes: MAX_EXPANDED_NODES,
+      maxEdgesPerGraph: MAX_EDGES_PER_GRAPH,
+      maxNodeVisits: MAX_NODE_VISITS,
       maxDepth: 12,
       maxOperations: 500,
     },
@@ -105,17 +105,22 @@ export function getSchemas() {
   };
   const graph = object(
     {
-      nodes: { type: 'array', maxItems: 2000, items: { $ref: '#/$defs/node' } },
+      nodes: { type: 'array', maxItems: MAX_EXPANDED_NODES, items: { $ref: '#/$defs/node' } },
       connections: {
         type: 'array',
-        maxItems: 8000,
+        maxItems: MAX_EDGES_PER_GRAPH,
         items: { type: 'array', prefixItems: [endpoint, endpoint], minItems: 2, maxItems: 2 },
       },
     },
     ['nodes', 'connections'],
   );
   const path = { type: 'array', maxItems: 12, items: identifier };
+  const shortText = { type: 'string', maxLength: 240 };
   const ops = [
+    object({ op: { const: 'collapse_calculations' }, path, ids: { type: 'array', minItems: 2, uniqueItems: true, items: identifier },
+      id: identifier, label: name, position, summary: shortText, formula: shortText }, ['op', 'ids']),
+    object({ op: { const: 'expand_calculation' }, path, id: identifier }, ['op', 'id']),
+    object({ op: { const: 'auto_simplify' }, path, recursive: { type: 'boolean' }, min_size: { type: 'integer', minimum: 2 } }, ['op']),
     object({ op: { const: 'assign_region' }, path, ids: { type: 'array', minItems: 1, maxItems: 500, uniqueItems: true, items: identifier },
       region: { anyOf: [identifier, { type: 'null' }] } }, ['op', 'ids', 'region']),
     object({ op: { const: 'fit_region' }, path, id: identifier }, ['op', 'id']),

@@ -25,12 +25,15 @@ export function requireRealTensor(x: TensorSpec) {
 }
 
 export function sortingLabel(node: ModelNode): string | undefined {
+  if (node.type === 'TopK') return `topk(${node.params.k}, dim=${node.params.dim}${node.params.largest ? '' : ', largest=False'})`;
   if (node.type === 'MaxWithIndices') return `max(${node.params.dim})`;
   if (node.type === 'Sort') return node.params.descending ? 'sort(desc)' : 'sort(asc)';
   if (node.type === 'RowIndex') return 'x[indices]';
 }
 
 export function sortingCode(node: ModelNode): string | undefined {
+  if (node.type === 'TopK')
+    return `k = min(${node.params.k}, x.size(${node.params.dim}) if x.ndim else 1)\nvalues, indices = torch.topk(x, k, dim=${node.params.dim}, largest=${node.params.largest ? 'True' : 'False'})`;
   if (node.type === 'MaxWithIndices')
     return `values, indices = x.max(dim=${node.params.dim}, keepdim=${node.params.keepdim ? 'True' : 'False'})\n# values 是沿指定轴的最大值；indices 是该轴上的位置，不是原始 query 编号。\n# 并列最大值返回第一个位置；indices 为 int64，不可求导。`;
   if (node.type === 'Sort')
@@ -40,6 +43,28 @@ export function sortingCode(node: ModelNode): string | undefined {
 }
 
 export const sortingModules: ModuleDefinition[] = [
+  {
+    type: 'TopK', label: 'TopK', category: '索引与切片',
+    description: '沿 dim 选出最大或最小的 k 项，k 按轴长截断。values 保留输入 dtype，indices 为 int64。',
+    fields: [num('k', '选择个数', 8, 0), num('dim', '选择轴', -1, Number.MIN_SAFE_INTEGER), bool('largest', '选择最大值', true)],
+    inputs: input, outputs: indexedOutputs,
+    infer: ({ in: x }, { k, dim, largest }) => {
+      requireRealTensor(x);
+      requireThat(typeof k === 'number' && Number.isSafeInteger(k) && k >= 0, 'k 必须是非负整数。');
+      requireThat(typeof dim === 'number', 'dim 必须是整数。');
+      requireThat(typeof largest === 'boolean', 'largest 必须是布尔值。');
+      const axis = axisIndex(dim, Math.max(1, x.shape.length));
+      const shape = [...x.shape];
+      if (shape.length) {
+        const size = shape[axis];
+        shape[axis] = typeof size === 'number' ? Math.min(k, size) : k === 0 ? 0 : `min(${k},${size})`;
+      }
+      return { outputs: {
+        values: tensor(shape, [...x.axes], x.dtype),
+        indices: { ...tensor([...shape], [...x.axes], 'int64'), autograd: { requiresGrad: false, source: 'inferred' } },
+      } };
+    },
+  },
   {
     type: 'MaxWithIndices',
     label: '最大值及索引',

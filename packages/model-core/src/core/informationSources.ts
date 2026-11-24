@@ -179,6 +179,7 @@ const unaryValues = new Set([
   'ReLU',
   'GELU',
   'Sigmoid',
+  'Log', 'Sqrt', 'Clamp', 'Chunk', 'TopK',
   'Tanh',
   'Softmax',
   'ReduceSum',
@@ -212,6 +213,7 @@ const parameterized = new Set([
   'BatchNorm2d',
 ]);
 const mergedValues = new Set([
+  'SemanticOp',
   'LogicalAnd', 'BooleanAnd', 'BooleanNot', 'IntegerCompare',
   'IntegerSubtract', 'IntegerMinimum', 'IntegerMaximum', 'IntegerAddOne',
   'TensorRowAt', 'TensorEqualInt', 'IntegerListGet', 'ScalarIndexWrite',

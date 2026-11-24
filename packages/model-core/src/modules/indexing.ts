@@ -1,8 +1,8 @@
-import type { Field, ModuleDefinition, Params, ValueSpec } from '../core/types';
+import type { Dim, Field, ModuleDefinition, Params, TensorSpec, ValueSpec } from '../core/types';
 import { isDictionarySpec, isIntegerSpec, tensorValue, clone, shapeText } from '../core/types';
 import { resolveIntegerExpression } from '../core/hyperparameters';
 import { checkDictionaryKey } from '../core/dictionary';
-import { text, bool, input, output } from './primitives';
+import { text, bool, input, num, output } from './primitives';
 import { requireThat, axisIndex, tensor } from './math';
 import { tensorIndexDefaults } from '../core/indexingTypes';
 import { calculate } from './calculation';
@@ -151,7 +151,55 @@ const inferTensorSelection: NonNullable<ModuleDefinition['infer']> = (
   };
 };
 
+export function validChunkCount(chunks: unknown): chunks is number {
+  return typeof chunks === 'number' && Number.isInteger(chunks) && chunks >= 2 && chunks <= 9;
+}
+
+function chunkPorts({ chunks }: Params) {
+  // Inspector edits can temporarily be invalid. Bound the port list before allocating it.
+  const count = validChunkCount(chunks) ? chunks : 2;
+  return { inputs: input, outputs: Array.from({ length: count }, (_, i) => ({ id: `out${i}`, label: `out${i}` })) };
+}
+
+function chunkSizes(size: Dim, chunks: number): Dim[] {
+  if (typeof size === 'number') {
+    if (size === 0) return Array<number>(chunks).fill(0);
+    const width = Math.ceil(size / chunks);
+    return Array.from({ length: Math.ceil(size / width) }, (_, i) => Math.min(width, size - i * width));
+  }
+  const width = `floor((${size}+${chunks - 1})/${chunks})`;
+  return Array.from({ length: chunks }, (_, i) => {
+    if (i === 0) return width;
+    const remaining = `${size}-${i === 1 ? '' : i + '*'}${width}`;
+    // Conditional on this output existing: even an intermediate port may be the last chunk.
+    return i === chunks - 1 ? remaining : `min(${width},${remaining})`;
+  });
+}
+
 export const indexingModules: ModuleDefinition[] = [
+  {
+    type: 'Chunk', label: 'Chunk', category: '索引与切片',
+    description: 'torch.chunk(x, chunks, dim)，沿指定轴切出至多 chunks 块；末块保留余量。',
+    fields: [num('dim', '切分轴', -1, Number.MIN_SAFE_INTEGER), { ...num('chunks', '请求块数', 2, 2), max: 9 }],
+    ...chunkPorts({ chunks: 2 }), getPorts: chunkPorts,
+    infer: ({ in: x }, { chunks, dim }) => {
+      requireThat(validChunkCount(chunks), 'chunks 必须是 2–9 的整数。');
+      requireThat(typeof dim === 'number', 'dim 必须是整数。');
+      const axis = axisIndex(dim, x.shape.length);
+      const size = x.shape[axis];
+      const sizes = chunkSizes(size, chunks);
+      const outputs: Record<string, TensorSpec> = {};
+      sizes.forEach((length, i) => {
+        const shape = [...x.shape];
+        shape[axis] = length;
+        outputs[`out${i}`] = tensor(shape, [...x.axes], x.dtype);
+      });
+      const warnings = [];
+      if (typeof size === 'string') warnings.push('符号轴的实际块数需在运行时确认，各端口形状以该块存在为前提。');
+      if (sizes.length < chunks) warnings.push(`该轴实际产生 ${sizes.length} 块，从 out${sizes.length} 起没有输出。`);
+      return { outputs, warnings };
+    },
+  },
   {
     type: 'DictionaryGet',
     label: '字典字段读取',

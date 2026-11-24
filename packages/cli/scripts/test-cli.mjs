@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { runAgent } from './test-agent-process.cjs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -10,18 +10,34 @@ const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'tensor-trail-cli-'));
 const model = path.join(temp, 'model.json');
 const next = path.join(temp, 'next.json');
 function run(args, expected = 0, input) {
-  const result = spawnSync(process.execPath, ['packages/cli/scripts/agent.mjs', ...args], {
-    cwd: root,
-    input,
-    encoding: 'utf8',
-    windowsHide: true,
-  });
-  assert.equal(result.status, expected, result.stdout + result.stderr);
+  const result = runAgent(args, input);
+  assert.equal(result.status, expected, result.stdout);
   return JSON.parse(result.stdout);
 }
 try {
   assert.equal(run(['describe', 'Transformer']).modules[0].type, 'Transformer');
   assert.equal(run(['schema', 'recipe']).title, 'Tensor Trail Recipe v1');
+  const standard = run(['build', 'examples/standard-tensor-ops.recipe.json']);
+  assert.deepEqual(standard.outputs.values.shape, ['B', 3]);
+  assert.equal(standard.outputs.indices.dtype, 'int64');
+  const compact = JSON.stringify(standard.project);
+  const padded = compact + ' '.repeat(10_000_000 - Buffer.byteLength(compact));
+  assert.equal(run(['validate', '-'], 0, padded).ok, true);
+  assert.match(run(['validate', '-'], 2, padded + ' ').diagnostics[0].message, /10 MB/);
+  // Exercise both CLI file directions with meaningful multi-byte JSON above the former limit.
+  const large = path.join(temp, 'large.json'), renamed = path.join(temp, 'renamed.json');
+  const largeProject = structuredClone(standard.project);
+  for (let i = 0; i < 520; i++) {
+    largeProject.graph.nodes.push({
+      id: 'arg' + i, type: 'ForwardInput', definitionVersion: 1, label: '输入' + i,
+      position: { x: 0, y: i * 100 }, params: { text: '图'.repeat(1990) },
+    });
+  }
+  await fs.writeFile(large, JSON.stringify(largeProject));
+  const rename = { operations: [{ op: 'rename_project', name: 'large' }] };
+  assert.equal(run(['patch', large, '-', '--out', renamed], 0, JSON.stringify(rename)).ok, true);
+  assert.ok((await fs.stat(renamed)).size > 3_000_000);
+  assert.equal(run(['validate', renamed]).ok, true);
   assert.deepEqual(
     run(['build', 'examples/cnn-transformer.recipe.json', '--out', model]).outputs.output.shape,
     [8, 100, 64],
@@ -103,7 +119,7 @@ try {
   run(['describe', '--draft'], 2);
   run(['patch', draftFile, '-', '--layout', 'bad'], 2, JSON.stringify(addition));
   console.log(
-    'CLI smoke passed: catalogue, schema, build, structured inputs, validate, patch, drafts, preserved/automatic layout, sidecar warnings, stdin, error exits and output preservation.',
+    'CLI smoke passed: catalogue, schema, six standard tensor ops, 10 MB stdin boundary, build, structured inputs, validate, patch, drafts, preserved/automatic layout, sidecar warnings, stdin, error exits and output preservation.',
   );
 } finally {
   // Delete only the unique directory created by this test, within the OS temp folder.

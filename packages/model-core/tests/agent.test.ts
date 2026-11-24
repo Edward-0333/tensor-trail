@@ -10,7 +10,8 @@ import {
 } from '../src/agent/index';
 import { createCanvasApi } from '../src/agent/canvas';
 import { graphAt } from '../src/core/graph';
-import { parseProject } from '../src/core/serialization';
+import { parseProject, validateProjectObject } from '../src/core/serialization';
+import { MAX_EDGES_PER_GRAPH, MAX_EXPANDED_NODES } from '../src/core/limits';
 import { registry } from '../src/modules/index';
 import { clone, type Project } from '../src/core/types';
 import mixed from '../../../examples/cnn-transformer.recipe.json';
@@ -145,16 +146,36 @@ describe('AI recipes and diagnostics', () => {
   it('counts auto-expanded nodes toward the resource limit', () => {
     const r = {
       name: 'large',
-      nodes: Array.from({ length: 2000 }, (_, i) => ({ id: `t${i}`, type: 'Transformer' })),
+      nodes: Array.from({ length: MAX_EXPANDED_NODES }, (_, i) => ({ id: `t${i}`, type: 'Transformer' })),
       connections: [],
     };
     expect(buildModel(r).diagnostics[0].code).toBe('LIMIT_EXCEEDED');
+  });
+  it('accepts a graph at both scale limits and counts nodes in the variant library', () => {
+    const project: Project = { schemaVersion: 1, name: 'large', variants: [], graph: { nodes: [], edges: [] } };
+    const { nodes, edges } = project.graph;
+    for (let i = 0; i < 1500; i++) {
+      for (let j = 0; j < 3; j++) nodes.push(registry.create('Input', {}, `x${i}_${j}`));
+      nodes.push(registry.create('Stack', { input_count: 16 }, `s${i}`));
+      for (let j = 0; j < 16; j++) edges.push({ id: `e${i}_${j}`, source: `x${i}_${j % 3}`, sourcePort: 'out',
+        target: `s${i}`, targetPort: String.fromCharCode(97 + j) });
+    }
+    expect(nodes.length).toBe(MAX_EXPANDED_NODES);
+    expect(edges.length).toBe(MAX_EDGES_PER_GRAPH);
+    expect(validateProjectObject(project, registry)).toBe(project);
+    edges.push(edges[0]);
+    expect(() => validateProjectObject(project, registry)).toThrow('上限');
+    edges.pop();
+    project.variants.push({ id: 'extra', name: 'extra', graph: { nodes: [nodes[0]], edges: [] } });
+    expect(() => validateProjectObject(project, registry)).toThrow('上限');
   });
   it('describes internal boundaries on request and exposes versioned schemas', () => {
     expect(describeModules().modules.some((m) => m.type === 'Inlet')).toBe(false);
     expect(describeModules(true).modules.some((m) => m.type === 'Inlet')).toBe(true);
     expect(getSchemas().recipe.$schema).toContain('2020-12');
     expect(getSchemas().patch.properties.patchVersion).toEqual({ const: 1 });
+    expect(describeModules().limits).toMatchObject({ maxBytes: 10_000_000, maxExpandedNodes: 6000, maxEdgesPerGraph: 24000, maxNodeVisits: 60000 });
+    expect(getSchemas().recipe.properties).toMatchObject({ nodes: { maxItems: 6000 }, connections: { maxItems: 24000 } });
   });
 });
 

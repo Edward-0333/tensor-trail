@@ -75,7 +75,7 @@ describe('项目源文件保存', () => {
     await s.files.open();
     const original = s.source.disk.text;
     const doc = s.host.read();
-    doc.project.graph.nodes = Array.from({ length: 510 }, (_, i) =>
+    doc.project.graph.nodes = Array.from({ length: 1750 }, (_, i) =>
       registry.create('ForwardInput', { text: '测'.repeat(1950) }, 'input' + i));
     doc.project.graph.edges = [];
     s.files.changed();
@@ -86,11 +86,11 @@ describe('项目源文件保存', () => {
     await s.files.save(true);
     expect(await s.files.exportPortable()).toBe(false);
     expect(s.host.download).not.toHaveBeenCalled();
-    expect(s.host.toast).toHaveBeenLastCalledWith(expect.stringContaining('3 MB'));
+    expect(s.host.toast).toHaveBeenLastCalledWith(expect.stringContaining('10 MB'));
 
-    doc.project.graph.nodes.length = 480;
+    doc.project.graph.nodes.length = 1600;
     expect(await s.files.save()).toBe(true);
-    expect(parseProject(await s.source.resource.readText(), registry).graph.nodes).toHaveLength(480);
+    expect(parseProject(await s.source.resource.readText(), registry).graph.nodes).toHaveLength(1600);
   });
   it('桌面取消切换时不弹打开选择器，也不丢失修改', async () => {
     const s = await setup({ confirmDiscard: async () => 'cancel' });

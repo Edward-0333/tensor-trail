@@ -1,0 +1,23 @@
+{
+  "recipeVersion": 1,
+  "name": "门控概率与尺度筛选",
+  "nodes": [
+    { "id": "features", "type": "Input", "params": { "shape": "B,12", "axes": "batch,feature" } },
+    { "id": "split", "type": "Chunk", "params": { "dim": -1, "chunks": 2 } },
+    { "id": "gate", "type": "Sigmoid" },
+    { "id": "positive", "type": "Clamp", "params": { "min": "0", "max": "" } },
+    { "id": "log_scale", "type": "Log", "params": { "log1p": true } },
+    { "id": "scale", "type": "Sqrt" },
+    { "id": "select", "type": "TopK", "params": { "dim": -1, "k": 3, "largest": true } },
+    { "id": "probability", "type": "Output" },
+    { "id": "values", "type": "Output" },
+    { "id": "indices", "type": "Output" }
+  ],
+  "connections": [
+    ["features.out", "split.in"],
+    ["split.out0", "gate.in"], ["gate.out", "probability.in"],
+    ["split.out1", "positive.in"], ["positive.out", "log_scale.in"],
+    ["log_scale.out", "scale.in"], ["scale.out", "select.in"],
+    ["select.values", "values.in"], ["select.indices", "indices.in"]
+  ]
+}

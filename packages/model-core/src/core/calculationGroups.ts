@@ -1,9 +1,10 @@
 import type { Graph, ModelEdge, ModelNode, Registry } from './types';
 import { clone, uid } from './types';
 import { orderGraph, ports } from './graph';
-import { isCalculation } from '../modules/libraryCategories';
+import { isCalculation, isGlueCalculation } from '../modules/libraryCategories';
+export { isGlueCalculation } from '../modules/libraryCategories';
 import { ifRegionMembers, isCodeRegion } from './ifRegions';
-import { isLayoutRegion, layoutRegionOf, layoutRegionOutputs } from './layoutRegions';
+import { isLayoutRegion, layoutRegionOutputs } from './layoutRegions';
 
 const boundary = (node: ModelNode) => ['Inlet', 'Outlet'].includes(node.type);
 const key = (node: string, port: string) => JSON.stringify([node, port]);
@@ -15,28 +16,43 @@ export function canMergeCalculations(
   b: string,
   registry: Registry,
 ): boolean {
-  if (a === b) return false;
-  const regionOf = (id: string) => graph.nodes.find(n => isCodeRegion(n) && ifRegionMembers(n).includes(id))?.id;
-  if (regionOf(a) !== regionOf(b)) return false;
-  if (layoutRegionOf(graph, a)?.id !== layoutRegionOf(graph, b)?.id) return false;
-  const members = new Set([a, b]);
-  if (
-    [a, b].some(
-      (id) => !isCalculation(registry.get(graph.nodes.find((n) => n.id === id)?.type ?? '')),
-    )
-  )
+  return canMergeCalculationSet(graph, [a, b], registry);
+}
+
+export function canMergeCalculationSet(graph: Graph, ids: string[], registry: Registry): boolean {
+  const members = new Set(ids);
+  if (members.size < 2 || members.size !== ids.length) return false;
+  const nodes = graph.nodes.filter((n) => members.has(n.id));
+  if (nodes.length !== ids.length || !nodes.every((n) => isCalculation(registry.get(n.type))))
     return false;
-  if (!graph.edges.some((e) => members.has(e.source) && members.has(e.target))) return false;
+  for (const region of graph.nodes.filter((n) => isCodeRegion(n) || isLayoutRegion(n))) {
+    const count = ifRegionMembers(region).filter((id) => members.has(id)).length;
+    if (count && count !== members.size) return false;
+  }
+
+  const neighbors = new Map(ids.map((id) => [id, [] as string[]]));
+  const contractedEdges: ModelEdge[] = [];
+  for (const edge of graph.edges) {
+    const source = members.has(edge.source),
+      target = members.has(edge.target);
+    if (source && target) {
+      neighbors.get(edge.source)!.push(edge.target);
+      neighbors.get(edge.target)!.push(edge.source);
+    } else
+      contractedEdges.push({
+        ...edge,
+        source: source ? ids[0] : edge.source,
+        target: target ? ids[0] : edge.target,
+      });
+  }
+  const connected = new Set([ids[0]]);
+  for (const id of connected) for (const neighbor of neighbors.get(id)!) connected.add(neighbor);
+  if (connected.size !== members.size) return false;
   try {
+    orderGraph(graph);
     orderGraph({
-      nodes: graph.nodes.filter((n) => n.id !== b),
-      edges: graph.edges
-        .filter((e) => !(members.has(e.source) && members.has(e.target)))
-        .map((e) => ({
-          ...e,
-          source: e.source === b ? a : e.source,
-          target: e.target === b ? a : e.target,
-        })),
+      nodes: graph.nodes.filter((n) => !members.has(n.id) || n.id === ids[0]),
+      edges: contractedEdges,
     });
     return true;
   } catch {
@@ -86,61 +102,107 @@ export function nearbyCalculation(
 
 /** Expand the exact saved child graph, including fan-out and multiple inputs. */
 export function splitCalculationGroup(graph: Graph, id: string): string[] {
+  return expandGroup(graph, id).members;
+}
+
+function expandGroup(graph: Graph, id: string) {
   const group = graph.nodes.find((n) => n.id === id);
   if (group?.type !== 'CalculationGroup' || !group.subgraph) throw new Error('请选择计算组合。');
   const child = group.subgraph;
   const operations = child.nodes.filter((n) => !boundary(n));
-  const ids = new Map(operations.map((n) => [n.id, uid()]));
-  const minX = Math.min(...operations.map((n) => n.position.x), 0);
-  const minY = Math.min(...operations.map((n) => n.position.y), 0);
+  const childNodes = new Map(child.nodes.map((n) => [n.id, n]));
+  const occupied = new Set(graph.nodes.filter((n) => n !== group).map((n) => n.id));
+  const ids = new Map(
+    operations.map((n) => [n.id, !group.calculationOrigin || occupied.has(n.id) ? uid() : n.id]),
+  );
+  const origin = group.calculationOrigin ?? {
+    x: Math.min(...operations.map((n) => n.position.x), 0),
+    y: Math.min(...operations.map((n) => n.position.y), 0),
+  };
+  const translate = (p: ModelNode['position']) => ({
+    x: p.x + (group.position.x - origin.x),
+    y: p.y + (group.position.y - origin.y),
+  });
   const nodes = operations.map((n) => ({
     ...clone(n),
     id: ids.get(n.id)!,
-    position: {
-      x: group.position.x + n.position.x - minX,
-      y: group.position.y + n.position.y - minY,
-    },
+    position: translate(n.position),
+    ...(n.valueSource ? { valueSource: ids.get(n.valueSource) } : {}),
   }));
-  const upstream = (
-    nodeId: string,
-    port: string,
-  ): Pick<ModelEdge, 'source' | 'sourcePort'> | undefined => {
-    const source = child.nodes.find((n) => n.id === nodeId);
-    if (source?.type === 'Inlet') {
-      const incoming = graph.edges.find(
-        (e) => e.target === id && e.targetPort === source.params.port,
-      );
-      return incoming && { source: incoming.source, sourcePort: incoming.sourcePort };
-    }
+  for (const node of nodes) {
+    if (isCodeRegion(node) || isLayoutRegion(node))
+      node.params.members = ifRegionMembers(node)
+        .map((id) => ids.get(id)!)
+        .join(',');
+    if (isLayoutRegion(node) && node.params.outputs !== undefined)
+      node.params.outputs = layoutRegionOutputs(node)
+        .map((id) => ids.get(id)!)
+        .join(',');
+  }
+  const incoming = new Map(
+    graph.edges.filter((e) => e.target === id).map((e) => [e.targetPort, e]),
+  );
+  function inletEdge(nodeId: string) {
+    const node = childNodes.get(nodeId);
+    if (node?.type !== 'Inlet') return;
+    const owner = childNodes.get(node.valueSource ?? node.id);
+    return incoming.get(String(owner?.params.port));
+  }
+  function upstream(nodeId: string, port: string) {
     const mapped = ids.get(nodeId);
-    return mapped ? { source: mapped, sourcePort: port } : undefined;
-  };
+    if (mapped) return { source: mapped, sourcePort: port };
+    const edge = inletEdge(nodeId);
+    if (edge) return { source: edge.source, sourcePort: edge.sourcePort };
+  }
   const edges = graph.edges.filter((e) => e.source !== id && e.target !== id);
+  const edgeIds = new Set(graph.edges.filter((e) => e.target !== id).map((e) => e.id));
   for (const edge of child.edges) {
     const target = ids.get(edge.target),
       source = upstream(edge.source, edge.sourcePort);
-    if (target && source) edges.push({ id: uid(), ...source, target, targetPort: edge.targetPort });
+    if (!target || !source) continue;
+    const outerEdge = inletEdge(edge.source);
+    const original = outerEdge ?? edge;
+    const edgeId = edgeIds.has(original.id) ? uid() : original.id;
+    edgeIds.add(edgeId);
+    edges.push({
+      ...original,
+      id: edgeId,
+      ...source,
+      target,
+      targetPort: edge.targetPort,
+      ...(!outerEdge && edge.waypoints ? { waypoints: edge.waypoints.map(translate) } : {}),
+    });
   }
   for (const edge of graph.edges.filter((e) => e.source === id)) {
     const outlet = child.nodes.find(
-      (n) => n.type === 'Outlet' && n.params.port === edge.sourcePort,
+      (n) => !n.valueSource && n.type === 'Outlet' && n.params.port === edge.sourcePort,
     );
     const inner = child.edges.find((e) => e.target === outlet?.id);
     const source = inner && upstream(inner.source, inner.sourcePort);
-    if (source)
-      edges.push({ id: edge.id, ...source, target: edge.target, targetPort: edge.targetPort });
+    if (source) edges.push({ ...edge, ...source });
   }
-  graph.nodes = [...graph.nodes.filter((n) => n.id !== id), ...nodes];
-  for (const region of graph.nodes.filter(n => isCodeRegion(n) || isLayoutRegion(n))) {
-    region.params.members = ifRegionMembers(region).flatMap(member => member === id ? nodes.map(n => n.id) : [member]).join(',');
+  const outletIds = new Set(child.nodes.filter((n) => n.type === 'Outlet').map((n) => n.id));
+  const marked =
+    group.calculationRegionOutputs ??
+    child.edges.filter((e) => outletIds.has(e.target)).map((e) => e.source);
+  const regionOutputs = [
+    ...new Set(marked.flatMap((key) => (ids.has(key) ? [ids.get(key)!] : []))),
+  ];
+  graph.nodes = graph.nodes.flatMap((n) => (n.id === id ? nodes : [n]));
+  for (const region of graph.nodes.filter((n) => isCodeRegion(n) || isLayoutRegion(n))) {
+    const members = ifRegionMembers(region);
+    if (!members.includes(id)) continue;
+    region.params.members = members
+      .flatMap((member) => (member === id ? nodes.map((n) => n.id) : [member]))
+      .join(',');
     if (isLayoutRegion(region) && region.params.outputs !== undefined) {
-      const outlets = new Set(child.nodes.filter(n => n.type === 'Outlet').map(n => n.id));
-      const exposed = [...new Set(child.edges.filter(e => outlets.has(e.target)).flatMap(e => ids.has(e.source) ? [ids.get(e.source)!] : []))];
-      region.params.outputs = layoutRegionOutputs(region).flatMap(member => member === id ? exposed : [member]).join(',');
+      region.params.outputs = layoutRegionOutputs(region)
+        .flatMap((member) => (member === id ? regionOutputs : [member]))
+        .join(',');
     }
   }
   graph.edges = edges;
-  return nodes.map((n) => n.id);
+  return { members: nodes.map((n) => n.id), regionOutputs };
 }
 
 /** Group graph operations, never replace them with text or discard branch connections. */
@@ -151,36 +213,82 @@ export function mergeCalculations(
   registry: Registry,
   position?: ModelNode['position'],
 ): string {
-  if (!canMergeCalculations(graph, a, b, registry))
-    throw new Error('只能合并相邻且已连接的计算节点；合并不能跨越外部计算形成环路。');
-  const anchor = position ?? graph.nodes.find((n) => n.id === b)!.position;
-  // Flatten previous groups before extending, so repeated merging does not add nesting levels.
-  const selected = new Set(
-    [a, b].flatMap((id) =>
-      graph.nodes.find((n) => n.id === id)?.type === 'CalculationGroup'
-        ? splitCalculationGroup(graph, id)
-        : [id],
-    ),
+  return collapse(
+    graph,
+    [a, b],
+    registry,
+    { position: position ?? graph.nodes.find((n) => n.id === b)?.position },
+    true,
   );
-  const order = orderGraph(graph).filter((id) => selected.has(id));
-  const members = order.map((id) => graph.nodes.find((n) => n.id === id)!);
-  const subgraph: Graph = {
-    nodes: members.map((n, i) => ({ ...clone(n), position: { x: i * 280, y: 100 } })),
-    edges: [],
+}
+
+export interface CalculationGroupOptions {
+  id?: string;
+  label?: string;
+  summary?: string;
+  formula?: string;
+  position?: ModelNode['position'];
+}
+
+export function mergeCalculationSet(
+  graph: Graph,
+  ids: string[],
+  registry: Registry,
+  options: CalculationGroupOptions = {},
+): string {
+  return collapse(graph, ids, registry, options, false);
+}
+
+function collapse(
+  graph: Graph,
+  ids: string[],
+  registry: Registry,
+  options: CalculationGroupOptions,
+  legacyLayout: boolean,
+): string {
+  if (!canMergeCalculationSet(graph, ids, registry))
+    throw new Error('只能合并同一范围和分区内相连的计算节点；合并不能跨越外部计算形成环路。');
+  const id = options.id ?? uid();
+  if (graph.nodes.some((n) => n.id === id)) throw Error(`组合 ID 已存在：${id}`);
+  const params: ModelNode['params'] = {};
+  for (const key of ['summary', 'formula'] as const) {
+    const value = options[key];
+    if (value !== undefined) {
+      if (typeof value !== 'string' || value.length > 240) throw Error(`${key} 最多 240 个字符。`);
+      params[key] = value;
+    }
+  }
+  const selected = new Set(ids);
+  const original = graph.nodes.filter((n) => selected.has(n.id));
+  const anchor = options.position ?? {
+    x: original.reduce((sum, n) => sum + n.position.x, 0) / ids.length,
+    y: original.reduce((sum, n) => sum + n.position.y, 0) / ids.length,
   };
+  const byId = new Map(graph.nodes.map((n) => [n.id, n]));
+  const members = orderGraph(graph)
+    .filter((id) => selected.has(id))
+    .map((id) => byId.get(id)!);
   const internal = graph.edges.filter((e) => selected.has(e.source) && selected.has(e.target));
-  subgraph.edges = internal.map((e) => ({
-    id: uid(),
-    source: e.source,
-    sourcePort: e.sourcePort,
-    target: e.target,
-    targetPort: e.targetPort,
-  }));
+  const internalInputs = new Set(internal.map((e) => key(e.target, e.targetPort)));
+  const externalOutputs = new Set(
+    graph.edges
+      .filter((e) => selected.has(e.source) && !selected.has(e.target))
+      .map((e) => key(e.source, e.sourcePort)),
+  );
+  const consumedOutputs = new Set(internal.map((e) => key(e.source, e.sourcePort)));
+  const subgraph: Graph = {
+    nodes: clone(members),
+    edges: clone(internal),
+  };
+  let regionOutputs = graph.nodes
+    .filter(isLayoutRegion)
+    .flatMap(layoutRegionOutputs)
+    .filter((id) => selected.has(id));
   const inputs = new Map<string, string>(),
     outputs = new Map<string, string>();
   for (const node of members) {
     for (const port of ports(node, registry).inputs) {
-      if (internal.some((e) => e.target === node.id && e.targetPort === port.id)) continue;
+      if (internalInputs.has(key(node.id, port.id))) continue;
       const name = `in${inputs.size + 1}`,
         id = uid();
       inputs.set(key(node.id, port.id), name);
@@ -190,7 +298,7 @@ export function mergeCalculations(
         definitionVersion: 1,
         label: `${node.label} · ${port.label}`.slice(0, 200),
         params: { port: name },
-        position: { x: -240, y: inputs.size * 120 },
+        position: { x: 0, y: 0 },
       });
       subgraph.edges.push({
         id: uid(),
@@ -201,8 +309,13 @@ export function mergeCalculations(
       });
     }
     for (const port of ports(node, registry).outputs) {
-      const outgoing = graph.edges.filter((e) => e.source === node.id && e.sourcePort === port.id);
-      if (outgoing.length && outgoing.every((e) => selected.has(e.target))) continue;
+      const outputKey = key(node.id, port.id);
+      if (
+        consumedOutputs.has(outputKey) &&
+        !externalOutputs.has(outputKey) &&
+        (legacyLayout || !regionOutputs.includes(node.id))
+      )
+        continue;
       const name = `out${outputs.size + 1}`,
         id = uid();
       outputs.set(key(node.id, port.id), name);
@@ -212,7 +325,7 @@ export function mergeCalculations(
         definitionVersion: 1,
         label: `${node.label} · ${port.label}`.slice(0, 200),
         params: { port: name },
-        position: { x: members.length * 280, y: outputs.size * 120 },
+        position: { x: 0, y: 0 },
       });
       subgraph.edges.push({
         id: uid(),
@@ -223,13 +336,48 @@ export function mergeCalculations(
       });
     }
   }
-  const id = uid();
+  // Flatten inside the new scope. Keeping the boundary in place also preserves
+  // identity routes (Inlet → Outlet) and unused ports in authored child graphs.
+  const nested = subgraph.nodes.filter((n) => n.type === 'CalculationGroup').map((n) => n.id);
+  while (nested.length) {
+    const groupId = nested.pop()!;
+    const expanded = expandGroup(subgraph, groupId);
+    regionOutputs = regionOutputs.flatMap((id) => (id === groupId ? expanded.regionOutputs : [id]));
+    const restored = new Set(expanded.members);
+    nested.push(
+      ...subgraph.nodes
+        .filter((n) => restored.has(n.id) && n.type === 'CalculationGroup')
+        .map((n) => n.id),
+    );
+  }
+  if (legacyLayout) {
+    let step = 0;
+    const nodes = new Map(subgraph.nodes.map((n) => [n.id, n]));
+    for (const id of orderGraph(subgraph)) {
+      const node = nodes.get(id)!;
+      if (!boundary(node)) node.position = { x: step++ * 280, y: 100 };
+    }
+  }
+  const inner = subgraph.nodes.filter((n) => !boundary(n));
+  const left = inner.length ? Math.min(...inner.map((n) => n.position.x)) : anchor.x;
+  const right = inner.length ? Math.max(...inner.map((n) => n.position.x)) : anchor.x;
+  const top = legacyLayout
+    ? 120
+    : inner.length
+      ? Math.min(...inner.map((n) => n.position.y))
+      : anchor.y;
+  let inputRow = 0,
+    outputRow = 0;
+  for (const node of subgraph.nodes) {
+    if (node.type === 'Inlet') node.position = { x: left - 240, y: top + 120 * inputRow++ };
+    if (node.type === 'Outlet') node.position = { x: right + 280, y: top + 120 * outputRow++ };
+  }
   graph.edges = graph.edges
-    .filter((e) => !internal.includes(e))
+    .filter((e) => !(selected.has(e.source) && selected.has(e.target)))
     .map((e) => {
       if (!selected.has(e.source) && !selected.has(e.target)) return e;
       return {
-        id: e.id,
+        ...e,
         source: selected.has(e.source) ? id : e.source,
         sourcePort: selected.has(e.source)
           ? outputs.get(key(e.source, e.sourcePort))!
@@ -246,22 +394,145 @@ export function mergeCalculations(
       id,
       type: 'CalculationGroup',
       definitionVersion: 1,
-      label: '计算组合',
-      params: {},
+      label: options.label || options.summary || '计算组合',
+      params,
+      ...(!legacyLayout ? { calculationOrigin: { ...anchor } } : {}),
+      ...(regionOutputs.length ? { calculationRegionOutputs: regionOutputs } : {}),
       position: { ...anchor },
       subgraph,
       customized: true,
     },
   ];
-  for (const region of graph.nodes.filter(n => isCodeRegion(n) || isLayoutRegion(n))) {
+  for (const region of graph.nodes.filter((n) => isCodeRegion(n) || isLayoutRegion(n))) {
     const contained = ifRegionMembers(region);
-    if (contained.some(member => selected.has(member)))
-      region.params.members = [...contained.filter(member => !selected.has(member)), id].join(',');
+    if (contained.some((member) => selected.has(member)))
+      region.params.members = [
+        ...new Set(contained.map((member) => (selected.has(member) ? id : member))),
+      ].join(',');
     if (isLayoutRegion(region) && region.params.outputs !== undefined) {
       const outputs = layoutRegionOutputs(region);
-      if (outputs.some(member => selected.has(member)))
-        region.params.outputs = [...outputs.filter(member => !selected.has(member)), id].join(',');
+      if (outputs.some((member) => selected.has(member)))
+        region.params.outputs = [
+          ...new Set(outputs.map((member) => (selected.has(member) ? id : member))),
+        ].join(',');
     }
   }
   return id;
+}
+
+function describeGlue(steps: ModelNode[], edges: ModelEdge[]) {
+  const types = steps.map((n) => n.type);
+  const zero = new Set(
+    steps.filter((n) => ['ZerosLike', 'Zeros', 'NewZeros'].includes(n.type)).map((n) => n.id),
+  );
+  const terminal = steps[steps.length - 1];
+  let summary: string;
+  if (
+    terminal.type === 'Where' &&
+    edges.some(
+      (e) => zero.has(e.source) && e.target === terminal.id && ['x', 'y'].includes(e.targetPort),
+    )
+  )
+    summary = '按掩码选择数值并清零对应分量';
+  else if (types.includes('Clamp')) summary = '整理数值并限制取值范围';
+  else if (
+    types.some((t) => ['DictionaryGet', 'TensorIndex', 'Slice', 'TensorSequenceGet'].includes(t))
+  )
+    summary = types.some((t) =>
+      ['Reshape', 'ReshapeLike', 'View', 'Unsqueeze', 'Squeeze', 'Flatten', 'Permute'].includes(t),
+    )
+      ? '提取所需分量并调整张量形状'
+      : '读取并整理所需分量';
+  else if (
+    types.every((t) =>
+      ['Add', 'Subtract', 'Mul', 'Divide', 'Function', 'Sin', 'Cos', 'Exp', 'Log', 'Sqrt'].includes(
+        t,
+      ),
+    )
+  )
+    summary = '逐元素计算' + terminal.label;
+  else summary = `${steps[0].label}，再${terminal.label}`;
+  const sequence = types.length <= 5 ? types : [...types.slice(0, 2), '…', ...types.slice(-2)];
+  return { summary: summary.slice(0, 240), formula: sequence.join(' → ') };
+}
+
+export function autoSimplifyCalculations(
+  graph: Graph,
+  registry: Registry,
+  options: { recursive?: boolean; minSize?: number } = {},
+) {
+  const minSize = options.minSize ?? 2;
+  if (!Number.isSafeInteger(minSize) || minSize < 2) throw Error('最少合并步数必须是 ≥ 2 的整数。');
+  const mergedGroups: string[] = [];
+  let removedNodes = 0;
+
+  function simplify(g: Graph) {
+    if (options.recursive) {
+      for (const node of g.nodes) {
+        if (
+          node.subgraph &&
+          ['Block', 'Submodule', 'ForLoop', 'ForEachTensor', 'ForEach', 'WhileLoop'].includes(
+            node.type,
+          )
+        ) {
+          const before = mergedGroups.length;
+          simplify(node.subgraph);
+          if (before !== mergedGroups.length) node.customized = true;
+        }
+      }
+    }
+    const order = orderGraph(g);
+    const byId = new Map(g.nodes.map((n) => [n.id, n]));
+    const available = new Set(
+      g.nodes.filter((n) => isGlueCalculation(n, registry)).map((n) => n.id),
+    );
+    if (available.size < minSize) return;
+    const producers = new Map(order.map((id) => [id, new Set<string>()]));
+    const consumers = new Map(order.map((id) => [id, new Set<string>()]));
+    for (const e of g.edges) {
+      producers.get(e.target)!.add(e.source);
+      consumers.get(e.source)!.add(e.target);
+    }
+    const code = new Map<string, string>(),
+      layout = new Map<string, string>(),
+      marked = new Set<string>();
+    for (const region of g.nodes) {
+      if (!isCodeRegion(region) && !isLayoutRegion(region)) continue;
+      const scope = isCodeRegion(region) ? code : layout;
+      for (const id of ifRegionMembers(region)) scope.set(id, region.id);
+      if (isLayoutRegion(region)) for (const id of layoutRegionOutputs(region)) marked.add(id);
+    }
+
+    // Grow upstream from a single exit. A shared producer can join only after its last
+    // consumer joins. Use original adjacency throughout, so earlier folds cannot hide fan-out.
+    for (let i = order.length - 1; i >= 0; i--) {
+      const exit = order[i];
+      if (!available.has(exit) || consumers.get(exit)!.size > 1) continue;
+      const cluster = new Set([exit]);
+      for (const target of cluster) {
+        for (const source of producers.get(target)!) {
+          if (
+            available.has(source) &&
+            !marked.has(source) &&
+            code.get(source) === code.get(exit) &&
+            layout.get(source) === layout.get(exit) &&
+            [...consumers.get(source)!].every((id) => cluster.has(id))
+          )
+            cluster.add(source);
+        }
+      }
+      if (cluster.size < minSize) continue;
+      const ids = order.filter((id) => cluster.has(id));
+      if (!canMergeCalculationSet(g, ids, registry)) continue;
+      const description = describeGlue(
+        ids.map((id) => byId.get(id)!),
+        g.edges,
+      );
+      mergedGroups.push(mergeCalculationSet(g, ids, registry, description));
+      removedNodes += ids.length - 1;
+      for (const id of ids) available.delete(id);
+    }
+  }
+  simplify(graph);
+  return { mergedGroups, removedNodes };
 }

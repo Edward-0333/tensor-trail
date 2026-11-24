@@ -1,3 +1,4 @@
+import { fitsProjectFile } from './limits';
 import type { Project, RuntimeSnapshot, ValueSpec } from './types';
 import { clone, isDictionarySpec, isTensorSequenceSpec, isTensorSpec } from './types';
 import { parseDictionarySchema } from './dictionary';
@@ -30,7 +31,7 @@ function markRuntime(value: ValueSpec): void {
 }
 export function parseRuntimeSnapshot(value: unknown): RuntimeSnapshot {
   if (typeof value === 'string') {
-    check(value.length <= 3_000_000, '运行快照超过 3 MB。');
+    check(fitsProjectFile(value), '运行快照超过 10 MB。');
     value = JSON.parse(value.replace(/^\uFEFF/, ''));
   }
   check(

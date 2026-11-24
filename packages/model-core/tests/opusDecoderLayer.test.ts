@@ -1,3 +1,4 @@
+import { MAX_NODE_VISITS } from '../src/core/limits';
 import { describe, expect, it } from 'vitest';
 import { buildModel, patchModel, validateModel } from '../src/agent';
 import { inferGraph, inferProject, resultAt } from '../src/core/engine';
@@ -72,7 +73,7 @@ describe('Expanded OPUS decoder forward', () => {
   it.each(['channel_last', 'channel_first'])('marks first-layer image fusion at sampling, not position encoding (%s)', layout => {
     const n = registry.create('OPUSDecoderLayer', { layout });
     const v = inputs(1, layout), before = structuredClone(v);
-    const r = inferGraph(n.subgraph!, registry, v, 1, {}, undefined, [], { remaining: 20000 }, undefined, true);
+    const r = inferGraph(n.subgraph!, registry, v, 1, {}, undefined, [], { remaining: MAX_NODE_VISITS }, undefined, true);
     expect(r.issues).toEqual([]);
     const ids = (id: string) => r.nodes[id].outputs.out.lineage?.sources.map(s => s.index);
     expect(ids('query_pos')).toEqual([3]);

@@ -1,0 +1,47 @@
+{
+  "recipeVersion": 1,
+  "name": "双模式示例 · 轨迹掩码与最近距离",
+  "hyperparameters": { "batch": { "type": "int", "value": 2 } },
+  "nodes": [
+    { "id": "xy", "type": "Input", "label": "轨迹坐标", "params": { "shape": "2,4,2", "axes": "batch,time,xy" } },
+    { "id": "mask", "type": "Input", "label": "有效时间步", "params": { "shape": "2,4", "axes": "batch,time", "dtype": "bool" } },
+    {
+      "id": "masked", "type": "CalculationGroup", "label": "有效轨迹",
+      "params": { "summary": "按有效掩码清零无效位置", "formula": "where(mask[..., None], xy, 0)" },
+      "subgraph": {
+        "nodes": [
+          { "id": "coords", "type": "Inlet", "params": { "port": "xy" } },
+          { "id": "valid", "type": "Inlet", "params": { "port": "mask" } },
+          { "id": "align", "type": "Unsqueeze", "params": { "dim": -1 } },
+          { "id": "zero", "type": "ZerosLike" },
+          { "id": "select", "type": "Where" },
+          { "id": "result", "type": "Outlet", "params": { "port": "out" } }
+        ],
+        "connections": [
+          ["valid.out", "align.in"], ["coords.out", "zero.in"], ["align.out", "select.condition"],
+          ["coords.out", "select.x"], ["zero.out", "select.y"], ["select.out", "result.in"]
+        ]
+      }
+    },
+    {
+      "id": "offset", "type": "SemanticOp",
+      "params": { "inputs": "xy", "summary": "计算相对首帧的位置偏移", "formula": "xy - xy[:, :1, :]" }
+    },
+    {
+      "id": "closest", "type": "SemanticOp",
+      "params": {
+        "inputs": "delta, mask", "outputs": "dist, t_star",
+        "summary": "汇总有效帧的最近距离与时间索引",
+        "formula": "min_and_argmin(masked_norm(delta, mask), dim=1)",
+        "output_specs": "{\"dist\":{\"shape\":\"batch\",\"axes\":\"batch\"},\"t_star\":{\"shape\":\"batch\",\"axes\":\"batch\",\"dtype\":\"int64\",\"requires_grad\":false}}"
+      }
+    },
+    { "id": "distance", "type": "Output", "label": "最近距离" },
+    { "id": "time", "type": "Output", "label": "最近时刻" }
+  ],
+  "connections": [
+    ["xy.out", "masked.xy"], ["mask.out", "masked.mask"], ["masked.out", "offset.xy"],
+    ["offset.out", "closest.delta"], ["mask.out", "closest.mask"],
+    ["closest.dist", "distance.in"], ["closest.t_star", "time.in"]
+  ]
+}

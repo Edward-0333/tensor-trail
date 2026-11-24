@@ -1,3 +1,4 @@
+import { validChunkCount } from '@tensor-trail/model-core/modules/indexing';
 import { create } from 'zustand';
 import type {
   Graph,
@@ -40,6 +41,8 @@ import {
 } from '@tensor-trail/model-core/editing/valueLinkEditing';
 import type { WireRouteChange } from '../views/sharedWires';
 import {
+  autoSimplifyCalculations,
+  mergeCalculationSet,
   mergeCalculations,
   splitCalculationGroup,
 } from '@tensor-trail/model-core/core/calculationGroups';
@@ -133,6 +136,9 @@ interface EditorState {
     merge?: [string, string],
     routes?: WireRouteChange[],
   ) => void;
+  mergeCalculationNodes: (ids: string[], summary?: string, formula?: string) => void;
+  autoSimplifyCurrentGraph: () => void;
+  expandAllCalculationsInCurrentGraph: () => void;
   splitCalculation: (id: string) => void;
   replace: (id: string, type: string) => void;
   saveVariant: (name: string) => void;
@@ -389,7 +395,7 @@ export const useEditor = create<EditorState>((set, get) => ({
     get().edit((graph) => {
       if (typeof value === 'number' && !Number.isFinite(value)) throw new Error('请输入有限数值。');
       const node = valueOwner(graph, id);
-      if (node.subgraph && node.customized)
+      if (node.subgraph && node.customized && !(node.type === 'CalculationGroup' && ['summary', 'formula'].includes(key)))
         throw new Error('此模块已有内部编辑，请进入子图修改各算子。');
       if (
         node.type === 'TensorIndex' &&
@@ -397,6 +403,8 @@ export const useEditor = create<EditorState>((set, get) => ({
         graph.edges.some((edge) => edge.target === id && edge.targetPort === 'stop')
       )
         throw new Error('请先断开 stop 连线，再切换取值方式或结束位置来源。');
+      if (node.type === 'Chunk' && key === 'chunks' && !validChunkCount(value))
+        throw new Error('chunks 必须是 2–9 的整数。');
       if (
         ['Concat', 'Stack'].includes(node.type) &&
         key === 'input_count' &&
@@ -605,6 +613,32 @@ export const useEditor = create<EditorState>((set, get) => ({
         selectedIds: [merged],
         notice: '已合并计算节点；双击编辑内部操作，Ctrl+Z 撤销，属性面板可拆开组合。',
       });
+  },
+  mergeCalculationNodes: (ids, summary, formula) => {
+    let group: string;
+    if (get().edit(graph => {
+      const members = new Set(ids);
+      const labels = graph.nodes.filter(n => members.has(n.id)).map(n => n.label);
+      group = mergeCalculationSet(graph, ids, registry, { summary: summary ?? labels.join(' · ').slice(0, 240), formula });
+    })) get().select(group!);
+  },
+  autoSimplifyCurrentGraph: () => {
+    let groups: string[] = [];
+    if (get().edit(graph => {
+      groups = autoSimplifyCalculations(graph, registry).mergedGroups;
+      if (!groups.length) throw Error('当前画布没有可精简的胶水链。');
+    })) {
+      get().selectMany(groups);
+      set({ notice: `已折叠 ${groups.length} 个语义计算块。` });
+    }
+  },
+  expandAllCalculationsInCurrentGraph: () => {
+    if (!graphAt(get().project.graph, get().path).nodes.some(n => n.type === 'CalculationGroup')) return;
+    if (get().edit(graph => {
+      let group;
+      while ((group = graph.nodes.find(n => n.type === 'CalculationGroup')))
+        splitCalculationGroup(graph, group.id);
+    })) get().select(null);
   },
   splitCalculation: (id) => {
     let ids: string[] = [];

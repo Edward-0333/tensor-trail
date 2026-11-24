@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { registry } from '../src/modules';
 import { inferProject } from '../src/core/engine';
-import { parseProject, serializeProject, validateProjectObject } from '../src/core/serialization';
+import { MAX_PROJECT_BYTES, parseProject, serializeProject, validateProjectObject } from '../src/core/serialization';
 import {
   parseRuntimeSnapshot,
   portableProject,
@@ -129,22 +129,22 @@ describe('Independent runtime snapshots', () => {
   });
   it('direct draft validation still enforces size and cycle safety', () => {
     expect(() =>
-      validateProjectObject({ ...project(), extra: 'x'.repeat(3_000_001) }, registry),
-    ).toThrow('3 MB');
+      validateProjectObject({ ...project(), extra: 'x'.repeat(MAX_PROJECT_BYTES + 1) }, registry),
+    ).toThrow('10 MB');
     const p = project() as Project & { cycle?: unknown };
     p.cycle = p;
     expect(() => validateProjectObject(p, registry)).toThrow('循环');
   });
   it('round-trips compact UTF-8 JSON exactly at the file limit and rejects one extra byte', () => {
     const p = { ...project(), '备注': '' };
-    const remaining = 3_000_000 - Buffer.byteLength(JSON.stringify(p));
+    const remaining = MAX_PROJECT_BYTES - Buffer.byteLength(JSON.stringify(p));
     p.备注 = '图'.repeat(Math.floor(remaining / 3)) + 'x'.repeat(remaining % 3);
     const text = serializeProject(p);
-    expect(Buffer.byteLength(text)).toBe(3_000_000);
+    expect(Buffer.byteLength(text)).toBe(MAX_PROJECT_BYTES);
     expect(parseProject(text, registry)).toEqual(p);
-    expect(() => parseProject(text + ' ', registry)).toThrow('3 MB');
+    expect(() => parseProject(text + ' ', registry)).toThrow('10 MB');
     p.备注 += 'x';
-    expect(() => validateProjectObject(p, registry)).toThrow('3 MB');
+    expect(() => validateProjectObject(p, registry)).toThrow('10 MB');
   });
   it('accepts dictionary inputs up to the same depth as static schemas', () => {
     let value: unknown = { shape: [2], dtype: 'float32' };

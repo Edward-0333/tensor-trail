@@ -1,3 +1,4 @@
+import { MAX_NODE_VISITS } from './limits';
 import type {
   Graph,
   GraphResult,
@@ -29,7 +30,7 @@ export function inferGraph(
   hyperparameters: Hyperparameters = {},
   runtime?: RuntimeSnapshot,
   path: string[] = [],
-  budget = { remaining: 20000 },
+  budget = { remaining: MAX_NODE_VISITS },
   attributeContext?: AttributeContext,
   lineageEnabled = false,
 ): GraphResult {
@@ -40,7 +41,7 @@ export function inferGraph(
   }
   budget.remaining -= graph.nodes.length;
   if (budget.remaining < 0) {
-    result.issues.push('静态推导超过 20000 次节点访问，请减少嵌套循环或元素数量。');
+    result.issues.push(`静态推导超过 ${MAX_NODE_VISITS} 次节点访问，请减少嵌套循环或元素数量。`);
     return result;
   }
   const attributes = attributeContext ?? { plan: planAttributes(graph), values: new Map<string, TensorSpec>() };
@@ -109,6 +110,7 @@ export function inferGraph(
         // Customized composites derive their semantics solely from their concrete child graph.
         if (node.customized && node.subgraph) break;
         const value = node.params[f.key];
+        if (node.type === 'CalculationGroup' && value === undefined) continue;
         // Projects predating assignment versions have one unversioned attribute write.
         if (f.key === 'version' && ['SetAttribute', 'GetAttribute'].includes(node.type) && value === undefined) continue;
         // Older network inputs have only a name and remarks; their schema is optional.

@@ -1,9 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { Copy, ClipboardPaste, Link, Trash2, Undo2, Redo2, Scan, SquareDashed, FolderPlus, FolderInput, FolderMinus, ChevronDown, Route } from 'lucide-react';
+import { Copy, ClipboardPaste, Link, Trash2, Undo2, Redo2, Scan, SquareDashed, FolderPlus, FolderInput, FolderMinus, ChevronDown, Route, Group, Ungroup, ListCollapse } from 'lucide-react';
 import type { Graph } from '@tensor-trail/model-core/core/types';
 import { isLayoutRegion, layoutRegionOf } from '@tensor-trail/model-core/core/layoutRegions';
 import { isValueNode } from '@tensor-trail/model-core/core/valueLinks';
+import { canMergeCalculationSet } from '@tensor-trail/model-core/core/calculationGroups';
+import { registry } from '@tensor-trail/model-core/modules';
 import { contextTargets, menuPosition, type CanvasMenuState } from './canvasContext';
 import type { createModuleClipboard } from './moduleClipboard';
 import { useEditor } from './store';
@@ -82,6 +84,11 @@ export function CanvasContextMenu({ menu, graph, clipboard, close, selectAll, fi
     </div>}
     {item('新建分区并添加', <FolderPlus />, () => state.createLayoutRegion(targets.regionMembers), !targets.regionMembers.length)}
     {!!targets.assigned.length && item('解除分区归属', <FolderMinus />, () => { state.assignLayoutRegion(targets.assigned, null); })}
+    <div role="separator" />
+    {canMergeCalculationSet(graph, menu.nodeIds, registry) &&
+      item('合并为语义计算块', <Group />, () => state.mergeCalculationNodes(menu.nodeIds))}
+    {item('精简胶水链', <ListCollapse />, state.autoSimplifyCurrentGraph)}
+    {item('展开语义块', <Ungroup />, state.expandAllCalculationsInCurrentGraph, !graph.nodes.some(n => n.type === 'CalculationGroup'))}
     <div role="separator" />
     {item('撤销', <Undo2 />, state.undo, !state.past.length, 'Ctrl+Z')}
     {item('重做', <Redo2 />, state.redo, !state.future.length, 'Ctrl+Shift+Z')}

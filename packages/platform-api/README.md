@@ -6,7 +6,7 @@
 | --- | --- |
 | `files.pickOpen` | 可选；由用户选择文件，取消可返回 undefined 或抛 AbortError |
 | `files.pickSave(name)` | 可选；选择保存目标，选择本身不能覆盖文件 |
-| `ProjectFile.readText()` | 读取 UTF-8 项目文本；适配层在读取前执行 3 MB 限制 |
+| `ProjectFile.readText()` | 读取 UTF-8 项目文本；适配层在读取前执行 10 MB 限制 |
 | `ProjectFile.writeText(text, stillCurrent, version)` | 写入前检查文档仍有效；桌面传递文档 ID／快照版本；完成提交才返回 true，取消返回 false，失败抛错 |
 | `files.download` | 网页缺少源文件写入能力时，仅在用户明确另存为时导出副本 |
 | `preferences.getTheme/setTheme` | 仅处理主题，不恢复项目或文件关联 |

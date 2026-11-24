@@ -1,3 +1,4 @@
+import { MAX_EXPANDED_NODES } from './limits';
 import type { Graph, ModelNode, Params, TensorSpec } from './types';
 
 export interface AttributeBinding {
@@ -67,7 +68,7 @@ export function planAttributes(root: Graph): AttributePlan {
   const entries: { node: ModelNode; path: string[]; inLoop: boolean }[] = [];
   let count = 0;
   const walk = (graph: Graph, scope: string[] = [], inLoop = false) => {
-    if (scope.length > 12 || (count += graph.nodes.length) > 2000) {
+    if (scope.length > 12 || (count += graph.nodes.length) > MAX_EXPANDED_NODES) {
       plan.issues.push('属性绑定分析超过子图深度或节点数量限制。');
       return;
     }

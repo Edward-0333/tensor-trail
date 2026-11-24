@@ -1,3 +1,4 @@
+import { fitsProjectFile, MAX_EDGES_PER_GRAPH, MAX_EXPANDED_NODES } from '../core/limits';
 import { registry } from '../modules/index';
 import { isContainerInput } from '../modules/containers';
 import {
@@ -8,6 +9,7 @@ import {
   type Params,
   type Project,
 } from '../core/types';
+import { autoSimplifyCalculations, mergeCalculationSet, splitCalculationGroup } from '../core/calculationGroups';
 import { graphAt, markAncestors, orderGraph } from '../core/graph';
 import { inferProject } from '../core/engine';
 import { parseProject, serializeProject } from '../core/serialization';
@@ -62,8 +64,8 @@ function name(v: unknown): string {
 }
 function bounded(v: unknown) {
   const text = JSON.stringify(v);
-  if (!text || new TextEncoder().encode(text).length > 3_000_000)
-    fail('LIMIT_EXCEEDED', 'JSON 不得超过 3 MB。');
+  if (!text || !fitsProjectFile(text))
+    fail('LIMIT_EXCEEDED', 'JSON 不得超过 10 MB。');
 }
 function options(value: ValidationOptions | PatchOptions, patch = false): PatchOptions {
   const v = record(value, 'options');
@@ -196,17 +198,17 @@ function makeGraph(value: unknown, path: string[], defaults: DefaultApplied[]): 
   keys(v, ['nodes', 'connections']);
   if (
     !Array.isArray(v.nodes) ||
-    v.nodes.length > 2000 ||
+    v.nodes.length > MAX_EXPANDED_NODES ||
     !Array.isArray(v.connections) ||
-    v.connections.length > 8000
+    v.connections.length > MAX_EDGES_PER_GRAPH
   )
-    fail('LIMIT_EXCEEDED', 'nodes/connections 必须是数组，且不能超过 2000/8000 项。', path);
+    fail('LIMIT_EXCEEDED', `nodes/connections 必须是数组，且不能超过 ${MAX_EXPANDED_NODES}/${MAX_EDGES_PER_GRAPH} 项。`, path);
   const g: Graph = { nodes: [], edges: [] };
   let count = 0;
   for (const raw of v.nodes) {
     const node = makeNode(raw, path, defaults);
     count += 1 + (node.subgraph ? countNodes(node.subgraph) : 0);
-    if (count > 2000) fail('LIMIT_EXCEEDED', '展开后的节点数不能超过 2000。', path);
+    if (count > MAX_EXPANDED_NODES) fail('LIMIT_EXCEEDED', `展开后的节点数不能超过 ${MAX_EXPANDED_NODES}。`, path);
     g.nodes.push(node);
   }
   g.edges = v.connections.map((c, i) => {
@@ -260,6 +262,8 @@ function inspect(project: Project, settings: ValidationOptions): ModelResponse {
         r = result.nodes[n.id];
       // Customized composites retain historical generator parameters. Their actual child graph is authoritative.
       if (!(n.customized && n.subgraph)) params(n.type, n.params, at);
+      else if (n.type === 'CalculationGroup')
+        params(n.type, Object.fromEntries(Object.entries(n.params).filter(([key]) => key === 'summary' || key === 'formula')), at);
       if (!r) continue;
       response.nodes.push({
         path: at,
@@ -389,6 +393,9 @@ export function patchModel(
       duplicate_linked: ['source', 'id', 'position'],
       link_value: ['source', 'id'],
       remove_node: ['id'],
+      collapse_calculations: ['ids', 'id', 'label', 'summary', 'formula', 'position'],
+      expand_calculation: ['id'],
+      auto_simplify: ['recursive', 'min_size'],
       set_params: ['id', 'params'],
       rename_node: ['id', 'label'],
       set_position: ['id', 'position'],
@@ -474,11 +481,32 @@ export function patchModel(
         if (!node.valueSource && ['Inlet', 'Outlet'].includes(node.type))
           fail('PROTECTED_BOUNDARY', '不能删除子图边界节点。', [...path, node.id]);
         removeValueNodes(project.graph, path, [node.id]);
+      } else if (op.op === 'collapse_calculations') {
+        if (!Array.isArray(op.ids)) fail('INVALID_ARGUMENT', 'ids 需要同层计算节点 ID 数组。', path);
+        const metadata = params('CalculationGroup', {
+          ...(op.summary !== undefined ? { summary: op.summary } : {}),
+          ...(op.formula !== undefined ? { formula: op.formula } : {}),
+        }, path);
+        mergeCalculationSet(g, op.ids.map(id), registry, {
+          id: op.id === undefined ? undefined : id(op.id),
+          label: op.label === undefined ? undefined : name(op.label),
+          position: op.position === undefined ? undefined : position(op.position),
+          ...metadata,
+        });
+      } else if (op.op === 'expand_calculation') {
+        splitCalculationGroup(g, find().id);
+      } else if (op.op === 'auto_simplify') {
+        if (op.recursive !== undefined && typeof op.recursive !== 'boolean')
+          fail('INVALID_ARGUMENT', 'recursive 必须是布尔值。', path);
+        if (op.min_size !== undefined && (typeof op.min_size !== 'number' || !Number.isSafeInteger(op.min_size) || op.min_size < 2))
+          fail('INVALID_ARGUMENT', 'min_size 必须是 ≥ 2 的整数。', path);
+        const { removedNodes } = autoSimplifyCalculations(g, registry, { recursive: op.recursive, minSize: op.min_size });
+        if (!removedNodes) continue;
       } else if (op.op === 'set_params') {
         const requested = find(),
           node = valueOwner(g, requested),
           at = [...path, requested.id];
-        if (node.subgraph && node.customized)
+        if (node.subgraph && node.customized && node.type !== 'CalculationGroup')
           fail('CUSTOMIZED_COMPOSITE', '此组合模块已手动修改，请用 path 修改内部算子。', at);
         const changes = params(node.type, op.params, at);
         if (isLayoutRegion(node)) {
@@ -548,7 +576,7 @@ export function patchModel(
       } else if (op.op === 'layout') layouts.set(JSON.stringify(path), path);
       if (!layoutOnly && !['rename_node', 'layout', 'set_position', 'set_tensor_border', 'set_information_source', 'assign_region', 'fit_region', 'resize_region'].includes(op.op))
         markAncestors(project.graph, path);
-      if (countNodes(project.graph) > 2000) fail('LIMIT_EXCEEDED', '展开后的节点数不能超过 2000。');
+      if (countNodes(project.graph) > MAX_EXPANDED_NODES) fail('LIMIT_EXCEEDED', `展开后的节点数不能超过 ${MAX_EXPANDED_NODES}。`);
     }
     // Validate only the complete transaction: disconnect + reconnect may be temporarily incomplete.
     syncValueLinks(project.graph);

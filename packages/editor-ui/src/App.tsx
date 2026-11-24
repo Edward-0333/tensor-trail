@@ -389,7 +389,7 @@ export default function App() {
             if (file) {
               const documentId = useEditor.getState().documentId;
               try {
-                if (file.size > MAX_PROJECT_BYTES) throw new Error('文件超过 3 MB。');
+                if (file.size > MAX_PROJECT_BYTES) throw new Error('文件超过 10 MB。');
                 const text = await file.text();
                 if (useEditor.getState().documentId === documentId)
                   useEditor.getState().importText(text);

@@ -1,3 +1,4 @@
+import { MAX_PROJECT_BYTES } from '@tensor-trail/model-core/core/limits';
 import { useRef } from 'react';
 import {
   activeRuntimeSnapshot,
@@ -75,7 +76,7 @@ export function RuntimePanel() {
               const documentId = state.documentId,
                 active = reference.id;
               try {
-                if (file.size > 3_000_000) throw Error('快照超过 3 MB。');
+                if (file.size > MAX_PROJECT_BYTES) throw Error('快照超过 10 MB。');
                 const loaded = parseRuntimeSnapshot(await file.text());
                 const current = useEditor.getState();
                 if (current.documentId !== documentId || current.project.runtime?.active !== active)

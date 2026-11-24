@@ -1,5 +1,4 @@
-import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import { describe, expect, it } from 'vitest';
 import { validateModel } from '@tensor-trail/model-core/agent';
 import { parseProject, serializeProject } from '@tensor-trail/model-core/core/serialization';
@@ -7,7 +6,7 @@ import { clone } from '@tensor-trail/model-core/core/types';
 import { registry } from '@tensor-trail/model-core/modules';
 import { example } from '@tensor-trail/model-core/modules/examples';
 
-const root = fileURLToPath(new URL('../', import.meta.url));
+const { runAgent } = createRequire(import.meta.url)('../packages/cli/scripts/test-agent-process.cjs');
 
 describe('共享源码与独立 Node SDK 的旧项目兼容', () => {
   it.each(['mixed', 'pluto-input'] as const)('%s 项目经 JSON 往返后两种入口一致', kind => {
@@ -28,10 +27,8 @@ describe('共享源码与独立 Node SDK 的旧项目兼容', () => {
     const sourceResult = validateModel(parsed);
     // The input-only PLUTO example intentionally lacks a final Output node.
     expect(sourceResult.ok).toBe(kind === 'mixed');
-    const cli = spawnSync(process.execPath, ['packages/cli/scripts/agent.mjs', 'validate', '-'], {
-      cwd: root, input: serializeProject(parsed), encoding: 'utf8', windowsHide: true,
-    });
-    expect(cli.status, cli.stderr).toBe(kind === 'mixed' ? 0 : 1);
+    const cli = runAgent(['validate', '-'], serializeProject(parsed));
+    expect(cli.status, cli.stdout).toBe(kind === 'mixed' ? 0 : 1);
     const bundledResult = JSON.parse(cli.stdout);
     expect(bundledResult.ok).toBe(sourceResult.ok);
     expect(bundledResult.diagnostics).toEqual(sourceResult.diagnostics);

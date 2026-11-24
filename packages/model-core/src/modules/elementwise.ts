@@ -1,7 +1,7 @@
 import type { ModelNode, ModuleDefinition, TensorSpec } from '../core/types';
 import { tensorValue } from '../core/types';
 import { broadcast, requireThat, tensor } from './math';
-import { input, output, select } from './primitives';
+import { bool, input, output, select, text } from './primitives';
 
 const integers = ['uint8', 'int8', 'int16', 'int32', 'int64'];
 const floats = ['float16', 'bfloat16', 'float32', 'float64'];
@@ -52,6 +52,29 @@ export function divideCode(node: ModelNode): string | undefined {
 }
 
 export const elementwiseModules: ModuleDefinition[] = [
+  ...(['Sigmoid', 'Log', 'Sqrt'] as const).map((type): ModuleDefinition => ({
+    type, label: type, category: type === 'Sigmoid' ? '激活函数' : '数学运算',
+    description: {
+      Sigmoid: 'torch.sigmoid(x)，逐元素计算 sigmoid，保留浮点类型和各轴。',
+      Log: 'torch.log(x) 或 torch.log1p(x)，逐元素计算自然对数，保留浮点类型和各轴。',
+      Sqrt: 'torch.sqrt(x)，逐元素计算平方根，保留浮点类型和各轴。',
+    }[type],
+    fields: type === 'Log' ? [bool('log1p', '计算 log(1 + x)', false)] : [],
+    inputs: input, outputs: output,
+    infer: ({ in: x }) => {
+      requireThat(floats.includes(x.dtype), `${type} 需要浮点 Tensor，当前为 ${x.dtype}。`);
+      return { outputs: { out: tensor([...x.shape], [...x.axes], x.dtype) } };
+    },
+  })),
+  {
+    type: 'Clamp', label: 'Clamp', category: '数学运算',
+    description: 'torch.clamp(x, min, max)，逐元素限制数值，保留形状、轴和 dtype。空字符串表示省略该边界。',
+    fields: [text('min', '下限', ''), text('max', '上限', '')], inputs: input, outputs: output,
+    infer: ({ in: x }, p) => ({
+      outputs: { out: tensor([...x.shape], [...x.axes], x.dtype) },
+      warnings: p.min || p.max ? [] : ['torch.clamp 运行时至少需要一个边界，请填写 min 或 max。'],
+    }),
+  },
   {
     type: 'Divide', label: '逐元素真除法 /', category: '数学运算',
     description: '对应 a / b，支持 Tensor 广播和实数类型提升，不是矩阵运算或整除。不会自动添加 epsilon/clamp，也不会原地修改输入。',

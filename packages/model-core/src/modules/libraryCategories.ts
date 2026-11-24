@@ -1,4 +1,4 @@
-import type { ModuleDefinition } from '../core/types';
+import type { ModelNode, ModuleDefinition, Registry } from '../core/types';
 
 export const calculationCategories = [
   '索引与切片',
@@ -25,3 +25,17 @@ export const isCalculation = (definition?: ModuleDefinition) =>
   !!definition &&
   (definition.type === 'CalculationGroup' ||
     calculationCategories.includes(libraryCategory(definition)));
+
+/** Only these leaf calculations may disappear during automatic simplification. */
+const glueTypes = new Set([
+  'DictionaryGet', 'TensorSequenceGet', 'TensorIndex', 'Slice', 'Unsqueeze', 'Squeeze', 'Reshape',
+  'ReshapeLike', 'View', 'Permute', 'Flatten', 'Unflatten', 'Contiguous', 'Repeat', 'RepeatBatch',
+  'AlignTrailingDims', 'ZerosLike', 'Zeros', 'NewZeros', 'NewOnes', 'OnesScaled', 'Cast',
+  'TensorCompareScalar', 'LogicalAnd', 'BitwiseAnd', 'Any', 'BooleanNot', 'Where', 'Clamp',
+  'Add', 'Subtract', 'Mul', 'Divide', 'Function', 'Sin', 'Cos', 'Exp', 'Log', 'Sqrt',
+  'NanToNum', 'NoGradResult', 'Compute',
+]);
+
+export function isGlueCalculation(node: ModelNode, registry: Registry): boolean {
+  return !node.subgraph && glueTypes.has(node.type) && isCalculation(registry.get(node.type));
+}

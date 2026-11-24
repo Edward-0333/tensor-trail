@@ -14,6 +14,8 @@ from pathlib import Path
 import tempfile
 from uuid import uuid4
 
+MAX_PROJECT_BYTES = 10_000_000
+
 
 def describe_input(data):
     import torch
@@ -125,8 +127,8 @@ def _write_run(path, draft, before, snapshot):
     if (not isinstance(snapshot.get('context'), dict)
             or len(json.dumps(snapshot['context'], ensure_ascii=False, allow_nan=False)) > 64_000):
         raise ValueError('Snapshot context must be an object within 64,000 characters')
-    if len(json.dumps(snapshot, ensure_ascii=False, indent=2, allow_nan=False).encode('utf-8')) + 1 > 3_000_000:
-        raise ValueError('Runtime snapshot exceeds 3 MB')
+    if len(json.dumps(snapshot, ensure_ascii=False, indent=2, allow_nan=False).encode('utf-8')) + 1 > MAX_PROJECT_BYTES:
+        raise ValueError('Runtime snapshot exceeds 10 MB')
     seen = set()
     for binding in snapshot['bindings']:
         key = tuple(binding['nodePath'])
@@ -161,8 +163,8 @@ def _write_run(path, draft, before, snapshot):
         runtime['snapshots'].append(reference)
     runtime['active'] = snapshot['id']
     runtime.pop('embedded', None)
-    if len(json.dumps(draft, ensure_ascii=False, indent=2, allow_nan=False).encode('utf-8')) + 1 > 3_000_000:
-        raise ValueError('Project exceeds 3 MB')
+    if len(json.dumps(draft, ensure_ascii=False, indent=2, allow_nan=False).encode('utf-8')) + 1 > MAX_PROJECT_BYTES:
+        raise ValueError('Project exceeds 10 MB')
     if path.read_bytes() != before:
         raise RuntimeError('Project changed during export; retry after saving the editor')
     if destination.exists():

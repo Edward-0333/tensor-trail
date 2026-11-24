@@ -25,6 +25,26 @@ tags: [项目, Tensor, AI, API]
 
 **尚未提供 MCP、HTTP REST 服务或内置大模型聊天框。** 当前仅做形状推导，不运行真实张量、训练或 PyTorch 前向。普通聊天模型需由具备文件、命令行或页面调用能力的工具连接程序。
 
+## 双模式绘图（1:1 源码精确模式 / 精简语义模式）
+
+**已有 1:1 图**可用 `CalculationGroup` 折叠同一代码范围及布局分区中的连通计算。折叠后所有外部依赖仍须构成 DAG。可选的 `summary`、`formula` 各限 240 字。摘要留空时卡片列出各步，填写后双击摘要卡即可检查内部算子。Recipe 可显式提供带 Inlet/Outlet 的子图，已自定义的组合也支持通过 `set_params` 修改摘要与表达式。
+
+**按规格直接绘图**可用叶节点 `SemanticOp`。用 `inputs`、`outputs` 填写逗号分隔的标识符，各端口列表内名称唯一。输入接受 1–12 个任意值，输出声明 1–8 个 Tensor。填写 `summary` 描述计算，可选 `formula` 用于展示。默认继承按端口顺序遇到的首个 Tensor 的 shape、axes 和 dtype；没有 Tensor 输入时需填写 shape。显式 shape 支持整数及项目超参数算式，轴名留空时生成 axis0、axis1 等。
+
+多输出可共用规格，或用 `output_specs` **JSON 字符串**逐端口指定，例如 `{"dist":{"shape":"B","axes":"batch"},"idx":{"shape":"B","dtype":"int64","requires_grad":false}}`。未列出的端口从首个 Tensor 继承规格。梯度选项为 auto/on/off，JSON 内也接受布尔值。on 要求浮点输出。auto 对非浮点输出或所有 Tensor 输入已知关闭梯度的情况推断为 off，其他情况保留未知。开启来源分析时每个输出记录所声明输入的来源并集。
+
+以下分别是 `patchModel` 的单个操作，均可带当前画布的 `path`。
+
+```json
+[
+  {"op":"collapse_calculations","ids":["align","zeros","where"],"id":"mask_block","summary":"按有效掩码清零","formula":"where(mask, x, 0)"},
+  {"op":"expand_calculation","id":"mask_block"},
+  {"op":"auto_simplify","min_size":2,"recursive":true}
+]
+```
+
+自动精简优先折叠只有一个出口的胶水链，保留共享分支及分区输出。默认只处理当前画布，至少合并两步。核心函数返回新组合 ID 列表（`mergedGroups`）及画布节点净减少数（`removedNodes`）。返回 1:1 视图时，右键选择“展开语义块”。两种方法可共存于同一图，完整示例见 [双模式 Recipe](../examples/semantic-dual-mode.recipe.json)。
+
 ## 调用边界与实参准备
 
 绘制 `module(expr1, expr2, ...)` 时，括号里的表达式属于调用方，不属于 `module` 的内部实现。
@@ -82,6 +102,40 @@ node packages/cli/scripts/agent.mjs patch model.json examples/swiglu.patch.json 
 - 自动生成位置和组合模块内部子图，输出完整项目仍为 schemaVersion: 1。节点可提供 `position: {x,y}`，两者必须为有限数值；未指定的位置自动安排。默认严格模式要求顶层至少一个输入（Input 或 ForwardInput）和 Output，必需输入必须连接；草稿模式允许尚未补齐这些部分。两种模式都禁止环路、悬空端点和同一输入端口多条边。
 - Input.shape 是逗号分隔文本。默认 axes 适用于三维 [batch, sequence, feature]；其他维度明确指定 axes，或设 `axes: ""` 自动命名。符号尺寸如 `B, T, 64` 可能产生尚不能确认的约束警告。
 - Transformer 默认 [B,T,D]，Conv1d 为 [B,C,L]，通常用 Permute 转换。完整示例见 examples/cnn-transformer.recipe.json。
+
+### 激活、逐元素数学、切分与筛选
+
+以下类型可直接用于 Recipe 节点及 Patch 的 `add_node`、`replace_node` 和 `set_params`。所有输入端口均为 `in`。
+
+| type | params 默认值 | 输出端口与规格 |
+| --- | --- | --- |
+| `Sigmoid` | `{}` | `out`，逐元素 sigmoid |
+| `Log` | `{"log1p":false}` | `out`，自然对数；开启时对应 `torch.log1p(x)` |
+| `Sqrt` | `{}` | `out`，逐元素平方根 |
+| `Clamp` | `{"min":"","max":""}` | `out`，边界为字符串，例如 `{"min":"1e-6"}`；运行时至少需要一个边界，两者留空时提示补齐 |
+| `Chunk` | `{"dim":-1,"chunks":2}` | `out0` 起按顺序编号，`chunks` 为 2–9 的整数 |
+| `TopK` | `{"dim":-1,"k":8,"largest":true}` | `values` 保留输入 dtype，`indices` 为 int64；`k` 为非负整数，`largest:false` 选最小值 |
+
+前三个算子支持 float16、bfloat16、float32、float64。四个逐元素算子均保留 shape、轴名和 dtype。以上算子在普通梯度模式下将已知的输入梯度状态传播到数值输出，来源记为静态推导；未知状态保留未知。TopK 的 indices 标记为不可导。开启来源分析后，索引和数值输出都保留输入来源。
+
+`Chunk` 按 `ceil(N/chunks)` 确定块宽。例如长度 13 请求 6 块会得到 `[3,3,3,3,1]`，第六个端口没有张量，使用它会触发上游阻断。空轴产生指定数量的空块。符号轴保留宽度和余量表达式，实际块数待具体尺寸运行时确认。`TopK` 建模的调用为 `torch.topk(x, min(k, N), dim=dim, largest=largest)`，两个输出的选取轴都是 `min(k,N)`。
+
+```sh
+node packages/cli/scripts/agent.mjs describe Chunk
+node packages/cli/scripts/agent.mjs build examples/standard-tensor-ops.recipe.json --out ops.tensor-trail.json
+node packages/cli/scripts/agent.mjs validate ops.tensor-trail.json
+```
+
+### 导出 PNG 预览
+
+用桌面渲染器打开已保存的项目，按节点 ID 逐层进入子图，适配画布并输出 PNG。省略 `--path` 导出根图。默认尺寸为 1920×1080，主题为 light，也可指定 dark。Linux 可在桌面会话或 Xvfb 中运行。
+
+```sh
+npm run setup:desktop
+npm run build:desktop
+node packages/cli/scripts/agent.mjs build examples/cnn-transformer.recipe.json --out model.tensor-trail.json
+node scripts/export-preview.cjs --project model.tensor-trail.json --out attention.png --path encoder/attention --width 1920 --height 1080 --theme dark
+```
 
 ### Q/K/V 三输入注意力
 
@@ -288,11 +342,11 @@ patchModel(project, patch, { mode: 'draft', layout: 'preserve' });
 - `set_position` 对未归属节点只改变其位置；布局分区携带成员，自动模式随成员扩大、手动模式限制边界，相关线路按上面的分区规则处理，不将祖先标成 customized。显式 `layout` 操作优先于保留布局，但保留已有分区及成员；`layout: 'auto'` 会在添加节点的子图中重排未归属节点。
 - 原地修改的节点、连线和参数使用 Patch；不必手工编辑持久化 JSON。只有模块目录没有对应语义时才实现新的算子、形状规则并重新构建。
 
-CLI 对应命令：
+CLI 对应命令（从 Tensor Trail 仓库根目录执行，示例模型位于同级 `SparseWorld/` 目录）：
 
 ```sh
-node packages/cli/scripts/agent.mjs validate ../SparseWorld.tensor-trail.json --draft
-node packages/cli/scripts/agent.mjs patch ../SparseWorld.tensor-trail.json examples/sparseworld-incremental.patch.json --draft --layout preserve --out ../SparseWorld.preview.tensor-trail.json
+node packages/cli/scripts/agent.mjs validate ../SparseWorld/SparseWorld.tensor-trail.json --draft
+node packages/cli/scripts/agent.mjs patch ../SparseWorld/SparseWorld.tensor-trail.json examples/sparseworld-incremental.patch.json --draft --layout preserve --out ../SparseWorld/SparseWorld.preview.tensor-trail.json
 node packages/cli/scripts/agent.mjs schema patchOptions
 ```
 
@@ -379,7 +433,7 @@ if (draft.ok && !draft.diagnostics.some(d => d.severity === 'warning')) {
 - 退出码 0 为成功/无 error，1 为协议或模型校验失败，2 为命令参数、读写或 JSON 语法错误。
 - --out 只在 ok:true 时写出完整 project，不写报告包装。默认拒绝覆盖，--force 显式允许覆盖；校验失败即使 force 也不写文件。warning 模型可导出，画布应用另需确认警告。
 - 输出父目录应已存在。CLI 不联网、不调用大模型、不执行传入代码。
-- JSON 最多 3 MB，项目含展开子图及 variants 合计最多 2000 节点，每图最多 8000 边，嵌套最多 12 层，Patch 为 1–500 个操作。
+- JSON 最多 10 MB，项目含展开子图及 variants 合计最多 6000 节点，每图最多 24000 边，嵌套最多 12 层，Patch 为 1–500 个操作。
 - Schema 校验字段；跨节点、深度、总量和数学约束由运行时验证。形状检查不代表训练或显存可行性验证。
 
 ## 可直接交给 AI 的指令
@@ -509,7 +563,7 @@ SparseWorld 当前 FPN 为四路 1x1 lateral 卷积，三次从粗到细的最�
 这不是带状态的 RNN，不应将上一轮特征反馈到下一轮。初始列表不进入循环体，收集只发生在外层；
 不支持 break/continue、逐轮条件过滤、修改捕获值或循环携带状态。不同迭代允许不同 shape/dtype。
 空输入跳过循环体并保留初始列表。为避免静态推导膨胀，每个循环最多 16 次，收集结果最多 256 个元素，
-一次完整推导最多 20000 次节点访问；这些是软件限制，不是 Python 限制。
+一次完整推导最多 60000 次节点访问；这些是软件限制，不是 Python 限制。
 
 双击进入循环体后，通过“当前迭代”选择器查看各轮的尺寸与列表长度变化。
 选择器是临时视图状态，不写项目文件，不产生撤销记录，也不执行 Python。

@@ -204,6 +204,10 @@ export interface ModelNode {
   valueSource?: string;
   /** Called module's forward, a helper function body, or an explicitly merged calculation group. */
   subgraph?: Graph;
+  /** Parent-space origin of a collapsed selection, for restoring its layout after a move. */
+  calculationOrigin?: { x: number; y: number };
+  /** Original region output roles, scoped to IDs inside the collapsed group. */
+  calculationRegionOutputs?: string[];
   customized?: boolean;
 }
 export interface ModelEdge {

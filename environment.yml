@@ -1,0 +1,6 @@
+name: tensor-trail
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - nodejs=24.22.3

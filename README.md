@@ -81,6 +81,41 @@ Output           [8, 100, 32]
 
 桌面命令也在根目录执行：`npm run desktop` 构建并打开本地窗口，`npm run dev:desktop` 启动支持界面热更新的开发窗口，`npm run test:desktop` 执行真实 Electron 窗口文件流程检查，`npm run test:desktop:experience` 检查 DPI、画布交互和本地项目副本的大图表现。桌面普通运行使用本地界面资源，无需启动网页版服务。体验测试默认读取 `data/pluto.tensor-trail.json`，缺少该文件时，请用 `npm run test:desktop:experience -- --project <路径>` 指定本地项目。
 
+保留原有全局 Node 即可；`scripts/npm.cjs` 优先使用可选的 `.tools/` 项目工具链，否则使用当前 Node。也可以使用下面的独立 Conda 环境。手动执行命令时，可将下面的 `npm` 替换为 `node scripts/npm.cjs`。其他电脑安装上述 Node LTS 版本后可直接使用 npm。
+
+### 独立 Conda 环境（Ubuntu）
+
+可用 [environment.yml](environment.yml) 为软件单独创建 `tensor-trail` 环境，不再借用 SparseWorld 或其他模型的环境。从仓库根目录执行首次配置：
+
+```sh
+conda env create -f environment.yml
+conda activate tensor-trail
+./start-desktop.sh --install-launcher
+./start-desktop.sh
+```
+
+环境已经存在时，只需激活并启动，不要重复创建。当前 Conda 配置使用 Node.js 24.22.3（自带 npm 11.19.1），满足项目的 Node.js >=22.12 要求；仓库 `.node-version` 保留其他工具链使用的版本。这是仅供软件使用的 Node 环境，不安装 Python、PyTorch 或 CUDA，前端依赖仍由仓库的 `package-lock.json` 管理。
+
+安装菜单入口时会记录该环境的 Node 绝对路径，之后从 Ubuntu 应用菜单启动不需要先激活 Conda。命令行日常启动使用 `conda activate tensor-trail` 后运行 `./start-desktop.sh`；如显式设置过 `TENSOR_TRAIL_NODE`，需确认它没有继续指向旧环境。真实模型输入采集仍在模型自己的 Python 环境执行。
+
+### 跨项目共用
+
+Tensor Trail 可以独立于模型仓库安装，多份模型共用同一套软件。例如：
+
+```text
+LK/
+  tensor-trail/                         # 软件、Git 仓库与 Node 依赖
+  SparseWorld/
+    SparseWorld.tensor-trail.json       # 该模型的绘图
+    SparseWorld.tensor-trail-data/      # 该模型的运行快照
+  other-project/
+    model.tensor-trail.json
+```
+
+从 `tensor-trail/` 启动软件，再用“打开”选择对应项目的图；无需为每个模型复制软件，也不要求软件与模型使用同一个 Python/Conda 环境。采集真实输入时，在各模型自己的 Python 环境中引用共享仓库的 `python/` 适配器。
+
+移动软件目录时保留其 Git、依赖和构建文件，图与相邻快照目录无需移动。Linux 移动后使用可用的 Node 重新运行 `./start-desktop.sh --install-launcher`，更新菜单入口的程序路径、工作目录和图标；如当前 shell 没有合适的 Node，可通过 `TENSOR_TRAIL_NODE=/绝对路径/node` 指定，不必修改系统默认 Node。原有应用偏好保留在用户配置目录。
+
 ## 开发与验证
 
 贡献前请参阅 [贡献指南](CONTRIBUTING.md)。
@@ -140,14 +175,14 @@ node packages/cli/scripts/agent.mjs patch model.json examples/swiglu.patch.json 
 
 生成的项目可在网页顶部点击“打开”，或在空白页点击“打开项目”。页面 API 为 `window.tensorTrail`，提供读取、构建、校验、批量修改及携带 revision 的应用操作。CLI 只生成文件，不自动修改打开的网页。当前未接入内置大模型、MCP 或 HTTP REST 服务，接入步骤及可交给 AI 的工作指令见 [AI 操作指南](docs/AI操作指南.md)。
 
-`--out` 默认拒绝覆盖已有文件，显式传入 `--force` 才允许覆盖。CLI 不会自动读取旁置快照。网页打开项目和 CLI 读取 JSON 时，每个输入均限 3,000,000 字节。节点数、边数、嵌套深度和 Patch 操作数的上限见 [CLI 约定与限制](docs/AI操作指南.md#cli-约定与限制)。
+`--out` 默认拒绝覆盖已有文件，显式传入 `--force` 才允许覆盖。CLI 不会自动读取旁置快照。网页打开项目和 CLI 读取 JSON 时，每个输入均限 10,000,000 字节。节点数、边数、嵌套深度和 Patch 操作数的上限见 [CLI 约定与限制](docs/AI操作指南.md#cli-约定与限制)。
 
 增量绘图支持 `--draft` / `{mode: 'draft'}`：允许暂缺最终输出和未连完的节点，结构错误及已知尺寸错误仍会阻止应用。Patch 默认保留已有节点坐标、连线拐点及标签位置；新节点可指定 `position`，已有节点可用 `set_position` 移动。只有显式 `layout` 操作或 `--layout auto` 才重排。
 
 例如对逐步绘制中的 SparseWorld 图生成一个预览副本，不改原图：
 
 ```sh
-node packages/cli/scripts/agent.mjs patch ../SparseWorld.tensor-trail.json examples/sparseworld-incremental.patch.json --draft --out ../SparseWorld.preview.tensor-trail.json
+node packages/cli/scripts/agent.mjs patch ../SparseWorld/SparseWorld.tensor-trail.json examples/sparseworld-incremental.patch.json --draft --out ../SparseWorld/SparseWorld.preview.tensor-trail.json
 ```
 
 该示例只添加一个已有张量的展示节点，不新增模型运算。后续绘图优先使用 API/CLI 添加节点、连线、修改参数；仅当算子库缺少所需能力时才扩展源码。详细策略和画布调用示例见 [草稿与保留布局](docs/AI操作指南.md#草稿与保留布局)。

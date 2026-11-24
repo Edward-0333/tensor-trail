@@ -1,3 +1,4 @@
+import { fitsProjectFile } from '../core/limits';
 import type { Graph } from '../core/types';
 import { clone, uid } from '../core/types';
 import { parseProject } from '../core/serialization';
@@ -10,7 +11,7 @@ const prefix = 'tensor-trail-fragment-v1\n';
 export const clipboardText = (fragment: Graph) => prefix + JSON.stringify(fragment);
 export function readClipboard(text: string): Graph | null {
   if (!text.startsWith(prefix)) return null;
-  if (text.length > 3_000_000) throw new Error('剪贴板内容超过 3 MB。');
+  if (!fitsProjectFile(text)) throw new Error('剪贴板内容超过 10 MB。');
   const graph: unknown = JSON.parse(text.slice(prefix.length));
   const record = (value: unknown): value is Record<string, unknown> =>
     value !== null && typeof value === 'object' && !Array.isArray(value);
