@@ -1,3 +1,4 @@
+import { shortText } from './limits';
 export type FormulaNode =
   | { kind: 'input' }
   | { kind: 'number'; value: number }
@@ -22,7 +23,7 @@ export function parseFunctionFormula(expression: unknown, argument: unknown = 'x
     '输入变量需为 1–64 字符的名称，不能使用 math、pi 等保留名称。',
   );
   check(
-    typeof expression === 'string' && expression.trim().length > 0 && expression.length <= 1000,
+    shortText(expression, 1000) && expression.trim().length > 0,
     '请填写 1–1000 字符的数学表达式。',
   );
   const pattern =

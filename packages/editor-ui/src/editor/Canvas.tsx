@@ -18,12 +18,14 @@ import {
   type Viewport,
 } from '@xyflow/react';
 import { Maximize } from 'lucide-react';
+import type { CanvasProjection } from '@tensor-trail/model-core/core/canvasProjection';
 import type { Graph, GraphResult, ModelNode } from '@tensor-trail/model-core/core/types';
 import { layoutIfRegions } from '../views/ifRegionLayout';
-import { layoutRegions, measuredNodeSizes } from '../views/layoutRegions';
-import { constrainLayoutMoves, isLayoutRegion, layoutRegionOf, layoutRegionOutputRegions, layoutRegionRect } from '@tensor-trail/model-core/core/layoutRegions';
+import { layoutRegions, measuredNodeSizes, regionDragPositions, visibleRegionRect } from '../views/layoutRegions';
+import { constrainLayoutMoves, isLayoutRegion, layoutRegionOf, layoutRegionOutputRegions } from '@tensor-trail/model-core/core/layoutRegions';
 import { isCodeRegion } from '@tensor-trail/model-core/core/ifRegions';
 import { isCountContract, valueEdgeLabel, valueEdgeStyle } from '../views/valueEdgeStyle';
+import { buildTensorGeometryDiagram, canvasTensorVisual, type GraphTensorTones } from '@tensor-trail/model-core/core/tensorGeometry';
 import { ports } from '@tensor-trail/model-core/core/graph';
 import { registry } from '@tensor-trail/model-core/modules/index';
 import { categoryColor, ModuleNode, type TrailNode } from '../views/ModuleNode';
@@ -83,6 +85,9 @@ function flowsLeft(graph: Graph, id: string): boolean {
 }
 export function Canvas({
   graph,
+  projection,
+  graphTones,
+  referenceMaxDim,
   result,
   step,
   theme,
@@ -91,6 +96,9 @@ export function Canvas({
   viewports,
 }: {
   graph: Graph;
+  projection: CanvasProjection;
+  graphTones: GraphTensorTones;
+  referenceMaxDim: number;
   result?: GraphResult;
   step: number;
   theme: 'dark' | 'light';
@@ -98,6 +106,12 @@ export function Canvas({
   clipboard: ReturnType<typeof createModuleClipboard>;
   viewports: ReturnType<typeof createViewportMemory>;
 }) {
+  const visibleGraph = useMemo(() => ({ nodes: projection.visibleNodes, edges: projection.edges }), [projection]);
+  const globalTensorBlocks = useEditor(s => s.globalTensorBlocks);
+  const diagrams = useMemo(() => new Map(graph.nodes.map(node => {
+    const visual = canvasTensorVisual(node, globalTensorBlocks);
+    return [node.id, visual && buildTensorGeometryDiagram(node, result?.nodes[node.id], graphTones, { ...visual, referenceMaxDim })];
+  })), [graph, graphTones, result, globalTensorBlocks, referenceMaxDim]);
   const selected = useEditor((s) => s.selected),
     nodeFocus = useEditor((s) => s.nodeFocus),
     selectedIds = useEditor((s) => s.selectedIds),
@@ -121,10 +135,10 @@ export function Canvas({
     knownRegions.current = new Set(regions.map(n => n.id));
     if (!added) return;
     const frame = requestAnimationFrame(() => {
-      void fitBounds(layoutRegionRect(graph, added, useEditor.getState().nodeSizes), { padding: .25, duration: 250 });
+      void fitBounds(visibleRegionRect(visibleGraph, added, useEditor.getState().nodeSizes, projection.hiddenNodeIds), { padding: .25, duration: 250 });
     });
     return () => cancelAnimationFrame(frame);
-  }, [graph, fitBounds]);
+  }, [graph, visibleGraph, projection, fitBounds]);
   const feedback = useMemo(() => loopFeedback(graph, owner), [graph, owner]);
   const [selectedFeedback, setSelectedFeedback] = useState<string>();
   const [contextMenu, setContextMenu] = useState<CanvasMenuState | null>(null);
@@ -149,7 +163,7 @@ export function Canvas({
       return { positions: moved.map((n) => ({ id: n.id, position: n.position })), guides: [] };
     const hasRegion = moved.some(n => isLayoutRegion(n.data.model) || layoutRegionOf(graph, n.id));
     const snapped = snapNodesToWires(
-      graph,
+      visibleGraph,
       session.routes,
       session.initial,
       moved,
@@ -157,7 +171,8 @@ export function Canvas({
       session.guides,
       disabled || hasRegion,
     );
-    snapped.positions = constrainLayoutMoves(graph, snapped.positions, measuredNodeSizes(getNodes()));
+    const positions = regionDragPositions(graph, snapped.positions, session.initial, projection.hiddenNodeIds);
+    snapped.positions = constrainLayoutMoves(graph, positions, measuredNodeSizes(getNodes()));
     session.guides = snapped.guides;
     return snapped;
   };
@@ -208,7 +223,7 @@ export function Canvas({
         return members.length > 1 ? members.map((member) => member.id) : [];
       }),
     );
-    return graph.nodes.map((stored) => {
+    return projection.visibleNodes.map((stored) => {
       const model = effectiveValueNode(graph, stored),
         nodePorts = ports(model, registry);
       const outputRegions = regionOutputs.get(model.id);
@@ -227,7 +242,9 @@ export function Canvas({
           .join(' '),
         data: {
           model,
+          tensorDiagram: diagrams.get(model.id),
           inputBoundary: inputBoundaries.get(model.id),
+          inputAlias: stored.valueSource ? inputBoundaries.get(stored.valueSource) : undefined,
           finalOutput: finalOutputs.has(model.id),
           regionOutputs: outputRegions?.map(region => ({ id: region.id, label: region.label, color: String(region.params.color) })),
           localParameterColor: localColors.get(model.id),
@@ -235,7 +252,7 @@ export function Canvas({
           inputs: stored.valueSource ? [] : nodePorts.inputs,
           outputs: nodePorts.outputs,
           category: registry.get(model.type)?.category ?? '基础层',
-          reverse: flowsLeft(graph, model.id),
+          reverse: flowsLeft(visibleGraph, model.id),
           active: step >= 0 && result?.order[step] === model.id,
           dimmed: step >= 0 && (result?.order.indexOf(model.id) ?? 0) > step,
           open: () => {
@@ -244,7 +261,7 @@ export function Canvas({
         },
       };
     });
-  }, [graph, result, owner, selected, selectedIds, path, step]);
+  }, [graph, visibleGraph, projection, diagrams, result, owner, selected, selectedIds, path, step]);
   const [nodes, setNodes, onNodesChange] = useNodesState<TrailNode>(derived);
   useEffect(() => {
     useEditor.getState().setNodeSizes(measuredNodeSizes(nodes));
@@ -259,7 +276,7 @@ export function Canvas({
       const measurements = new Map(current.map(node => [node.id, node.measured]));
       // Selection/data refreshes must not briefly unmount measurement-based overlays
       // and lose pointer capture while a return path is being dragged.
-      return derived.map((node) => ({ ...node, measured: measurements.get(node.id), selected: selection.has(node.id) }));
+      return derived.map((node) => ({ ...node, measured: measurements.get(node.id), selected: selection.has(node.id) || (!measurements.has(node.id) && node.selected) }));
     });
   }, [derived, setNodes]);
   useEffect(() => {
@@ -275,16 +292,28 @@ export function Canvas({
       );
     // Only a paste requests a group selection; canvas selection changes are read back below.
   }, [pasteCount, setNodes]);
-  const rememberSelection = useCallback(({ nodes }: { nodes: TrailNode[] }) => {
+  const hiddenNodeIds = useRef(projection.hiddenNodeIds);
+  hiddenNodeIds.current = projection.hiddenNodeIds;
+  const rememberSelection = useCallback(({ nodes, edges }: { nodes: TrailNode[]; edges: TrailEdge[] }) => {
     const ids = nodes.map((node) => node.id);
     if (ids.length) renderedRoutes.select(null);
-    if (JSON.stringify(ids) !== JSON.stringify(useEditor.getState().selectedIds))
-      useEditor.setState({ selectedIds: ids });
+    const edgeId = !ids.length && edges.length === 1 ? edges[0].id : null;
+    const state = useEditor.getState();
+    // React Flow cannot report selection of an operator rendered inside an edge label.
+    if (!ids.length && !edges.length && state.selected && hiddenNodeIds.current.has(state.selected)) return;
+    if (JSON.stringify(ids) !== JSON.stringify(state.selectedIds) || state.selectedEdgeId !== edgeId)
+      useEditor.setState({ selectedIds: ids, selectedEdgeId: edgeId, ...(edgeId ? { selected: null } : {}) });
   }, [renderedRoutes]);
   const derivedEdges: TrailEdge[] = useMemo(
-    () =>
-      graph.edges.map((edge) => {
-        const countContract = isCountContract(graph.nodes.find(node => node.id === edge.target), edge.targetPort);
+    () => {
+      const canonical = new Map(graph.edges.map(e => [e.id, e]));
+      const models = new Map(graph.nodes.map(n => [n.id, n]));
+      const sourceSelection = new Set(selectedIds);
+      return projection.edges.map((edge) => {
+        const terminal = canonical.get(edge.id)!;
+        const countContract = isCountContract(models.get(edge.target), edge.targetPort);
+        const value = result?.nodes[terminal.source]?.outputs[terminal.sourcePort];
+        const style = valueEdgeStyle(value, result?.nodes[terminal.source]?.status === 'error', countContract, edge.presentation);
         return {
           id: edge.id,
           source: edge.source,
@@ -293,29 +322,41 @@ export function Canvas({
           targetHandle: edge.targetPort,
           type: 'editable',
           data: {
+            edgeOps: edge.edgeOps,
+            sourceLabel: edge.sourceLabel,
+            sourceTone: edge.sourceTone,
+            sourceSelected: selected === edge.source || sourceSelection.has(edge.source),
+            selectedNodeId: selected,
+            activeNodeId: step >= 0 ? result?.order[step] : undefined,
             valueKey: JSON.stringify([
-              graph.nodes.find((node) => node.id === edge.source)?.valueSource ?? edge.source,
-              edge.sourcePort,
+              models.get(terminal.source)?.valueSource ?? terminal.source,
+              terminal.sourcePort,
             ]),
             waypoints: edge.waypoints,
+            annotation: edge.annotation,
+            presentation: edge.presentation,
             labelPosition: edge.labelPosition,
             changeRoute: (points) => useEditor.getState().setEdgeWaypoints(edge.id, points),
             changeSharedRoutes: (changes) => useEditor.getState().setSharedWireWaypoints(changes),
             changeLabelPosition: (position) =>
               useEditor.getState().setEdgeLabelPosition(edge.id, position),
-            select: () => { setSelectedFeedback(undefined); useEditor.getState().select(null); },
+            select: () => { setSelectedFeedback(undefined); useEditor.getState().selectEdge(edge.id); },
           },
-          label: valueEdgeLabel(result?.nodes[edge.source]?.outputs[edge.sourcePort], countContract),
+          label: valueEdgeLabel(value, countContract),
           animated: step >= 0 && result?.order[step] === edge.source,
-          style: valueEdgeStyle(result?.nodes[edge.source]?.outputs[edge.sourcePort], result?.nodes[edge.source]?.status === 'error', countContract),
+          style,
+          ...(edge.presentation === 'slide' ? {
+            markerEnd: { type: MarkerType.ArrowClosed, color: style.stroke, width: 20, height: 20 },
+          } : {}),
           labelStyle: {
             fill: 'var(--text-secondary)',
             fontSize: 10,
             fontFamily: 'Consolas, monospace',
           },
         };
-      }),
-    [graph, result, step],
+      });
+    },
+    [projection, graph, result, step, selected, selectedIds],
   );
   const [edges, setEdges, onEdgesChange] = useEdgesState<TrailEdge>(derivedEdges);
   useEffect(() => {
@@ -381,7 +422,7 @@ export function Canvas({
     const snapped = alignDrag(moved, Boolean(event.altKey));
     updateDragPositions(snapped.positions); setWireGuides(snapped.guides);
     if (wireDrag.current) {
-      const preview = nodeWirePreview(graph, wireDrag.current.routes, wireDrag.current.initial, snapped.positions);
+      const preview = nodeWirePreview(visibleGraph, wireDrag.current.routes, wireDrag.current.initial, snapped.positions);
       if (preview.length) renderedRoutes.setPreview('node-drag', preview);
       else renderedRoutes.clearPreview('node-drag');
     }
@@ -394,7 +435,7 @@ export function Canvas({
     const position = snapped.positions.find(n => n.id === node.id)?.position ?? node.position;
     const target = mergeTarget({ ...node, position }, moved, Boolean(event.altKey));
     const session = wireDrag.current;
-    const routeChanges = session ? nodeDragRoutes(graph, session.routes, session.initial,
+    const routeChanges = session ? nodeDragRoutes(visibleGraph, session.routes, session.initial,
       snapped.positions, viewport.zoom, Boolean(event.altKey)) : [];
     setMergePreview(null); setWireGuides([]); wireDrag.current = null;
     renderedRoutes.clearPreview('node-drag'); updateDragPositions(snapped.positions);
@@ -408,7 +449,7 @@ export function Canvas({
         defaultViewport={view.initial}
         onViewportChange={rememberViewport}
         ariaLabelConfig={ariaLabelConfig}
-        nodes={layoutRegions(layoutIfRegions(nodes)).map((node) => ({
+        nodes={layoutRegions(layoutIfRegions(nodes), projection.hiddenNodeIds).map((node) => ({
           ...node,
           className: [
             node.className,
@@ -448,9 +489,9 @@ export function Canvas({
         onPaneContextMenu={event => openContextMenu(event)}
         onEdgeContextMenu={(event, edge) => openContextMenu(event, undefined, edge.id)}
         onMoveStart={closeContextMenu}
-        onNodeClick={(_, node) => { setSelectedFeedback(undefined); useEditor.setState({ selected: node.id }); }}
+        onNodeClick={(_, node) => { setSelectedFeedback(undefined); useEditor.setState({ selected: node.id, selectedEdgeId: null }); }}
         onSelectionChange={rememberSelection}
-        onEdgeClick={() => { setSelectedFeedback(undefined); useEditor.getState().select(null); }}
+        onEdgeClick={() => setSelectedFeedback(undefined)}
         onPaneClick={() => { setSelectedFeedback(undefined); useEditor.getState().select(null); }}
         onSelectionStart={() => { closeContextMenu(); renderedRoutes.select(null); setSelectedFeedback(undefined); useEditor.getState().select(null); }}
         onNodeDoubleClick={(_, node) => node.data.open()}

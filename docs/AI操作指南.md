@@ -1,7 +1,7 @@
 ---
 title: "Tensor Trail AI 操作指南"
 created: 2026-10-19
-last_updated: 2026-11-17
+last_updated: 2026-11-26
 authors:
   human: "用户"
   ai: "Codex"
@@ -19,7 +19,7 @@ tags: [项目, Tensor, AI, API]
 
 # AI 操作指南
 
-模型绘图先按 [模型绘图规范与验收清单](模型绘图规范与验收清单.md) 确定范围、语义和验收方式；本文提供具体的 API 与算子操作方法。通用规范末尾包含可复用的自动绘图任务模板和交付记录模板。
+模型绘图先按 [标准绘图风格与程序设计规范](标准绘图风格与程序设计规范.md) 与 [模型绘图规范与验收清单](模型绘图规范与验收清单.md) 确定风格样板、算子扩展要求、语义和验收方式；本文提供具体的 API 与算子操作方法。通用规范末尾包含可复用的自动绘图任务模板和交付记录模板。
 
 本版提供纯 JavaScript/TypeScript API、命令行和 `window.tensorTrail` 画布 API。外部 AI 负责理解架构并生成 JSON，程序共用原有模块注册表进行构建和形状校验。无需在本程序中配置模型密钥。
 
@@ -29,7 +29,7 @@ tags: [项目, Tensor, AI, API]
 
 **已有 1:1 图**可用 `CalculationGroup` 折叠同一代码范围及布局分区中的连通计算。折叠后所有外部依赖仍须构成 DAG。可选的 `summary`、`formula` 各限 240 字。摘要留空时卡片列出各步，填写后双击摘要卡即可检查内部算子。Recipe 可显式提供带 Inlet/Outlet 的子图，已自定义的组合也支持通过 `set_params` 修改摘要与表达式。
 
-**按规格直接绘图**可用叶节点 `SemanticOp`。用 `inputs`、`outputs` 填写逗号分隔的标识符，各端口列表内名称唯一。输入接受 1–12 个任意值，输出声明 1–8 个 Tensor。填写 `summary` 描述计算，可选 `formula` 用于展示。默认继承按端口顺序遇到的首个 Tensor 的 shape、axes 和 dtype；没有 Tensor 输入时需填写 shape。显式 shape 支持整数及项目超参数算式，轴名留空时生成 axis0、axis1 等。
+**按规格直接绘图**可用叶节点 `SemanticOp`。用 `inputs`、`outputs` 填写逗号分隔的标识符，各端口列表内名称唯一。输入接受 1–12 个任意值，输出声明 1–8 个 Tensor。填写 `summary` 描述计算，可选 `formula` 用于展示。两者各限 240 个 Unicode 码点，`output_specs` 的 JSON 文本限 4000 个码点。默认继承按端口顺序遇到的首个 Tensor 的 shape、axes 和 dtype；没有 Tensor 输入时需填写 shape。显式 shape 支持整数及项目超参数算式，轴名留空时生成 axis0、axis1 等。
 
 多输出可共用规格，或用 `output_specs` **JSON 字符串**逐端口指定，例如 `{"dist":{"shape":"B","axes":"batch"},"idx":{"shape":"B","dtype":"int64","requires_grad":false}}`。未列出的端口从首个 Tensor 继承规格。梯度选项为 auto/on/off，JSON 内也接受布尔值。on 要求浮点输出。auto 对非浮点输出或所有 Tensor 输入已知关闭梯度的情况推断为 off，其他情况保留未知。开启来源分析时每个输出记录所声明输入的来源并集。
 
@@ -44,6 +44,116 @@ tags: [项目, Tensor, AI, API]
 ```
 
 自动精简优先折叠只有一个出口的胶水链，保留共享分支及分区输出。默认只处理当前画布，至少合并两步。核心函数返回新组合 ID 列表（`mergedGroups`）及画布节点净减少数（`removedNodes`）。返回 1:1 视图时，右键选择“展开语义块”。两种方法可共存于同一图，完整示例见 [双模式 Recipe](../examples/semantic-dual-mode.recipe.json)。
+
+## 封装模块样式
+
+Recipe 的 `Submodule` 节点可带 `submoduleVisual`，例如 `{"id":"fusion","type":"Submodule","submoduleVisual":{"icon":"cross_attention","summary":"将图像特征汇入查询"}}`。三个字段均可省略。
+
+| 字段 | 取值与效果 |
+| --- | --- |
+| `icon` | `auto / backbone / attention / cross_attention / mlp / projection / encoder / decoder / head / module`。自动模式先识别模块名称，再参考内部层类型，兜底使用通用模块。 |
+| `tone` | `auto / blue / violet / teal / amber / rose / slate`。自动色标随最终原型变化。 |
+| `summary` | 最多 120 个 Unicode 码点，保存时去掉首尾空白。留空时从内部语义说明或关键层类型提取。 |
+
+给已有子模块设置样式可用下例。`path` 指向父图，根图可省略。补丁整对象替换，省略的字段恢复自动；`visual: null`、空对象或全默认对象清除展示字段。检查器「封装模块样式」提供相同操作，摘要回车或失焦提交，支持撤销和重做。已手工展开的子图也可改样式，已有步骤、形状推导、坐标和路径均予以保留。
+
+```json
+{
+  "operations": [{
+    "op": "set_node_submodule_visual",
+    "path": ["encoder"],
+    "id": "fusion",
+    "visual": { "icon": "cross_attention", "tone": "teal", "summary": "将图像特征汇入查询" }
+  }]
+}
+```
+
+## 3D/4D 张量积木
+
+Recipe 节点的 `tensorVisual` 与 Patch 操作 `set_node_tensor_visual.visual` 使用同一套配置。CLI、`@tensor-trail/model-core/agent` 和页面的 `window.tensorTrail.patchModel` 均支持以下补丁。子图节点可加 `path`。在页面上通过 `applyModel` 和读取项目时的 revision 应用补丁。
+
+```json
+{
+  "operations": [{
+    "op": "set_node_tensor_visual",
+    "id": "features",
+    "visual": {
+      "mode": "block", "color": "#3b82f6", "depthStyle": "auto",
+      "width": 260, "boxWidth": 48, "boxHeight": 32, "boxDepth": 30,
+      "axisLabels": ["queue", "query", "head", "dim"], "caption": "两帧查询特征"
+    }
+  }]
+}
+```
+
+| 字段 | 取值与效果 |
+| --- | --- |
+| `mode` | 必填。`block` 启用积木，`off` 单独关闭。 |
+| `tone`、`color` | 预设为 `auto/blue/violet/teal/amber/rose/slate`。自定义 `#RRGGBB` 优先，为三个面与轮廓生成明暗色。 |
+| `depthStyle` | `auto` 对 Z ≤ 4 或沿 Z 拼接的结果显示切片，对更大或符号深度显示连续实心体。`solid` 强制实心，`slices` 强制分层。大或符号深度的切片抽样三层，并标注真实尺寸。 |
+| `width` | 卡片宽 140–420 px。默认 180 px，横排多个体积时默认 220 px。 |
+| `boxWidth`、`boxHeight`、`boxDepth` | 面宽 16–160、面高 12–120、挤出深度 6–72 px。深度在切片模式控制整个堆叠。省略时按图内统一尺度计算，窄卡片会缩短投影以容纳整行。 |
+| `axisLabels` | 按 shape 从左到右覆盖显示名，最多 8 项，每项 1–32 个 Unicode 码点。省略的轴沿用推导名。 |
+| `caption` | 卡片说明，最多 120 个 Unicode 码点。 |
+
+对 `[W]` 显示细条，对 `[H,W]` 显示薄板，对 `[Z,H,W]` 显示一个体积。四维 `[N,Z,H,W]` 的 N 轴在水平方向展开，底部括号标出外轴名称和大小。N 为 1、2、3 时逐个绘制体积，N ≥ 4 或为符号时用省略号连接首尾两个体积。更高维仅将 `shape.slice(0,-4)` 中的轴显示为标签。
+
+Concat 与 Stack 按实际拼接轴及输入端口顺序着色，包括外轴上的横排体积。同形的 TensorVariable、ValueVariable、Output、Outlet、Contiguous、Detach 及关联副本沿用上游色段。给变量指定颜色可将它及下游透传值显示为纯色。检查器的「TENSOR 观察」可切换端口并查看完整轴名。「张量积木」支持实时调色、切换深度样式、调整尺寸，以及用中英文逗号输入轴名。文本在回车或失焦时提交，编辑支持撤销与重做。
+
+补丁会替换该节点的整份积木配置。保留 `mode` 并省略某个可选字段可恢复该字段的默认值，`visual:null` 恢复跟随画布。全局预览初始关闭，开启后仅为有 Tensor 规格且未配置积木或插图的值与来源节点自动显示积木，包含 Output 和 Outlet。计算算子可显式启用积木，并可同时显示 `visualMedia`。旧项目的 `operation` 模式载入为 `block`，其超宽卡片收为 420 px。重建子图时，同 ID、同类型的节点保留显示配置。
+
+## 节点插图与 PPT 箭头
+
+在 Recipe 节点的 `visualMedia` 或 Patch 的 `set_node_media.media` 中填写图集。每个节点独立保存 1–12 张图，图片 ID 遵循节点 ID 规则，在图集内唯一。适用于值、算子和模块卡片，布局分区和条件、循环范围框除外。
+
+```json
+{
+  "patchVersion": 1,
+  "operations": [
+    {
+      "op": "set_node_media", "id": "input",
+      "media": {
+        "layout": "auto", "tileWidth": 144,
+        "items": [{
+          "id": "mask", "caption": "筛选后保留的位置", "badge": "保留", "emphasis": "highlight",
+          "src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAKCAAAAACY1YFAAAAAFklEQVR4nGNQQAMMWAWeQQFtBfC6AwD5WDkhv0wF5QAAAABJRU5ErkJggg=="
+        }]
+      }
+    },
+    {"op": "set_edge_presentation", "from": "input.out", "to": "encoder.in", "presentation": "slide", "annotation": "将保留的位置送入编码器"}
+  ]
+}
+```
+
+- `src` 接受内嵌 PNG、JPEG、WebP Base64 Data URL，每张最多 512,000 字符，整个项目的 UTF-8 大小上限为 10 MB。`caption` 最长 120 字，`badge` 最长 32 字，`emphasis` 可选 `normal`、`highlight`、`dim`。
+- `auto` 对 1 张图单幅展示、2–3 张横排、4 张按 2×2 排列、5–12 张按 3 列排列。也可指定 `row`、`grid`（2 列）或 `column`。`tileWidth` 接受 80–280 像素的有限数值。
+- 两个操作均接受子图 `path`，按默认的 `layout: "preserve"` 保留现有位置和线路。`media: null` 清空整组插图。`duplicate_linked` 生成的副本从无插图开始，可独立配图。
+- 箭头按与 `connect` 相同的端点格式指定。`annotation` 最长 160 字，空串或 `null` 清除说明。`presentation` 可选 `default`、`slide`、`anchor`，传 `null` 恢复默认样式。省略的字段保留当前值。普通连线与 PPT 箭头同时显示自定义说明和推导形状。
+- 手动配图时，选中节点，在属性面板点击“上传图片”，可多选。编辑器自动将长边缩至最多 480 像素。对单张点击“单张换图”可保留原说明、角标和样式，也可调整顺序、缩略图宽度（80–240 像素）和布局。选中单条连线可切换“PPT 粗箭头”、编辑说明，沿线拖动标签或恢复默认位置。说明与角标在移开输入焦点时提交。以上展示编辑均支持撤销和重做。
+
+## 画布上的算子与来源锚点
+
+Recipe 节点的 `presentation` 由算子类型决定，可用 `schema recipe` 查询。省略字段沿用原卡片。下面的 Patch 为已有节点和连接设置展示方式，端点和节点 ID 均取自同层原图（完整视觉分层标准见 [标准绘图风格与程序设计规范](标准绘图风格与程序设计规范.md)）：
+
+```json
+{
+  "operations": [
+    {"op":"set_node_presentation","id":"projection","presentation":"compact"},
+    {"op":"set_node_presentation","id":"reshape","presentation":"edge"},
+    {"op":"set_node_presentation","id":"permute","presentation":"edge"},
+    {"op":"set_node_presentation","id":"join","presentation":"compact"}
+  ]
+}
+```
+
+- **有参数网络层 / 核心数学层（`compact` 图标卡）**：`Linear`、`LayerNorm`、`RMSNorm`、`Conv1d/2d`、`Softmax`、`GridSample`、`FFN` 等支持 `presentation: "compact"` 精简图标卡片，展示专属 SVG 图标与短规格（如 `Linear 256→256`、`GridSample · bilinear`），**不要折叠到连线上**。
+- **纯张量整理胶水链（`edge` 竖直算子栈）**：一进一出的连续维度/视图整理算子（`Reshape`、`Permute`、`Unsqueeze`、`Squeeze`、`Repeat`、`Detach` 及极简一元 `SemanticOp` 如 `2x − 1`）可设为 `presentation: "edge"`，沿连线**竖直堆叠并以 `↓` 标明先后顺序**（如 `permute(0,2,3,1) ↓ Reshape(16,32,32,8)`）。点击某一步编辑其参数，或在「画布样式」中展开。拖动徽章调整整条链的标签位置，位置和折点保存在末条原始边。链上末尾标注输出 shape。
+- **二元汇合圆徽章（`compact`）**：`Add`、`Mul`、`Subtract`、`Divide`、`BitwiseAnd`、`Maximum`（max）、`MatMul`、`Concat` 和 `Stack` 可使用 44×44 圆形徽章。`Concat`、`Stack` 同时标出 `dim`。插图和张量积木优先显示在卡片上。
+- **模块输入拆分优先于锚点边**：被多处使用的模块输入（`Inlet` / `Input`）应通过 `duplicate_linked` 按目标拆分为多份带 `IN` 标识的关联副本（1 对 1 连接下游）；普通中间张量的跨区长线才按需使用 `anchor` 锚点边（悬停或选中胶囊可追踪虚线，点击胶囊编辑原始边）。
+- 缺少连接、分支、多端口、跨范围或分区、关联值、子图、显式积木或插图，以及直接接触锚点的算子保留为卡片。推导、诊断、CLI 端点和节点参数始终使用完整图。
+- `TensorIndex` 与旧 `Slice` 支持 `presentation: "edge"`。索引胶囊省略正轴末尾冗余的省略号（如 `[0]`、`[:, -1]`、`[:, 1:2]`），负轴保留前导 `...`（如 `[..., :2]`），非默认步长和超参数表达式原样保留。设 `mode: "slice", stopFromInput: true` 后，`stop` 端口无论是否接线都保留在可见卡片上。
+- 坐标支路中的 `Cos`、`Sin`、`Function`、`TensorCompareScalar`、`OnesLike`、`ZerosLike` 可显式设为 `edge`。`cos()`、`sin()` 与函数表达式显示为橙色，长公式悬浮可读全文，比较符和阈值（如 `> 1e-5`）为粉色，`ones_like`、`zeros_like` 为青绿色。工厂也可用 `compact` 单独展示。带分区输出声明的节点保留卡片。
+- 两种展示 Patch 都支持子图 `path` 和撤销重做。节点传 `null` 或 `default` 可恢复原卡片，边传 `null` 恢复默认连线。展示编辑保留手动布局和父模块的 `customized` 状态。
 
 ## 调用边界与实参准备
 
@@ -126,6 +236,91 @@ node packages/cli/scripts/agent.mjs build examples/standard-tensor-ops.recipe.js
 node packages/cli/scripts/agent.mjs validate ops.tensor-trail.json
 ```
 
+### 参考点柱与投影深度
+
+| 原生算子 | 参数、端口与推导 |
+| --- | --- |
+| `Linspace`（维度操作） | 无输入。`start`、`end` 是有限十进制或科学计数法文本，`steps` 是非负安全整数。输出为 `[steps]`，零步得到空序列，一步只取起点。两端点始终校验标量绑定，整数字面量的绑定范围是 `[-2**63, 2**64 - 1]`，浮点写法按双精度解析。零步跳过目标范围检查，一步只检查起点，两步起检查两端。`int64` 输出使用的端点须在 `[-2**63, 2**63 - 1]` 内。整数输出先检查范围，再向零截断。`axis` 最多 64 个 Unicode 码点，空白回退为 `step`。`dtype` 支持 float16、bfloat16、float32、float64、int32、int64。 |
+| `OnesLike`（数学运算） | `in → out`，创建与输入同形状、轴名和 dtype 的全一 Tensor。齐次坐标的常量分量可取自此节点。来源为常量、全一初始化。 |
+| `Maximum`（数学运算） | `a, b → out`，从末轴对齐广播并逐元素取较大值。支持 bool、整数和浮点 Tensor，按两路 dtype 提升，数值来源取并集。符号维与具体非单例尺寸广播时输出该具体尺寸，警告列出符号维允许的取值。两个不同符号按字典序记为 `broadcast(D, N)`，运行时两维须相等或其中一维为 1。紧凑卡显示圆形 `max`。 |
+
+`Linspace`、`OnesLike`、`ZerosLike` 默认关闭梯度。`Maximum` 的浮点结果在 `grad` 下按两路输入传播，任一路开启即开启，两路关闭即关闭，其余为未知。有效梯度模式依次取活动快照、项目超参数和默认 `grad`。这四类节点仅在 `grad` 且输出为浮点时接受手工开启。
+
+以下 Recipe 演示用采样轴构造投影深度下限。端点、步数和阈值均为示例值，绘图时按调用处取值。
+
+```json
+{
+  "name": "投影深度下限",
+  "nodes": [
+    {"id":"camera","type":"Input","params":{"shape":"2,6,4","axes":"batch,camera,z"}},
+    {"id":"z","type":"Linspace","presentation":"compact","params":{"start":"-2","end":"6","steps":4,"axis":"z"}},
+    {"id":"ones","type":"OnesLike","presentation":"edge"},
+    {"id":"eps","type":"Function","presentation":"edge","params":{"expression":"x * 1e-5"}},
+    {"id":"depth","type":"Maximum","presentation":"compact"},
+    {"id":"out","type":"Output"}
+  ],
+  "connections": [["z.out","ones.in"],["ones.out","eps.in"],["camera.out","depth.a"],["eps.out","depth.b"],["depth.out","out.in"]]
+}
+```
+
+### Normalize 逐通道标准化
+
+基础层 `Normalize` 对应 `torchvision.transforms.Normalize(mean, std)`。将 float16、bfloat16、float32 或 float64 张量接到 `in`，沿整数轴 `dim` 计算 `(x - mean) / std`。默认 `dim=-3` 指向 `[..., C, H, W]` 的通道轴。其他轴布局可显式指定 `dim`。输出 `out` 保留 shape、axes、dtype 与输入数值来源，是一个全新 Tensor。
+
+`mean`、`std` 是逗号分隔的有限浮点数，默认分别为 `"0.485, 0.456, 0.406"` 和 `"0.229, 0.224, 0.225"`。请按模型配置填写。两个列表必须等长且无空项，每个标准差须大于零。单组对任意通道数广播，紧凑卡显示 `Normalize · 广播`。多组显示如 `Normalize · C=3`，已知通道数不符时报错，符号维产生待验证警告。
+
+梯度模式优先使用活动快照中的有效模式，其次取项目超参数 `gradMode`，缺省为 `grad`。在 `grad` 下按输入的梯度状态推导，允许手工覆盖。有效模式为 `no_grad` 或 `inference_mode` 时输出梯度关闭，手工开启无效。项目模式为 `unknown` 且生效时，仅输入梯度已关闭可自动推断输出为关闭。
+
+以下 Recipe 先标准化整批图像，再取第一张。紧凑层卡与连线上的 `[0]` 分别可点选，输出为 `[3, 8, 16]`。
+
+```json
+{
+  "name": "首张标准化图像",
+  "nodes": [
+    {"id":"x","type":"Input","params":{"shape":"2,3,8,16","axes":"B,C,H,W"}},
+    {"id":"norm","type":"Normalize","presentation":"compact","params":{"dim":-3,"mean":"0.485, 0.456, 0.406","std":"0.229, 0.224, 0.225"}},
+    {"id":"first","type":"TensorIndex","presentation":"edge","params":{"dim":"0","index":"0"}},
+    {"id":"out","type":"Output"}
+  ],
+  "connections": [["x.out","norm.in"],["norm.out","first.in"],["first.out","out.in"]]
+}
+```
+
+### GridSample 网格采样
+
+`GridSample` 属于「基础层」，对应 `torch.nn.functional.grid_sample`。`in` 提供特征，`grid` 为每个输出位置给出归一化坐标，末维顺序为 `(x, y[, z])`，分别对应宽、高、深。同一组坐标用于所有通道。两路 dtype 必须一致，静态推导支持 float16、bfloat16、float32、float64。
+
+| 空间维数 | `in` | `grid` | `out` |
+| --- | --- | --- | --- |
+| 2D | `[N,C,H_in,W_in]` | `[N,H_out,W_out,2]` | `[N,C,H_out,W_out]` |
+| 3D | `[N,C,D_in,H_in,W_in]` | `[N,D_out,H_out,W_out,3]` | `[N,C,D_out,H_out,W_out]` |
+
+输出前两轴沿用特征轴名，空间轴沿用网格轴名。已知输入、输出空间尺寸须为正整数。两路 batch 和坐标分量数均参与校验。同一符号同时需要等于两个不同整数时报告错误，未解的相等关系产生警告。
+
+- `mode` 默认 `bilinear`，4D 用双线性、5D 用三线性插值。`nearest` 两种秩均可用，`bicubic` 仅限 4D。
+- `padding_mode` 控制越界坐标，默认 `zeros` 补零，也可用 `border` 取边界值或 `reflection` 反射。
+- `align_corners` 默认 `false`，坐标 −1 和 1 对应两端像素的外边界，设为 `true` 时对应两端像素中心。
+- `out` 是新 Tensor。开启来源分析后，输出合并特征和坐标两路数值来源。
+- 梯度模式优先取活动运行快照的 `context.gradMode`。快照未提供有效模式时，回退到项目字符串超参数 `gradMode`（例如 `"hyperparameters": {"gradMode": {"type": "string", "value": "no_grad"}}`），该超参数缺省时使用 `grad`。
+- `no_grad` 或 `inference_mode` 强制输出为 `off`，即使节点标注了 `requiresGrad: true`。常规 `grad` 模式下，自动推断对 `in` 和 `grid` 做三态 OR（任一路为 `on` 则为 `on`，两路均为 `off` 则为 `off`，其余为 `unknown`）。手工标注可覆盖该推断。项目超参数显式指定 `unknown` 且生效时，仅两路均为 `off` 可推断输出为 `off`。
+
+**Plan A 示例**用 256 行、每行 4 个采样位置查询特征图。以下 Recipe 的输出形状为 `[16,32,256,4]`，轴名为 `[N,C,Q,P]`。
+
+```json
+{
+  "name": "Plan A 网格采样",
+  "nodes": [
+    {"id":"x","type":"Input","params":{"shape":"16,32,32,8","axes":"N,C,H,W"}},
+    {"id":"coords","type":"Input","params":{"shape":"16,256,4,2","axes":"N,Q,P,xy"}},
+    {"id":"sample","type":"GridSample","presentation":"compact","params":{"mode":"bilinear","padding_mode":"zeros","align_corners":false}},
+    {"id":"out","type":"Output"}
+  ],
+  "connections": [["x.out","sample.in"],["coords.out","sample.grid"],["sample.out","out.in"]]
+}
+```
+
+标准卡与精简图标共用网格采样图示。验收双输入精简卡时，在亮、暗主题下检查默认、反向、垂直及三个端口同侧的布局，确认 `in`、`grid`、`out` 标签完整常显，各自对准连接点，并与图标、模式文字留有空隙。
+
 ### 导出 PNG 预览
 
 用桌面渲染器打开已保存的项目，按节点 ID 逐层进入子图，适配画布并输出 PNG。省略 `--path` 导出根图。默认尺寸为 1920×1080，主题为 light，也可指定 dark。Linux 可在桌面会话或 Xvfb 中运行。
@@ -141,7 +336,7 @@ node scripts/export-preview.cjs --project model.tensor-trail.json --out attentio
 
 `MultiheadAttention` 提供 `q`、`k`、`v` 三个输入和 `out` 输出。参数为 `d_model`（Q 与输出特征宽度，默认 64）、`heads`（默认 8）、`kdim`、`vdim`（默认 0 表示跟随 d_model）、`causal`（默认 false）。Q/K/V 是投影前输入，模块内部包含各自的线性投影。
 
-Q `[B,Tq,d_model]`、K `[B,Tk,kdim]`、V `[B,Tk,vdim]`，输出 `[B,Tq,d_model]`；三路 batch 和浮点 dtype 必须一致，K/V 序列长度必须相同。Q 长度可独立变化。连接相同来源可做自注意力，连接不同来源可做交叉注意力。`causal` 标记按序列索引屏蔽未来位置，未实现外部 mask 或 KV Cache 位置偏移。
+Q `[B,Tq,d_model]`、K `[B,Tk,kdim]`、V `[B,Tk,vdim]`，输出 `[B,Tq,d_model]`；三路 batch 和浮点 dtype 必须一致，K/V 序列长度必须相同。同一个符号出现在多条轴上时，它在所有相等约束中代表同一尺寸。若 batch 要求 `D=2` 且 K/V 序列长度要求 `D=3`，注意力节点报错并阻断输出。Q 长度可独立变化。连接相同来源可做自注意力，连接不同来源可做交叉注意力。`causal` 标记按序列索引屏蔽未来位置，未实现外部 mask 或 KV Cache 位置偏移。
 
 示例 `examples/cross-attention.recipe.json` 展示不同序列长度与 K/V 特征宽度：
 
@@ -304,6 +499,11 @@ const changed = patchModel(draft.project, patch);
 | assign_region | ids, region | 将同层节点移入分区；region 为 null 时解除归属 |
 | fit_region | id | 将布局分区设为自动适配成员范围 |
 | resize_region | id, width, height | 设置手动尺寸，可传 position；不能裁剪成员 |
+| set_node_presentation | id, presentation | 选择算子卡片、圆徽章或内嵌连线，传 `null` 恢复原卡片 |
+| set_node_submodule_visual | id, visual，可选 path | 整体替换 Submodule 的原型、色标与摘要，传 `null` 恢复自动 |
+| set_node_tensor_visual | id, visual | 设置本节点积木，传 `null` 恢复跟随画布 |
+| set_node_media | id, media | 设置本节点图集，传 `null` 清空 |
+| set_edge_presentation | from, to | 按端点修改 `annotation` 或 `presentation`，分别接受 `null` 恢复默认 |
 | set_tensor_border | id, color | 设置本节点边框（`#RRGGBB`）；`null` 恢复默认，不改背景、梯度或布局，关联副本仅改本地颜色 |
 | connect / disconnect | from, to | 连接/断开 node.port 端点 |
 | layout | 无 | 重排目标图的未归属节点，保留布局分区及成员 |
@@ -319,7 +519,7 @@ patchVersion 可省略，默认 1。除 rename_project 外，每项都可传 `pa
 }
 ```
 
-内部语义编辑会标记所有祖先 customized，之后父级 set_params 拒绝重建，保护手工结构；应继续改内部算子。重命名和布局不会触发标记。
+内部语义编辑会标记所有祖先 customized，之后父级 set_params 拒绝重建，保护手工结构；应继续改内部算子。节点插图、箭头样式和文字说明与重命名、布局一样属于展示编辑，保留各级祖先的 customized 状态。
 
 `link_value` 用于关联已有节点，而 `duplicate_linked` 会新建副本。它不按名称猜测来源，必须明确指定同层 `source`；源是副本时直接引用其主节点。目标不能有独立输入边、不能已经拥有其他副本，也不能是 Inlet/Outlet（避免隐式合并父图接口）。例如恢复输入副本：`{op: 'link_value', id: 'img_metas_near_head', source: 'img_metas'}`。它保持现有输出边、手工走线和分区归属，参数等共享元数据以主节点为准。
 

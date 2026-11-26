@@ -82,16 +82,17 @@ export function HyperparametersPanel() {
                   aria-label={`超参数值 ${key}`}
                   key={`${parameter.type}:${parameter.value}`}
                   defaultValue={String(parameter.value)}
-                  maxLength={1999}
+                  maxLength={parameter.type === 'string' ? undefined : 1999}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter') event.currentTarget.blur();
                   }}
                   onBlur={(event) => {
                     try {
                       const value = parseHyperparameterValue(parameter.type, event.target.value);
-                      if (value !== parameter.value)
-                        commit(key, { ...parameter, value, source: '手动编辑' });
-                      else setError('');
+                      if (value !== parameter.value) {
+                        if (!commit(key, { ...parameter, value, source: '手动编辑' }))
+                          event.target.value = String(parameter.value);
+                      } else setError('');
                     } catch (error) {
                       setError((error as Error).message);
                     }
@@ -162,7 +163,7 @@ export function HyperparametersPanel() {
             <input
               aria-label="新超参数值"
               value={value}
-              maxLength={1999}
+              maxLength={type === 'string' ? undefined : 1999}
               onChange={(event) => setValue(event.target.value)}
             />
           )}

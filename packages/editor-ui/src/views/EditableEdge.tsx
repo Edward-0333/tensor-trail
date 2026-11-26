@@ -1,4 +1,8 @@
-import { useEffect, useId, useMemo, useRef, useState, type PointerEvent } from 'react';
+import type { ModelEdge } from '@tensor-trail/model-core/core/types';
+import type { ProjectedEdge } from '@tensor-trail/model-core/core/canvasProjection';
+import { useEditor } from '../editor/store';
+import { AnchorEdge } from './AnchorEdge';
+import { Fragment, useEffect, useId, useMemo, useRef, useState, type PointerEvent } from 'react';
 import {
   BaseEdge,
   EdgeLabelRenderer,
@@ -44,6 +48,14 @@ import { mergeNearbyWire, mergeSharedWireChanges, movedSection } from './edgeMer
 
 export type TrailEdge = Edge<
   {
+    presentation?: ModelEdge['presentation'];
+    annotation?: string;
+    edgeOps?: ProjectedEdge['edgeOps'];
+    sourceTone?: ProjectedEdge['sourceTone'];
+    sourceLabel?: string;
+    sourceSelected?: boolean;
+    selectedNodeId?: string | null;
+    activeNodeId?: string;
     valueKey?: string;
     waypoints?: Point[];
     labelPosition?: number;
@@ -71,7 +83,7 @@ interface Drag {
 
 interface LabelDrag {
   pointerId: number;
-  element: SVGTextElement;
+  element: Element;
   route: Point[];
   flowStart: Point;
   screenStart: Point;
@@ -82,6 +94,11 @@ interface LabelDrag {
 }
 
 export function EditableEdge(props: EdgeProps<TrailEdge>) {
+  // Switching modes unmounts the routed edge and deregisters its bus and junction geometry.
+  return props.data?.presentation === 'anchor' ? <AnchorEdge {...props} /> : <RoutedEditableEdge {...props} />;
+}
+
+function RoutedEditableEdge(props: EdgeProps<TrailEdge>) {
   const { id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data, selected } =
     props;
   const { screenToFlowPosition, setEdges, setNodes } = useReactFlow();
@@ -94,6 +111,13 @@ export function EditableEdge(props: EdgeProps<TrailEdge>) {
   const wirePreview = useWirePreview(id);
   const wireSelection = useWireSelection(id, selected);
   const arrowId = 'wire-arrow-' + useId().replace(/[^a-zA-Z0-9_-]/g, '');
+  const slide = data?.presentation === 'slide';
+  const edgeOps = data?.edgeOps ?? [];
+  const pipeline = edgeOps.length > 0;
+  const draggedStep = useRef(false);
+  const capsule = slide || !!data?.annotation;
+  const labelKey = [data?.edgeOps?.map(step => step.id).join(' '), data?.annotation, props.label].filter(Boolean).join('\n');
+  const highlightColor = capsule && props.style?.stroke === 'var(--danger)' ? 'var(--danger)' : 'var(--accent)';
   const pins = draft ?? wirePreview.points ?? data?.waypoints;
   const rawRoute = useMemo(
     () =>
@@ -151,10 +175,9 @@ export function EditableEdge(props: EdgeProps<TrailEdge>) {
       sourceSide: sourcePosition,
       targetSide: targetPosition,
       labelDragging: !!labelDrag.current,
-      label:
-        typeof props.label === 'string' || typeof props.label === 'number'
+      label: labelKey
           ? {
-              text: String(props.label),
+              text: labelKey,
               x: label.x,
               y: label.y,
               horizontal: label.horizontal,
@@ -172,7 +195,7 @@ export function EditableEdge(props: EdgeProps<TrailEdge>) {
       sourcePosition,
       targetPosition,
       !!labelDrag.current,
-      props.label,
+      labelKey,
       label.x,
       label.y,
       label.horizontal,
@@ -194,7 +217,7 @@ export function EditableEdge(props: EdgeProps<TrailEdge>) {
     setNodes((nodes) => nodes.map((node) => (node.selected ? { ...node, selected: false } : node)));
     // An already selected edge may own pointer capture for a segment/label drag.
     // Keep that DOM node mounted instead of requesting a new React Flow selection.
-    if (selected) return;
+    if (selected && !getRenderedEdges().some(edge => edge.id !== id && edge.selected)) return;
     setEdges((edges) => edges.map((edge) => ({ ...edge, selected: edge.id === id })));
   }
 
@@ -226,15 +249,18 @@ export function EditableEdge(props: EdgeProps<TrailEdge>) {
     return () => window.removeEventListener('keydown', escape);
   }, []);
 
-  function startLabel(event: PointerEvent<SVGTextElement>) {
+  function startLabel(event: PointerEvent<SVGTextElement | HTMLDivElement>) {
     if (event.button !== 0 || drag.current || labelDrag.current) return;
     event.preventDefault();
     event.stopPropagation();
-    selectSection(nearestSection(sharedSections(rendered, getRenderedEdges()), label));
-    event.currentTarget.setPointerCapture(event.pointerId);
+    draggedStep.current = false;
+    if (!pipeline) selectSection(nearestSection(sharedSections(rendered, getRenderedEdges()), label));
+    // Capture on the pressed button so a stationary pointer still produces its native click.
+    const element = (pipeline && (event.target as Element).closest?.('button')) || event.currentTarget;
+    element.setPointerCapture(event.pointerId);
     labelDrag.current = {
       pointerId: event.pointerId,
-      element: event.currentTarget,
+      element,
       route,
       flowStart: screenToFlowPosition({ x: event.clientX, y: event.clientY }),
       screenStart: { x: event.clientX, y: event.clientY },
@@ -245,7 +271,7 @@ export function EditableEdge(props: EdgeProps<TrailEdge>) {
     };
     setLabelDraft(label.position);
   }
-  function moveLabel(event: PointerEvent<SVGTextElement>) {
+  function moveLabel(event: PointerEvent<SVGTextElement | HTMLDivElement>) {
     const current = labelDrag.current;
     if (!current || event.pointerId !== current.pointerId) return;
     event.preventDefault();
@@ -267,7 +293,7 @@ export function EditableEdge(props: EdgeProps<TrailEdge>) {
     );
     setLabelDraft(current.position);
   }
-  function finishLabel(event: PointerEvent<SVGTextElement>) {
+  function finishLabel(event: PointerEvent<SVGTextElement | HTMLDivElement>) {
     const current = labelDrag.current;
     if (!current || event.pointerId !== current.pointerId) return;
     event.stopPropagation();
@@ -275,6 +301,7 @@ export function EditableEdge(props: EdgeProps<TrailEdge>) {
     setLabelDraft(null);
     if (current.element.hasPointerCapture(current.pointerId))
       current.element.releasePointerCapture(current.pointerId);
+    draggedStep.current = current.moved;
     if (current.moved && Math.abs(current.position - current.initialPosition) > 1e-6)
       data?.changeLabelPosition(current.position);
   }
@@ -397,6 +424,19 @@ export function EditableEdge(props: EdgeProps<TrailEdge>) {
     }
   }
 
+  const labelEvents = {
+    onPointerDown: startLabel,
+    onPointerMove: moveLabel,
+    onPointerUp: finishLabel,
+    onPointerCancel: cancelLabel,
+    onLostPointerCapture: cancelLabel,
+    onClick: (event: React.MouseEvent) => event.stopPropagation(),
+    onDoubleClick: (event: React.MouseEvent) => {
+      event.stopPropagation();
+      if (data?.labelPosition !== undefined) data.changeLabelPosition();
+    },
+  };
+
   return (
     <>
       <g
@@ -425,11 +465,11 @@ export function EditableEdge(props: EdgeProps<TrailEdge>) {
             viewBox="-10 -10 20 20"
             refX="0"
             refY="0"
-            markerWidth="16"
-            markerHeight="16"
+            markerWidth={slide ? 20 : 16}
+            markerHeight={slide ? 20 : 16}
             orient="auto-start-reverse"
           >
-            <polyline points="-5,-4 0,0 -5,4 -5,-4" fill="var(--accent)" stroke="var(--accent)" />
+            <polyline points="-5,-4 0,0 -5,4 -5,-4" fill={highlightColor} stroke={highlightColor} />
           </marker>
         </defs>
         <BaseEdge
@@ -453,8 +493,8 @@ export function EditableEdge(props: EdgeProps<TrailEdge>) {
             interactionWidth={0}
             style={{
               ...props.style,
-              stroke: 'var(--accent)',
-              strokeWidth: 2,
+              stroke: highlightColor,
+              strokeWidth: slide ? 2.5 : 2,
               strokeLinejoin: 'miter',
               strokeLinecap: 'butt',
               pointerEvents: 'none',
@@ -509,7 +549,7 @@ export function EditableEdge(props: EdgeProps<TrailEdge>) {
               />
             );
           })}
-        {props.label != null && drawing.showLabel && (
+        {!pipeline && !capsule && props.label != null && drawing.showLabel && (
           <text
             className={`react-flow__edge-text edge-side-label nodrag nopan ${labelDrag.current ? 'dragging' : ''}`}
             x={label.x + (label.horizontal ? 0 : 8 / zoom)}
@@ -524,22 +564,54 @@ export function EditableEdge(props: EdgeProps<TrailEdge>) {
               ...props.labelStyle,
               ...(labelHighlighted ? { fill: 'var(--accent)', fontWeight: 600 } : {}),
             }}
-            onPointerDown={startLabel}
-            onPointerMove={moveLabel}
-            onPointerUp={finishLabel}
-            onPointerCancel={cancelLabel}
-            onLostPointerCapture={cancelLabel}
-            onClick={(event) => event.stopPropagation()}
-            onDoubleClick={(event) => {
-              event.stopPropagation();
-              if (data?.labelPosition !== undefined) data.changeLabelPosition();
-            }}
+            {...labelEvents}
           >
             <title>沿连线拖动文字；双击恢复默认位置</title>
             {props.label}
           </text>
         )}
       </g>
+      {pipeline && <EdgeLabelRenderer>
+        <div className="edge-op-pipeline nodrag nopan" data-label-position={label.position}
+          data-multi={edgeOps.length > 1 || undefined}
+          style={{ transform: `translate(${label.x}px, ${label.y}px) translate(-50%, -50%)` }}
+          aria-label="内嵌算子，沿连线拖动" {...labelEvents}>
+          <div className="edge-op-steps">
+            {edgeOps.map((step, index) => <Fragment key={step.id}>
+              {index > 0 && <span aria-hidden="true" className="edge-op-chevron">↓</span>}
+              <button type="button" className={`edge-op-step tone-${step.tone}`}
+                data-status={step.status} data-active={data?.activeNodeId === step.id}
+                title={[...new Set([step.label.trim(), step.detail ?? step.badge, step.shapeText, step.status].filter(Boolean))].join(' · ')}
+                aria-pressed={data?.selectedNodeId === step.id}
+                onKeyDown={event => {
+                  if (event.key === 'Enter' || event.key === ' ') event.stopPropagation();
+                }}
+                onClick={event => {
+                  event.stopPropagation();
+                  if (event.detail && draggedStep.current) return;
+                  wireSelection.clear();
+                  setEdges(edges => edges.map(edge => edge.selected ? { ...edge, selected: false } : edge));
+                  useEditor.getState().select(step.id);
+                }}>{step.badge}</button>
+            </Fragment>)}
+          </div>
+          {(data?.annotation || props.label != null) && <small>
+            {data?.annotation}{data?.annotation && props.label != null && ' · '}{props.label}
+          </small>}
+        </div>
+      </EdgeLabelRenderer>}
+      {!pipeline && capsule && labelKey && drawing.showLabel && (
+        <EdgeLabelRenderer>
+          <div className="edge-slide-label nodrag nopan" aria-label="连线文字，沿连线拖动"
+            data-label-position={label.position} data-highlighted={labelHighlighted}
+            style={{ transform: `translate(${label.x}px, ${label.y}px) ${label.horizontal
+              ? 'translate(-50%, calc(-100% - 10px))' : 'translate(10px, -50%)'}` }}
+            title="沿连线拖动文字；双击恢复默认位置" {...labelEvents}>
+            {data?.annotation && <strong>{data.annotation}</strong>}
+            {props.label != null && <span>{props.label}</span>}
+          </div>
+        </EdgeLabelRenderer>
+      )}
       {selected && (
         <EdgeLabelRenderer>
           {controls.map((point, index) => (

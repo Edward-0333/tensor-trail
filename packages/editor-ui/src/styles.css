@@ -921,7 +921,8 @@ kbd {
 .level-input-node {
   position: relative;
 }
-.level-input-badge {
+.level-input-badge,
+.level-input-alias-badge {
   position: absolute;
   top: -12px;
   left: 8px;

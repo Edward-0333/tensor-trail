@@ -1,4 +1,5 @@
 import type {
+  InferenceContext,
   ModelNode,
   TensorAutograd,
   TensorGradState,
@@ -34,6 +35,20 @@ export function tensorGradState(spec?: TensorSpec): TensorGradState {
   if (!canRequireGrad(spec.dtype)) return 'off';
   return spec.autograd ? (spec.autograd.requiresGrad ? 'on' : 'off') : 'unknown';
 }
+export function effectiveGradMode(context?: InferenceContext) {
+  return context?.runtimeGradMode ?? context?.hyperparameters.gradMode?.value ?? 'grad';
+}
+
+function isGradDisabled(gradMode: unknown): boolean {
+  return gradMode === 'no_grad' || gradMode === 'inference_mode';
+}
+/** For fresh, parameter-free Tensor results that are differentiable in every input. */
+export function inferAutogradFromInputs(inputs: TensorSpec[], gradMode: unknown): TensorAutograd | undefined {
+  if (isGradDisabled(gradMode) || inputs.every(input => tensorGradState(input) === 'off'))
+    return { requiresGrad: false, source: 'inferred' };
+  if (gradMode === 'grad' && inputs.some(input => tensorGradState(input) === 'on'))
+    return { requiresGrad: true, source: 'inferred' };
+}
 export const gradLabel = (state: TensorGradState): string =>
   `grad:${state === 'unknown' ? '?' : state}`;
 export const gradSourceLabel = (spec: TensorSpec): string =>
@@ -50,9 +65,14 @@ export function tensorInk(background: string): string {
   return rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722 > 0.179 ? '#000000' : '#ffffff';
 }
 
+// These layers infer their own output gradients under the effective grad mode.
+const gradModeAware = new Set(['GridSample', 'Normalize']);
+// An explicit grad:on requires a floating output and a known grad-enabled context.
+const gradOnRequiresGradMode = new Set(['Linspace', 'OnesLike', 'ZerosLike', 'Maximum']);
 const valueReads = new Set([
+  ...gradModeAware,
   'SemanticOp', // Each output declares or infers its own autograd state.
-  'TensorFieldContract', 'ArrayToTensorExplicit', 'SelectValue', 'TensorToDevice', 'ZerosLike',
+  'TensorFieldContract', 'ArrayToTensorExplicit', 'SelectValue', 'TensorToDevice', 'ZerosLike', 'OnesLike', 'Linspace',
   'Input',
   'Inlet',
   'Outlet',
@@ -99,7 +119,7 @@ const shapeOnly = new Set([
   'AlignTrailingDims',
   'Cast',
 ]);
-const parameterFreeMath = new Set(['MatrixInverse', 'Exp', 'Softplus', 'L2Norm', 'Add', 'Mul', 'Subtract', 'Dropout', 'Function', 'NanToNum', 'MatMul', 'ReduceSum', 'Divide', 'Concat', 'SortRowsByMax', 'MaxWithIndices', 'Sort', 'RowIndex']);
+const parameterFreeMath = new Set(['MatrixInverse', 'Exp', 'Softplus', 'L2Norm', 'Add', 'Mul', 'Subtract', 'Dropout', 'Function', 'NanToNum', 'MatMul', 'ReduceSum', 'Divide', 'Maximum', 'Concat', 'SortRowsByMax', 'MaxWithIndices', 'Sort', 'RowIndex']);
 const differentiableUnary = new Set(['Sigmoid', 'Log', 'Sqrt', 'Clamp', 'Chunk', 'TopK']);
 
 /** Conservative metadata propagation, not a PyTorch autograd simulator. */
@@ -107,6 +127,7 @@ export function annotateTensorOutputs(
   node: ModelNode,
   inputs: Record<string, ValueSpec>,
   outputs: Record<string, ValueSpec>,
+  gradMode: unknown = 'grad',
 ): Record<string, ValueSpec> {
   const result = Object.fromEntries(
     Object.entries(outputs).map(([port, value]) => {
@@ -126,30 +147,29 @@ export function annotateTensorOutputs(
         if (state !== 'unknown')
           return [port, { ...tensor, autograd: { requiresGrad: state === 'on', source: 'inferred' as const } }];
       }
-      const input = inputs.in;
-      // Known False is safe through shape/dtype operations and parameter-free arithmetic.
-      // True cannot be inferred without knowing grad mode and view/checkpoint context.
-      if (
-        (shapeOnly.has(node.type) &&
-        input &&
-        isTensorSpec(input) &&
-        input.autograd?.requiresGrad === false) ||
-        (parameterFreeMath.has(node.type) && Object.values(inputs).length > 0 &&
-          Object.values(inputs).every(value => isTensorSpec(value) &&
-            (value.autograd?.requiresGrad === false || !canRequireGrad(value.dtype))))
-      )
-        return [
-          port,
-          { ...tensor, autograd: { requiresGrad: false, source: 'inferred' as const } },
-        ];
+      if (shapeOnly.has(node.type) && source && isTensorSpec(source) && source.autograd?.requiresGrad === false)
+        return [port, { ...tensor, autograd: { requiresGrad: false, source: 'inferred' as const } }];
+      if (parameterFreeMath.has(node.type)) {
+        const operands = Object.values(inputs);
+        if (operands.length && operands.every(isTensorSpec)) {
+          // Older arithmetic rules establish only known-off. Maximum models both input gradients.
+          const autograd = inferAutogradFromInputs(operands, node.type === 'Maximum' ? gradMode : undefined);
+          if (autograd) return [port, { ...tensor, autograd }];
+        }
+      }
       return [port, tensor];
     }),
   );
   if (node.tensorAutograd) {
     const out = result.out;
     if (!out || !isTensorSpec(out)) throw new Error('自动求导标注仅适用于 out Tensor。');
-    validateAutograd(node.tensorAutograd, out.dtype);
-    result.out = { ...out, autograd: { ...node.tensorAutograd } };
+    const wouldEnableDisabledGrad = node.tensorAutograd.requiresGrad && (
+      (gradModeAware.has(node.type) && isGradDisabled(gradMode)) ||
+      (gradOnRequiresGradMode.has(node.type) && (gradMode !== 'grad' || !canRequireGrad(out.dtype)))
+    );
+    validateAutograd(node.tensorAutograd, wouldEnableDisabledGrad ? undefined : out.dtype);
+    if (!wouldEnableDisabledGrad)
+      result.out = { ...out, autograd: { ...node.tensorAutograd } };
   }
   return result;
 }

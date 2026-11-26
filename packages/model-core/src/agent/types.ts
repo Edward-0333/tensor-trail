@@ -1,4 +1,5 @@
-import type { Params, Project, ValueSpec, Hyperparameters, RuntimeSnapshot } from '../core/types';
+import type { EdgePresentationPatch } from '../core/visualMedia';
+import type { NodeSubmoduleVisual, NodePresentation, NodeTensorVisual, NodeVisualMedia, Params, Project, ValueSpec, Hyperparameters, RuntimeSnapshot } from '../core/types';
 
 export type ValidationMode = 'strict' | 'draft';
 export interface ValidationOptions {
@@ -12,6 +13,10 @@ export interface PatchOptions extends ValidationOptions {
 }
 
 export interface RecipeNode {
+  presentation?: NodePresentation;
+  submoduleVisual?: NodeSubmoduleVisual;
+  tensorVisual?: NodeTensorVisual;
+  visualMedia?: NodeVisualMedia;
   id: string;
   type: string;
   label?: string;
@@ -43,6 +48,11 @@ export type Operation =
   | { op: 'assign_region'; path?: string[]; ids: string[]; region: string | null }
   | { op: 'fit_region'; path?: string[]; id: string }
   | { op: 'resize_region'; path?: string[]; id: string; position?: { x: number; y: number }; width: number; height: number }
+  | { op: 'set_node_presentation'; path?: string[]; id: string; presentation: NodePresentation | null }
+  | { op: 'set_node_submodule_visual'; path?: string[]; id: string; visual: NodeSubmoduleVisual | null }
+  | { op: 'set_node_tensor_visual'; path?: string[]; id: string; visual: NodeTensorVisual | null }
+  | { op: 'set_node_media'; path?: string[]; id: string; media: NodeVisualMedia | null }
+  | ({ op: 'set_edge_presentation'; path?: string[]; from: string; to: string } & EdgePresentationPatch)
   | { op: 'set_tensor_border'; path?: string[]; id: string; color: string | null }
   | { op: 'set_lineage_enabled'; enabled: boolean }
   /** Migration only: remove legacy semantic declarations. Sources are now automatic. */

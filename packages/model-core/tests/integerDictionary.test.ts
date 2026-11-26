@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseDictionarySchema } from '../src/core/dictionary';
+import { DICTIONARY_SCHEMA_LIMIT, parseDictionarySchema } from '../src/core/dictionary';
 import { inferProject } from '../src/core/engine';
 import { parseProject, serializeProject } from '../src/core/serialization';
 import { shapeText, type DictionarySpec, type Project } from '../src/core/types';
@@ -16,6 +16,18 @@ const rule = registry.get('DictionaryGet')!.inferValue!;
 const source = () => parseDictionarySchema(JSON.stringify(schema));
 
 describe('Integer-key dictionaries', () => {
+  it('counts Unicode keys, axis labels and the surrounding schema in code points', () => {
+    const key = '𠮷'.repeat(128);
+    const field = { shape: [3], axes: [key], dtype: 'float32' };
+    const dictionary = { kind: 'dict', fields: { [key]: field } };
+    const raw = JSON.stringify(dictionary);
+    const full = raw + ' '.repeat(DICTIONARY_SCHEMA_LIMIT - Array.from(raw).length);
+    expect(parseDictionarySchema(full)).toEqual(dictionary);
+    expect(rule({ in: parseDictionarySchema(dictionary) }, { path: key }).outputs.out).toEqual(field);
+    expect(() => parseDictionarySchema(full + ' ')).toThrow(String(DICTIONARY_SCHEMA_LIMIT));
+    expect(() => parseDictionarySchema({ kind: 'dict', fields: { [key + '𠮷']: field } })).toThrow(/字段名/);
+  });
+
   it('looks up an integer time key without indexing the tensor batch axis', () => {
     const before = source();
     const result = rule({ in: before }, { path: '["temporal_ego_states", 0]' });

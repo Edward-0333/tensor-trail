@@ -64,11 +64,20 @@ it('启动器按锁文件更新已有安装，安装失败后下次启动重试'
   const npm = file('scripts/npm.cjs', `
     const fs = require('node:fs');
     fs.appendFileSync('calls', process.argv.slice(2).join(' ') + '\\n');
+    if (process.argv.includes('--ignore-scripts')) {
+      const log = fs.openSync('contender-error', 'w');
+      const contender = require('node:child_process').spawnSync(process.execPath,
+        ['scripts/ensure-dependencies.cjs'], { stdio: ['ignore', 'ignore', log] });
+      fs.closeSync(log);
+      fs.writeFileSync('contender-status', String(contender.status));
+    }
     if (fs.existsSync('fail')) process.exit(1);
     fs.writeFileSync('node_modules/.package-lock.json', '{}');
   `);
   const run = (...args: string[]) => spawnSync(process.execPath, [entry, ...args], { encoding: 'utf8' });
   expect(run('--ignore-scripts').status).toBe(0);
+  expect(fs.readFileSync(path.join(temporary, 'contender-status'), 'utf8')).toBe('1');
+  expect(fs.readFileSync(path.join(temporary, 'contender-error'), 'utf8')).toContain('另一个启动窗口正在安装依赖');
   expect(fs.readFileSync(calls, 'utf8')).toBe('ci --no-audit --no-fund --ignore-scripts\n');
   expect(run().status).toBe(0);
   expect(fs.readFileSync(calls, 'utf8').trim().split('\n')).toHaveLength(1);

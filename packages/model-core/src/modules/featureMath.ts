@@ -1,3 +1,4 @@
+import { shortText } from '../core/limits';
 import type { Dim, ModuleDefinition, Params, Port, ValueSpec } from '../core/types';
 import { isIntegerSpec, tensorValue } from '../core/types';
 import { product, requireThat, same, tensor } from './math';
@@ -27,7 +28,7 @@ function dimensionProduct(dimensions: Dim[]): Dim {
 
 function viewPattern(params: Params): (number | string)[] {
   requireThat(
-    typeof params.shape === 'string' && params.shape.length <= 256,
+    shortText(params.shape, 256),
     'View 的 shape 需要短文本，例如 d0, d1, -1。',
   );
   const tokens = params.shape.split(',').map((token) => token.trim());

@@ -1,3 +1,4 @@
+import { shortText } from './limits';
 import type { Graph, ModelEdge, ModelNode, Registry } from './types';
 import { clone, uid } from './types';
 import { orderGraph, ports } from './graph';
@@ -254,7 +255,7 @@ function collapse(
   for (const key of ['summary', 'formula'] as const) {
     const value = options[key];
     if (value !== undefined) {
-      if (typeof value !== 'string' || value.length > 240) throw Error(`${key} 最多 240 个字符。`);
+      if (!shortText(value, 240)) throw Error(`${key} 最多 240 个字符。`);
       params[key] = value;
     }
   }
@@ -296,7 +297,7 @@ function collapse(
         id,
         type: 'Inlet',
         definitionVersion: 1,
-        label: `${node.label} · ${port.label}`.slice(0, 200),
+        label: Array.from(`${node.label} · ${port.label}`).slice(0, 200).join(''),
         params: { port: name },
         position: { x: 0, y: 0 },
       });
@@ -323,7 +324,7 @@ function collapse(
         id,
         type: 'Outlet',
         definitionVersion: 1,
-        label: `${node.label} · ${port.label}`.slice(0, 200),
+        label: Array.from(`${node.label} · ${port.label}`).slice(0, 200).join(''),
         params: { port: name },
         position: { x: 0, y: 0 },
       });
@@ -422,18 +423,16 @@ function collapse(
 
 function describeGlue(steps: ModelNode[], edges: ModelEdge[]) {
   const types = steps.map((n) => n.type);
-  const zero = new Set(
-    steps.filter((n) => ['ZerosLike', 'Zeros', 'NewZeros'].includes(n.type)).map((n) => n.id),
-  );
   const terminal = steps[steps.length - 1];
   let summary: string;
-  if (
-    terminal.type === 'Where' &&
-    edges.some(
-      (e) => zero.has(e.source) && e.target === terminal.id && ['x', 'y'].includes(e.targetPort),
-    )
-  )
+  const whereBranches = terminal.type === 'Where'
+    ? edges.filter(e => e.target === terminal.id && ['x', 'y'].includes(e.targetPort)).map(e => e.source)
+    : [];
+  const fillTypes = steps.filter(n => whereBranches.includes(n.id)).map(n => n.type);
+  if (fillTypes.some(type => ['ZerosLike', 'Zeros', 'NewZeros'].includes(type)))
     summary = '按掩码选择数值并清零对应分量';
+  else if (fillTypes.includes('OnesLike'))
+    summary = '按掩码选择数值并将对应分量置一';
   else if (types.includes('Clamp')) summary = '整理数值并限制取值范围';
   else if (
     types.some((t) => ['DictionaryGet', 'TensorIndex', 'Slice', 'TensorSequenceGet'].includes(t))
@@ -445,7 +444,7 @@ function describeGlue(steps: ModelNode[], edges: ModelEdge[]) {
       : '读取并整理所需分量';
   else if (
     types.every((t) =>
-      ['Add', 'Subtract', 'Mul', 'Divide', 'Function', 'Sin', 'Cos', 'Exp', 'Log', 'Sqrt'].includes(
+      ['Add', 'Subtract', 'Mul', 'Divide', 'Maximum', 'Function', 'Sin', 'Cos', 'Exp', 'Log', 'Sqrt'].includes(
         t,
       ),
     )
@@ -453,7 +452,7 @@ function describeGlue(steps: ModelNode[], edges: ModelEdge[]) {
     summary = '逐元素计算' + terminal.label;
   else summary = `${steps[0].label}，再${terminal.label}`;
   const sequence = types.length <= 5 ? types : [...types.slice(0, 2), '…', ...types.slice(-2)];
-  return { summary: summary.slice(0, 240), formula: sequence.join(' → ') };
+  return { summary: Array.from(summary).slice(0, 240).join(''), formula: sequence.join(' → ') };
 }
 
 export function autoSimplifyCalculations(

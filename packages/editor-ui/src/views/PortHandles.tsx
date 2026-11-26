@@ -72,3 +72,41 @@ export function PortHandles({
     </>
   );
 }
+
+// An absolutely positioned grid child uses its named grid area as its containing
+// block. Handles stay on the outer card while their labels own space in the same band.
+export function SubmodulePortSlots({ inputs, outputs, inputSide, outputSide }: {
+  inputs: Port[]; outputs: Port[]; inputSide: PortSide; outputSide: PortSide;
+}) {
+  const groups: Record<PortSide, { port: Port; kind: 'target' | 'source' }[]> = {
+    left: [], right: [], top: [], bottom: [],
+  };
+  groups[inputSide].push(...inputs.map(port => ({ port, kind: 'target' as const })));
+  groups[outputSide].push(...outputs.map(port => ({ port, kind: 'source' as const })));
+  const rows = Math.max(groups.left.length, groups.right.length);
+  const labels = (side: PortSide) => groups[side].map(({ port, kind }, index) => {
+    const lateral = side === 'left' || side === 'right';
+    return <span className="submodule-port-label" key={`${kind}-${port.id}`}
+      data-side={side} data-port-id={port.id} title={port.id}
+      style={lateral ? { gridColumn: side === 'left' ? 1 : 2, gridRow: index + 1 } : undefined}>
+      {port.id}
+    </span>;
+  });
+  return <>
+    {(['top', 'bottom'] as const).map(side => groups[side].length > 0 &&
+      <div key={side} className="submodule-port-band" data-band={side} style={{
+        gridArea: side, gridTemplateColumns: `repeat(${groups[side].length}, minmax(0, 1fr))`,
+      }}>{labels(side)}</div>)}
+    {rows > 0 && <div className="submodule-port-band" data-band="sides" style={{ gridArea: 'sides' }}>
+      {labels('left')}{labels('right')}
+    </div>}
+    {(['left', 'right', 'top', 'bottom'] as const).flatMap(side =>
+      groups[side].map(({ port, kind }, index) => {
+        const lateral = side === 'left' || side === 'right';
+        const offset = `${100 * (index + 0.5) / (lateral ? rows : groups[side].length)}%`;
+        return <Handle key={`${kind}-${port.id}`} id={port.id} type={kind} position={positions[side]}
+          style={{ gridArea: lateral ? 'sides' : side, ...(lateral ? { top: offset } : { left: offset }) }}
+          aria-label={`${kind === 'target' ? '输入' : '输出'} ${port.id}`} title={port.label} />;
+      }))}
+  </>;
+}

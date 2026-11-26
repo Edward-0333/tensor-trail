@@ -115,6 +115,21 @@ describe('semantic canvas editing', () => {
     expect(model().params.formula).toBe('x.unsqueeze(-1).contiguous()');
   });
 
+  it('edits a full-length Unicode summary and also accepts it as the label of a merged group', () => {
+    const summary = '𠮷'.repeat(240);
+    editor().select('s');
+    expect(editor().setParam('s', 'summary', summary)).toBe(true);
+    expect(editor().setParam('s', 'summary', summary + '𠮷')).toBe(false);
+    const html = renderToStaticMarkup(createElement(Inspector, { graph: editor().project.graph }));
+    const field = html.match(/<input[^>]+aria-label="语义说明 \(summary\)"[^>]*>/)?.[0];
+    expect(field).toContain(summary);
+    expect(field).not.toMatch(/maxlength/i);
+    editor().mergeCalculationNodes(['a', 'b'], summary, summary);
+    const group = editor().project.graph.nodes.find(n => n.type === 'CalculationGroup');
+    expect(group).toMatchObject({ label: summary, params: { summary, formula: summary } });
+    expect(validateModel(editor().project).ok).toBe(true);
+  });
+
   it('renders declared semantic ports, summary, formula and each inferred output shape', () => {
     const model = registry.create('SemanticOp', {
       summary: '提取最近位置',

@@ -1,8 +1,18 @@
-import type { Dim, TensorSpec } from '../core/types';
+import { ParameterError, type Dim, type TensorSpec } from '../core/types';
 
 export function requireThat(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
+export function decimalLiteral(value: unknown, field = 'value'): string {
+  if (typeof value !== 'string') throw new ParameterError(field, `${field} must be numeric text.`);
+  const literal = value.trim();
+  if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(literal) || !Number.isFinite(Number(literal)))
+    throw new ParameterError(field, `${field} must be a finite decimal number.`);
+  // Normalize integer leading zeros for valid Python while retaining integer precision.
+  if (/^[+-]?\d+$/.test(literal)) return BigInt(literal).toString();
+  return literal;
+}
+
 export function numericList(value: unknown): number[] {
   const tokens = String(value)
     .replace(/[\[\]()]/g, '')
@@ -86,9 +96,28 @@ export function broadcast(a: TensorSpec, b: TensorSpec, warnings: string[]): Ten
       bi = b.shape.length - size + i;
     const x = a.shape[ai] ?? 1,
       y = b.shape[bi] ?? 1;
-    if (x !== 1 && y !== 1) same(x, y, '逐元素运算需要对应维度相等或其中一个为 1', warnings);
-    shape.push(x === 1 ? y : x);
-    axes.push((x === 1 ? b.axes[bi] : a.axes[ai]) ?? `axis${i}`);
+    const leftAxis = a.axes[ai], rightAxis = b.axes[bi];
+    if (typeof x === 'string' && typeof y === 'string' && x !== y) {
+      const [first, second] = x < y ? [x, y] : [y, x];
+      // A symbolic broadcast also covers (0, 1), whose result is 0.
+      shape.push(`broadcast(${first}, ${second})`);
+      axes.push((first === x ? leftAxis ?? rightAxis : rightAxis ?? leftAxis) ?? `axis${i}`);
+      warnings.push(`逐元素广播需要 ${first} = ${second} 或其中一维为 1，符号维度尚待验证。`);
+      continue;
+    }
+    // A concrete non-singleton (including 0) fixes the result even if its peer is symbolic.
+    const useRight = x === 1 || (typeof x === 'string' && typeof y === 'number' && y !== 1);
+    const dim = useRight ? y : x;
+    if (x !== y && x !== 1 && y !== 1) {
+      if (typeof x !== typeof y) {
+        const symbol = typeof x === 'string' ? x : y;
+        warnings.push(`逐元素广播需要 ${symbol} 为 1 或 ${dim}，符号维度尚待验证。`);
+      } else {
+        same(x, y, '逐元素运算需要对应维度相等或其中一个为 1', warnings);
+      }
+    }
+    shape.push(dim);
+    axes.push((useRight ? rightAxis ?? leftAxis : leftAxis ?? rightAxis) ?? `axis${i}`);
   }
   return tensor(shape, axes, a.dtype);
 }

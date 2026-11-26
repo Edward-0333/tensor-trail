@@ -1,3 +1,4 @@
+import { shortText } from '../core/limits';
 import type { ModelNode, ModuleDefinition, Params } from '../core/types';
 import { isSizeSpec, isTensorSpec, shapeText, tensorValue } from '../core/types';
 import { requireThat } from './math';
@@ -6,7 +7,7 @@ import { input, output, text } from './primitives';
 export const imageMetadataCodeTypes = new Set(['TensorShapeSlice', 'UpdateImageMetaInputShape']);
 
 function sliceBound(value: unknown): number | undefined {
-  requireThat(typeof value === 'string' && value.length <= 32, '切片边界需要整数文本或留空。');
+  requireThat(shortText(value, 32), '切片边界需要整数文本或留空。');
   const bound = value.trim();
   if (!bound) return undefined;
   requireThat(

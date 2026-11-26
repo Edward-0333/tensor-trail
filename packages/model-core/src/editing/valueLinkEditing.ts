@@ -42,6 +42,9 @@ export function createLinkedPaste(
       if (mode !== 'requested' && node.type !== 'LocalParameter') return;
       const owner = valueOwner(graph, original);
       node.valueSource = owner.id;
+      delete node.presentation;
+      delete node.visualMedia;
+      delete node.tensorVisual;
       node.params = clone(owner.params);
       node.label = owner.label;
     });

@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react';
-import { isDeviceSpec, isDtypeSpec, isControlSpec, isIntegerSpec, type ModelNode, type ValueSpec } from '@tensor-trail/model-core/core/types';
+import { isDeviceSpec, isDtypeSpec, isControlSpec, isIntegerSpec, type ModelEdge, type ModelNode, type ValueSpec } from '@tensor-trail/model-core/core/types';
 import { canvasValueLabel } from './canvasValueLabel';
 
 export function isCountContract(target: ModelNode | undefined, port: string): boolean {
@@ -13,12 +13,12 @@ export function valueEdgeLabel(value: ValueSpec | undefined, countContract = fal
 }
 
 /** Metadata/contract dependencies differ from data; ordinary integer wires stay solid. */
-export function valueEdgeStyle(value: ValueSpec | undefined, error = false, countContract = false): CSSProperties {
+export function valueEdgeStyle(value: ValueSpec | undefined, error = false, countContract = false, presentation?: ModelEdge['presentation']): CSSProperties {
   const device = value && (isDeviceSpec(value) || isDtypeSpec(value));
   const control = value && isControlSpec(value);
   return {
     stroke: error ? 'var(--danger)' : countContract ? 'var(--text-secondary)' : control ? 'var(--category-pink)' : device ? 'var(--text-secondary)' : 'var(--edge)',
-    strokeWidth: 1.5,
+    strokeWidth: presentation === 'slide' ? 2.5 : 1.5,
     ...(device || countContract ? { strokeDasharray: '5 4' } : {}),
     ...(control && !countContract ? { strokeDasharray: '7 4' } : {}),
   };

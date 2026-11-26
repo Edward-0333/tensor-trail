@@ -23,9 +23,26 @@ function isCurrent() {
   }
 }
 
-async function ensureDependencies() {
-  if (isCurrent()) return;
-  // Only one launcher may run npm ci in this checkout at a time.
+// flock on a checkout directory needs no writable lockfile or local socket.
+// The child and parent share the open file description, so the kernel holds
+// the lock until the parent closes fd (also on process exit).
+async function lockCheckout() {
+  const flock = process.platform === 'linux' && ['/usr/bin/flock', '/bin/flock'].find(p => fs.existsSync(p));
+  if (flock) {
+    const fd = fs.openSync(root, 'r');
+    try {
+      const lock = spawnSync(flock, ['-n', '-E', '75', '3'], {
+        stdio: ['ignore', 'ignore', 'inherit', fd],
+      });
+      if (lock.error) throw lock.error;
+      if (lock.status === 75) throw Object.assign(Error('Checkout busy'), { code: 'EADDRINUSE' });
+      if (lock.status !== 0) throw Error(`Unable to lock checkout (${lock.status ?? lock.signal}).`);
+      return () => fs.closeSync(fd);
+    } catch (error) {
+      fs.closeSync(fd);
+      throw error;
+    }
+  }
   const windows = process.platform === 'win32';
   const id = createHash('sha256').update(windows ? root.toLowerCase() : root).digest('hex');
   const address = (windows ? '\\\\.\\pipe\\' : '\0') + 'tensor-trail-install-' + id;
@@ -34,6 +51,12 @@ async function ensureDependencies() {
     lock.once('error', reject);
     lock.listen(address, resolve);
   });
+  return () => lock.close();
+}
+
+async function ensureDependencies() {
+  if (isCurrent()) return;
+  const unlock = await lockCheckout();
   try {
     if (isCurrent()) return;
     fs.rmSync(stamp, { force: true });
@@ -44,7 +67,7 @@ async function ensureDependencies() {
     if (result.status !== 0) throw Error(`npm ci failed (${result.status ?? result.signal}).`);
     fs.writeFileSync(stamp, fingerprint);
   } finally {
-    lock.close();
+    unlock();
   }
 }
 

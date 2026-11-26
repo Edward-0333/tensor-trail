@@ -1,6 +1,17 @@
+import {
+  supportsCompactLayerPresentation,
+  supportsCompactPresentation,
+  supportsEdgePresentation,
+} from '@tensor-trail/model-core/core/nodePresentation';
+import { resolveGraphTensorTones, type GraphTensorTones } from '@tensor-trail/model-core/core/tensorGeometry';
+import { submoduleIcons, validateSubmoduleSummary } from '@tensor-trail/model-core/core/submoduleVisual';
+import { supportsTensorVisual, tensorVisualTones } from '@tensor-trail/model-core/core/tensorVisual';
+import { TensorVisualPanel } from './TensorVisualPanel';
+import { supportsVisualMedia } from '@tensor-trail/model-core/core/visualMedia';
+import { NodeVisualMediaPanel } from './NodeVisualMediaPanel';
 import { plutoForwardCode } from '@tensor-trail/model-core/modules/plutoForwardOps';
 import { plutoCompositeCode } from '@tensor-trail/model-core/modules/plutoForward';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState, type FocusEvent } from 'react';
 import {
   ArrowUpRight,
   MousePointer2,
@@ -10,7 +21,7 @@ import {
   Link2,
   Unlink,
 } from 'lucide-react';
-import type { Field, Graph, GraphResult, ModelNode, PortSide, ValueSpec } from '@tensor-trail/model-core/core/types';
+import type { Field, Graph, GraphResult, ModelNode, SubmoduleIcon, TensorVisualTone, PortSide, ValueSpec } from '@tensor-trail/model-core/core/types';
 import { canMergeCalculationSet } from '@tensor-trail/model-core/core/calculationGroups';
 import { graphAt, ports } from '@tensor-trail/model-core/core/graph';
 import { resolveForwardView } from '@tensor-trail/model-core/core/hierarchy';
@@ -24,6 +35,7 @@ import { emptyDictionary } from '@tensor-trail/model-core/core/dictionary';
 import { CalculationEditor } from './CalculationEditor';
 import { DictionaryInputEditor } from './DictionaryInputEditor';
 import { isContainerInput } from '@tensor-trail/model-core/modules/containers';
+import { isForwardInput } from '@tensor-trail/model-core/core/inputTypes';
 import { useEditor } from './store';
 import { HyperparametersPanel } from './HyperparametersPanel';
 import { DictionaryPathField, IndexExpressionField } from './IndexingFields';
@@ -56,7 +68,8 @@ import { sortingCode } from '@tensor-trail/model-core/modules/sorting';
 import { reweightCode } from '@tensor-trail/model-core/modules/reweight';
 import { whileLoopCode } from '@tensor-trail/model-core/modules/whileLoop';
 import { loopOpsCode } from '@tensor-trail/model-core/modules/loopOps';
-import { divideCode } from '@tensor-trail/model-core/modules/elementwise';
+import { linspaceCode } from '@tensor-trail/model-core/modules/linspace';
+import { elementwiseCode } from '@tensor-trail/model-core/modules/elementwise';
 import { AttributeBindingPanel } from './AttributeBindingPanel';
 import { IfRegionPanel } from './IfRegionPanel';
 import { LayoutRegionPanel, LayoutRegionMembership } from './LayoutRegionPanel';
@@ -66,7 +79,7 @@ import { isCodeRegion } from '@tensor-trail/model-core/core/ifRegions';
 import { mapOperationCode } from '@tensor-trail/model-core/modules/mapOps';
 import { mapEncoderCode } from '@tensor-trail/model-core/modules/mapEncoder';
 import { maskedWriteCode } from '@tensor-trail/model-core/modules/maskedWrite';
-import { isTensorSpec } from '@tensor-trail/model-core/core/types';
+import { isTensorSpec, shapeText } from '@tensor-trail/model-core/core/types';
 import { canRequireGrad } from '@tensor-trail/model-core/core/tensorAppearance';
 import { TensorAppearancePanel } from './TensorAppearancePanel';
 import { RuntimePanel } from './RuntimePanel';
@@ -75,6 +88,45 @@ const operationHelp: Record<
   string,
   { ports: [string, string][]; explanation: string; expression?: string }
 > = {
+  Linspace: {
+    ports: [['out', '一维序列，形状为 [steps]，axis 指定轴名。']],
+    explanation: '用 start 和 end 指定两端点，steps 为非负整数。两个端点须是可绑定的标量，整数字面量范围为 −2⁶³ 至 2⁶⁴−1。零步生成空轴，一步只转换 start，两步及以上转换两端点。转换前按 dtype 检查范围。',
+    expression: 'out = torch.linspace(start, end, steps, dtype=dtype)',
+  },
+  OnesLike: {
+    ports: [['in', '提供形状、轴和 dtype 的 Tensor。'], ['out', '同形状、同类型的全一 Tensor。']],
+    explanation: '可用作齐次坐标的常量分量。只读取输入规格，默认关闭梯度。',
+    expression: 'out = torch.ones_like(x)',
+  },
+  Maximum: {
+    ports: [['a / b', '可从末轴对齐广播的两路 Tensor。'], ['out', '广播后逐元素取较大值的 Tensor。']],
+    explanation: '对应轴的尺寸相同或一侧为 1，输出 dtype 按两路输入提升。所有广播后的轴均保留。',
+    expression: 'out = torch.maximum(a, b)',
+  },
+  Normalize: {
+    ports: [
+      ['in', '浮点 Tensor，dim 指定通道轴。默认 dim=-3 对应 [..., C, H, W] 中的 C。'],
+      ['out', '逐通道标准化后的新 Tensor，保留输入的形状、轴名与 dtype。'],
+    ],
+    explanation: '沿 dim 指定的通道轴广播 mean 和 std，计算 (x - mean) / std。两组统计量等长，转为输入 dtype 后 std 每项须大于 0。单组统计量适用于所有通道。',
+    expression: [
+      '# 默认 dim=-3，输入形状为 [..., C, H, W]',
+      'out = torchvision.transforms.Normalize(mean=mean, std=std)(x)',
+      '# 任意通道轴 dim（如 HWC 的 dim=2）',
+      'shape = [1] * x.ndim',
+      'shape[dim] = -1',
+      'out = (x - x.new_tensor(mean).view(shape)) / x.new_tensor(std).view(shape)',
+    ].join('\n'),
+  },
+  GridSample: {
+    ports: [
+      ['in', '浮点特征张量 [N,C,H,W] 或 [N,C,D,H,W]。'],
+      ['grid', '与 in 同秩、同 batch、同 dtype。末维存归一化坐标 (x, y[, z])，依次对应宽、高、深。'],
+      ['out', '保留 in 的 batch 和通道，每个 grid 空间位置产生一个采样值（每通道）。'],
+    ],
+    explanation: 'mode 可选 nearest（最近邻）、bilinear（2D 双线性、3D 三线性）和 bicubic（双三次，仅限 4D）。padding_mode 控制越界采样，可选 zeros（补零）、border（边界值）和 reflection（反射）。align_corners 为 True 时，−1 和 1 对应两端像素中心，为 False 时对应两端像素的外边界。',
+    expression: 'out = F.grid_sample(x, grid, mode=mode, padding_mode=padding_mode, align_corners=align_corners)',
+  },
   Cos: {
     ports: [
       ['in', '以弧度表示角度的 Tensor。'],
@@ -238,7 +290,6 @@ function ParamField({
           disabled={disabled}
           defaultValue={String(value ?? '')}
           spellCheck={false}
-          maxLength={field.maxLength}
           placeholder={field.key === 'repeats' ? '1, d0, 1' : field.key === 'shape' ? 'd0, d1, -1' : undefined}
           onBlur={(event) => {
             if (event.target.value !== value && !update(event.target.value))
@@ -316,7 +367,6 @@ function ParamField({
           aria-label="网络输入备注"
           key={`${node.id}:${value}`}
           defaultValue={String(value ?? '')}
-          maxLength={1999}
           rows={6}
           spellCheck={false}
           onBlur={(event) => {
@@ -387,7 +437,6 @@ function ParamField({
           aria-label={label}
           disabled={disabled}
           type={field.kind === 'number' ? 'number' : 'text'}
-          maxLength={field.maxLength}
           min={field.min}
           max={field.max}
           step={field.integer === false ? 'any' : 1}
@@ -401,11 +450,54 @@ function ParamField({
   );
 }
 
-export function Inspector({ graph, result }: { graph: Graph; result?: GraphResult }) {
-  const tabs = [['node', '节点属性'], ['hyperparameters', '模型超参数'], ['appearance', '张量配色'], ['runtime', '运行数据']] as const;
+const iconLabels: Record<SubmoduleIcon, string> = {
+  auto: '自动', backbone: '骨干网络', attention: '注意力', cross_attention: '交叉注意力',
+  mlp: '前馈网络', projection: '投影', encoder: '编码器', decoder: '解码器', head: '预测头', module: '通用模块',
+};
+const toneLabels: Record<TensorVisualTone, string> = {
+  auto: '自动', blue: '蓝', violet: '紫', teal: '青绿', amber: '琥珀', rose: '玫红', slate: '灰蓝',
+};
+
+function SubmoduleStylePanel({ node }: { node: ModelNode }) {
+  const setVisual = useEditor(s => s.setSubmoduleVisual);
+  const visual = node.submoduleVisual;
+  const commit = (input: HTMLInputElement) => {
+    try {
+      validateSubmoduleSummary(input.value);
+    } catch (error) {
+      input.value = visual?.summary ?? '';
+      useEditor.getState().toast((error as Error).message);
+      return;
+    }
+    const summary = input.value.trim();
+    if (summary !== (visual?.summary ?? '') && !setVisual(node.id, { ...visual, summary }))
+      input.value = visual?.summary ?? '';
+    else input.value = summary;
+  };
+  return <section className="submodule-style-panel" aria-label="封装模块样式">
+    <div className="section-label">封装模块样式</div>
+    <label>图标原型<select aria-label="图标原型" value={visual?.icon ?? 'auto'}
+      onChange={e => setVisual(node.id, { ...visual, icon: e.currentTarget.value as SubmoduleIcon })}>
+      {submoduleIcons.map(icon => <option key={icon} value={icon}>{iconLabels[icon]}</option>)}
+    </select></label>
+    <label>主题色标<select aria-label="主题色标" value={visual?.tone ?? 'auto'}
+      onChange={e => setVisual(node.id, { ...visual, tone: e.currentTarget.value as TensorVisualTone })}>
+      {tensorVisualTones.map(tone => <option key={tone} value={tone}>{toneLabels[tone]}</option>)}
+    </select></label>
+    <label>功能摘要<input key={visual?.summary ?? ''} aria-label="功能摘要" defaultValue={visual?.summary ?? ''}
+      placeholder="自动提取" onBlur={e => commit(e.currentTarget)}
+      onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) commit(e.currentTarget); }} /></label>
+    <button type="button" className="soft-button" onClick={() => setVisual(node.id, null)}>恢复自动</button>
+  </section>;
+}
+
+export function Inspector({ graph, result, graphTones, referenceMaxDim, hiddenNodeIds }: { hiddenNodeIds?: ReadonlySet<string>; graph: Graph; result?: GraphResult; graphTones?: GraphTensorTones; referenceMaxDim?: number }) {
+  const tones = useMemo(() => graphTones ?? resolveGraphTensorTones(graph, result), [graphTones, graph, result]);
+  const state = useEditor();
+  const edge = graph.edges.find(e => e.id === state.selectedEdgeId);
+  const tabs = [['node', edge ? '连线属性' : '节点属性'], ['hyperparameters', '模型超参数'], ['appearance', '张量配色'], ['runtime', '运行数据']] as const;
   const [tab, setTab] = useState<'node' | 'hyperparameters' | 'appearance' | 'runtime'>('node');
-  const state = useEditor(),
-    storedNode = graph.nodes.find((n) => n.id === state.selected),
+  const storedNode = graph.nodes.find((n) => n.id === state.selected),
     node = storedNode ? effectiveValueNode(graph, storedNode) : undefined,
     linkedMembers = node && isValueNode(node.type) ? linkedValueNodes(graph, node.id) : [],
     linkedOwner = node && linkedMembers.length > 1 ? valueOwner(graph, node) : undefined;
@@ -416,6 +508,17 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
           (n) => n.id === state.path.at(-1),
         )
       : undefined;
+  const presentationModes = node
+    ? ([
+        'default',
+        ...(supportsCompactPresentation(node) ? (['compact'] as const) : []),
+        ...(supportsEdgePresentation(node) ? (['edge'] as const) : []),
+      ] as const)
+    : [];
+  const compactLabel = node && supportsCompactLayerPresentation(node) ? '精简图标' : '微型圆徽章';
+  const embedded = !!node && !!hiddenNodeIds?.has(node.id);
+  useEffect(() => { if (embedded) setTab('node'); }, [embedded, node?.id]);
+  useEffect(() => { if (state.selectedEdgeId) setTab('node'); }, [state.selectedEdgeId]);
   const [variantName, setVariantName] = useState('我的 Transformer');
   useEffect(() => {
     if (owner) setVariantName(`${owner.label} · 变体`);
@@ -451,7 +554,8 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
       whileLoopCode(node) ??
       loopOpsCode(node) ??
       deviceCode(node) ??
-      divideCode(node) ??
+      linspaceCode(node) ??
+      elementwiseCode(node) ??
       maskedWriteCode(node) ??
       sequenceCode(node) ??
       decoderSupportCode(node) ??
@@ -471,6 +575,9 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
     node?.type === 'LocalParameter' ? localParameterColors(graph).get(node.id) : undefined;
   const container = node && isContainerInput(node.type);
   const namedInput = container || node?.type === 'Inlet';
+  const renameOnBlur = (event: FocusEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    if (node && event.currentTarget.value !== node.label) state.renameNode(node.id, event.currentTarget.value);
+  };
   const boundary = node && ['Inlet', 'Outlet'].includes(node.type);
   const unlinkWarning = linkedOwner && node ? valueUnlinkWarning(graph, !state.path.length, node.id) : undefined;
   const tensorOutput = node ? result?.nodes[node.id]?.outputs.out : undefined;
@@ -510,7 +617,7 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
       <div className="panel-heading">
         <SlidersHorizontal size={16} />
         <h2>属性</h2>
-        <span className="tiny-badge">{node ? '模块' : '总览'}</span>
+        <span className="tiny-badge">{edge ? '连线' : node ? '模块' : '总览'}</span>
       </div>
       <div className="inspector-tabs" role="tablist" aria-label="属性面板内容">
         {tabs.map(([key, label], index) => (
@@ -563,6 +670,26 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
               <div className="section-label">尚未打开项目</div>
               <p className="muted">打开或新建项目后，在这里查看模块属性。</p>
             </div>
+          ) : edge ? (
+            <section className="edge-settings" key={edge.id}>
+              <h3>连线与箭头样式</h3>
+              <p><code>{edge.source}.{edge.sourcePort} → {edge.target}.{edge.targetPort}</code></p>
+              <p>当前推导形状 · {shapeText(result?.nodes[edge.source]?.outputs[edge.sourcePort])}</p>
+              <label className="param-field"><span>箭头样式</span>
+                <select value={edge.presentation ?? 'default'} onChange={e =>
+                  state.setEdgePresentation(edge.id, { presentation: e.target.value === 'default' ? null : e.target.value as 'slide' | 'anchor' })}>
+                  <option value="default">默认连线</option><option value="slide">PPT 粗箭头</option>
+                  <option value="anchor">悬停锚点 (● 源胶囊)</option>
+                </select>
+              </label>
+              {edge.presentation === 'anchor' && <p className="muted">悬停源胶囊、选中连线或选中源节点时，显示回溯连线。</p>}
+              <label className="param-field"><span>箭头说明文字</span>
+                <textarea key={edge.annotation ?? ''} defaultValue={edge.annotation ?? ''} maxLength={160} rows={2}
+                  onBlur={e => { if (e.target.value !== (edge.annotation ?? '')) state.setEdgePresentation(edge.id, { annotation: e.target.value }); }} />
+              </label>
+              <button className="soft-button" disabled={edge.labelPosition === undefined}
+                onClick={() => state.setEdgeLabelPosition(edge.id)}>恢复默认标签位置</button>
+            </section>
           ) : node && def ? (
             <>
               <div className="inspector-title">
@@ -575,16 +702,15 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
                     aria-label="模块名称"
                     key={`${node.id}:${node.label}`}
                     defaultValue={node.label}
-                    maxLength={200}
                     rows={2}
-                    onBlur={(event) => state.renameNode(node.id, event.target.value)}
+                    onBlur={renameOnBlur}
                   />
                 ) : (
                   <input
                     aria-label="模块名称"
                     key={`${node.id}:${node.label}`}
                     defaultValue={node.label}
-                    onBlur={(e) => state.renameNode(node.id, e.target.value)}
+                    onBlur={renameOnBlur}
                   />
                 )}
                 <p>{def.description}</p>
@@ -625,6 +751,21 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
                   </button>
                 )}
               </div>
+              {presentationModes.length > 1 && <section className="node-presentation-settings">
+                <div className="section-label">画布样式</div>
+                <div className="presentation-options" role="group" aria-label="画布样式">
+                  {presentationModes.map(mode =>
+                    <button key={mode} type="button" aria-pressed={(node.presentation ?? 'default') === mode}
+                      onClick={() => state.setNodePresentation(node.id, mode)}>
+                      {mode === 'default' ? '标准卡片' : mode === 'compact' ? compactLabel : '内嵌连线'}
+                    </button>)}
+                </div>
+                {embedded && <small>当前内嵌于连线上，可随时展开为画布卡片</small>}
+              </section>}
+              {node.type === 'Submodule' && <SubmoduleStylePanel key={'submodule-' + node.id} node={node} />}
+              {supportsVisualMedia(node) && <NodeVisualMediaPanel key={node.id} node={node} />}
+              {supportsTensorVisual(node) && <TensorVisualPanel key={'tv-' + node.id} node={node}
+                result={result?.nodes[node.id]} graphTones={tones} referenceMaxDim={referenceMaxDim} />}
               {help && (
                 <section className="operation-port-help" aria-label="操作输入与输出说明">
                   <div className="section-label">
@@ -666,23 +807,43 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
                 </p>
               )}
               {canJoinLayoutRegion(node) && <LayoutRegionMembership graph={graph} node={node} />}
-              {isValueNode(node.type) && (
-                <section className="value-link-settings" aria-label="复制规则">
-                  <p className="microcopy">
-                    {node.type === 'LocalParameter'
-                      ? '局部参数默认复制为关联副本，可就近连接。'
-                      : '默认复制为独立节点；多处使用同一数据时直接从原节点连线。'}
-                  </p>
-                  <button
-                    className="soft-button"
-                    aria-label="创建关联副本"
-                    onClick={() => state.duplicateLinked(node.id)}
-                  >
-                    <Link2 size={13} />
-                    创建关联副本
-                  </button>
-                </section>
-              )}
+              {isValueNode(node.type) && (() => {
+                const isModuleInput =
+                  node.type === 'Inlet' ||
+                  (!state.path.length && (node.type === 'Input' || isForwardInput(node.type)));
+                const outgoingCount = storedNode
+                  ? graph.edges.filter((edge) => edge.source === storedNode.id).length
+                  : 0;
+                return (
+                  <section className="value-link-settings" aria-label="复制规则">
+                    <p className="microcopy">
+                      {node.type === 'LocalParameter'
+                        ? '局部参数默认复制为关联副本，可就近连接。'
+                        : isModuleInput
+                          ? '模块输入可拆分为多份同源 IN（左上角标 IN），每份建议仅 1 对 1 连接下游一个模块，不增加外层接口。'
+                          : '默认复制为独立节点；多处使用同一数据时直接从原节点连线。'}
+                    </p>
+                    <button
+                      className="soft-button"
+                      aria-label="创建关联副本"
+                      onClick={() => state.duplicateLinked(storedNode?.id ?? node.id)}
+                    >
+                      <Link2 size={13} />
+                      {isModuleInput ? '复制一份同源 IN' : '创建关联副本'}
+                    </button>
+                    {isModuleInput && storedNode && outgoingCount > 1 && (
+                      <button
+                        className="soft-button"
+                        aria-label="按目标拆分为多份 IN (1对1)"
+                        onClick={() => state.splitInputFanout(storedNode.id)}
+                      >
+                        <Link2 size={13} />
+                        按目标拆分为 {outgoingCount} 份 IN (1对1)
+                      </button>
+                    )}
+                  </section>
+                );
+              })()}
               {linkedOwner && (
                 <section className="value-link-settings" aria-label="值关联">
                   <div className="value-link-heading">
@@ -860,7 +1021,8 @@ export function Inspector({ graph, result }: { graph: Graph; result?: GraphResul
               {isLayoutRegion(node) && <LayoutRegionPanel graph={graph} node={node} />}
               {!container && !isCodeRegion(node) && !isLayoutRegion(node) && (
                 <TensorView
-                  observeInput={node.type === 'SetAttribute'}
+                  node={node} graphTones={tones} referenceMaxDim={referenceMaxDim}
+                  observeInput={node.type === 'SetAttribute' || (['Output', 'Outlet'].includes(node.type) && !Object.keys(result?.nodes[node.id]?.outputs ?? {}).length)}
                   result={result?.nodes[node.id]}
                   outputPorts={
                     node.type === 'TensorSize' ? ports(node, registry).outputs : undefined

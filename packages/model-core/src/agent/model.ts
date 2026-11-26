@@ -1,8 +1,10 @@
-import { fitsProjectFile, MAX_EDGES_PER_GRAPH, MAX_EXPANDED_NODES } from '../core/limits';
+import { fitsProjectFile, shortText, MAX_EDGES_PER_GRAPH, MAX_EXPANDED_NODES } from '../core/limits';
 import { registry } from '../modules/index';
 import { isContainerInput } from '../modules/containers';
 import {
   clone,
+  isIdentifier,
+  ParameterError,
   type Graph,
   type GraphResult,
   type ModelNode,
@@ -15,7 +17,10 @@ import { inferProject } from '../core/engine';
 import { parseProject, serializeProject } from '../core/serialization';
 import { isValueNode, syncValueLinks, valueOwner } from '../core/valueLinks';
 import { linkValueInGraph, removeValueNodes } from '../editing/valueLinkEditing';
-import { identifierPattern } from './catalog';
+import { setNodePresentation, validateNodePresentation } from '../core/nodePresentation';
+import { readNodeSubmoduleVisual, setNodeSubmoduleVisual } from '../core/submoduleVisual';
+import { setNodeTensorVisual, validateTensorVisual } from '../core/tensorVisual';
+import { setNodeMedia, validateVisualMedia, applyEdgePresentation, preserveGeneratedMedia } from '../core/visualMedia';
 import { parseDictionarySchema } from '../core/dictionary';
 import { activeRuntimeSnapshot, parseRuntimeSnapshot } from '../core/runtimeSnapshot';
 import { incompleteNodes } from './draft';
@@ -53,12 +58,12 @@ function keys(v: Record<string, unknown>, allowed: string[]) {
   for (const k of Object.keys(v)) if (!allowed.includes(k)) fail('UNKNOWN_FIELD', `未知字段：${k}`);
 }
 function id(v: unknown): string {
-  if (typeof v !== 'string' || !new RegExp(identifierPattern).test(v))
+  if (!isIdentifier(v))
     fail('INVALID_ID', `无效标识符：${String(v)}`);
   return v;
 }
 function name(v: unknown): string {
-  if (typeof v !== 'string' || !v.trim() || v.length > 200)
+  if (!shortText(v, 200) || !v.trim())
     fail('INVALID_ARGUMENT', '名称必须是 1–200 个字符。');
   return v;
 }
@@ -131,7 +136,7 @@ function params(type: string, value: unknown, path: string[]): Params {
           ? typeof v === 'boolean'
           : f.kind === 'select'
             ? typeof v === 'string' && !!f.options?.includes(v)
-            : typeof v === 'string' && v.length <= (f.maxLength ?? 1999);
+            : shortText(v, f.maxLength ?? 1999);
     if (!valid) fail('INVALID_PARAMETER', `${type}.${k} 的类型、范围或选项无效。`, path, k);
   }
   return p as Params;
@@ -171,7 +176,7 @@ function edge(from: unknown, to: unknown, edgeId: string) {
 function makeNode(value: unknown, path: string[], defaults: DefaultApplied[]): ModelNode {
   if (path.length > 12) fail('LIMIT_EXCEEDED', '子图嵌套不能超过 12 层。', path);
   const v = record(value, 'node');
-  keys(v, ['id', 'type', 'label', 'params', 'subgraph', 'position']);
+  keys(v, ['id', 'type', 'label', 'params', 'subgraph', 'position', 'visualMedia', 'tensorVisual', 'submoduleVisual', 'presentation']);
   const key = id(v.id),
     type = name(v.type),
     at = [...path, key];
@@ -183,6 +188,19 @@ function makeNode(value: unknown, path: string[], defaults: DefaultApplied[]): M
   for (const f of d.fields)
     if (!(f.key in p)) defaults.push({ path: at, parameter: f.key, value: f.default });
   const node = registry.create(type, p, key);
+  if (v.presentation !== undefined) {
+    validateNodePresentation(node, v.presentation);
+    node.presentation = v.presentation;
+  }
+  if (v.submoduleVisual !== undefined) readNodeSubmoduleVisual(node, v.submoduleVisual);
+  if (v.tensorVisual !== undefined) {
+    validateTensorVisual(node, v.tensorVisual);
+    node.tensorVisual = clone(v.tensorVisual);
+  }
+  if (v.visualMedia !== undefined) {
+    validateVisualMedia(node, v.visualMedia);
+    node.visualMedia = clone(v.visualMedia);
+  }
   if (v.position !== undefined) node.position = position(v.position);
   if (v.label !== undefined) node.label = name(v.label);
   if (v.subgraph !== undefined) {
@@ -239,12 +257,13 @@ const empty = (): ModelResponse => ({
 function errorResponse(e: unknown, mode: ModelResponse['mode'] = 'strict'): ModelResponse {
   const r = empty();
   r.mode = mode;
+  const issue = e instanceof AgentError || e instanceof ParameterError ? e : undefined;
   r.diagnostics.push({
-    code: e instanceof AgentError ? e.code : 'STRUCTURE_ERROR',
+    code: issue?.code ?? 'STRUCTURE_ERROR',
     severity: 'error',
-    path: e instanceof AgentError ? e.path : [],
+    path: issue?.path ?? [],
     message: e instanceof Error ? e.message : String(e),
-    ...(e instanceof AgentError && e.parameter ? { parameter: e.parameter } : {}),
+    ...(issue?.parameter ? { parameter: issue.parameter } : {}),
   });
   return r;
 }
@@ -277,7 +296,7 @@ function inspect(project: Project, settings: ValidationOptions): ModelResponse {
       if (r.status !== 'ok')
         for (const message of r.messages)
           response.diagnostics.push({
-            code: incomplete.has(n.id)
+            code: r.invalidParameter ? 'INVALID_PARAMETER' : incomplete.has(n.id)
               ? 'INCOMPLETE_NODE'
               : r.status === 'blocked'
                 ? 'UPSTREAM_BLOCKED'
@@ -287,6 +306,7 @@ function inspect(project: Project, settings: ValidationOptions): ModelResponse {
             severity,
             path: at,
             message,
+            ...(r.invalidParameter && { parameter: r.invalidParameter }),
           });
       if (n.subgraph && r.child) walk(n.subgraph, r.child, at);
       if (!path.length && n.type === 'Output' && !n.valueSource && r.inputs.in)
@@ -402,6 +422,11 @@ export function patchModel(
       assign_region: ['ids', 'region'],
       fit_region: ['id'],
       resize_region: ['id', 'position', 'width', 'height'],
+      set_node_presentation: ['id', 'presentation'],
+      set_node_submodule_visual: ['id', 'visual'],
+      set_node_tensor_visual: ['id', 'visual'],
+      set_node_media: ['id', 'media'],
+      set_edge_presentation: ['from', 'to', 'annotation', 'presentation'],
       set_tensor_border: ['id', 'color'],
       set_lineage_enabled: ['enabled'],
       set_information_source: ['id', 'source'],
@@ -467,6 +492,9 @@ export function patchModel(
         const owner = valueOwner(g, source);
         const copy = { ...clone(source), id: newId, valueSource: owner.id,
           position: op.position === undefined ? { x: source.position.x + 48, y: source.position.y + 48 } : position(op.position) };
+        delete copy.presentation;
+        delete copy.visualMedia;
+        delete copy.tensorVisual;
         g.nodes.push(copy);
         const key = JSON.stringify(path);
         if (opts.layout === 'auto') layouts.set(key, path);
@@ -526,10 +554,19 @@ export function patchModel(
         const def = registry.get(node.type)!;
         if (def.build) {
           const generated = def.build(node.params);
+          if (node.subgraph) preserveGeneratedMedia(node.subgraph, generated);
           if (opts.layout === 'preserve' && node.subgraph)
             preserveGeneratedLayout(node.subgraph, generated);
           node.subgraph = generated;
         }
+      } else if (op.op === 'set_node_presentation') {
+        setNodePresentation(find(), op.presentation);
+      } else if (op.op === 'set_node_submodule_visual') {
+        setNodeSubmoduleVisual(find(), op.visual);
+      } else if (op.op === 'set_node_tensor_visual') {
+        setNodeTensorVisual(find(), op.visual);
+      } else if (op.op === 'set_node_media') {
+        setNodeMedia(find(), op.media);
       } else if (op.op === 'set_tensor_border') {
         const node = find();
         if (op.color !== null && !isHexColor(op.color))
@@ -559,22 +596,27 @@ export function patchModel(
             op.width < 360 || op.height < 200 || op.width > 1000000 || op.height > 1000000)
           fail('INVALID_ARGUMENT', '分区宽度需要 360-1000000，高度需要 200-1000000。');
         resizeLayoutRegion(g, node.id, { ...(op.position === undefined ? node.position : position(op.position)), width: op.width, height: op.height });
-      } else if (op.op === 'connect' || op.op === 'disconnect') {
-        let i = 0;
-        while (g.edges.some((e) => e.id === `edge_${i}`)) i++;
-        const e = edge(op.from, op.to, `edge_${i}`);
+      } else if (op.op === 'connect' || op.op === 'disconnect' || op.op === 'set_edge_presentation') {
+        const e = edge(op.from, op.to, '');
         const matches = (old: typeof e) =>
           old.source === e.source &&
           old.sourcePort === e.sourcePort &&
           old.target === e.target &&
           old.targetPort === e.targetPort;
-        if (op.op === 'connect') g.edges.push(e);
-        else {
-          if (!g.edges.some(matches)) fail('UNKNOWN_CONNECTION', '要断开的连接不存在。', path);
-          g.edges = g.edges.filter((old) => !matches(old));
+        if (op.op === 'connect') {
+          const ids = new Set(g.edges.map(old => old.id));
+          let i = 0;
+          while (ids.has(`edge_${i}`)) i++;
+          e.id = `edge_${i}`;
+          g.edges.push(e);
+        } else {
+          const existing = g.edges.find(matches);
+          if (!existing) fail('UNKNOWN_CONNECTION', op.op === 'disconnect' ? '要断开的连接不存在。' : '指定的连接不存在。', path);
+          if (op.op === 'set_edge_presentation') applyEdgePresentation(existing, op.annotation, op.presentation);
+          else g.edges = g.edges.filter((old) => !matches(old));
         }
       } else if (op.op === 'layout') layouts.set(JSON.stringify(path), path);
-      if (!layoutOnly && !['rename_node', 'layout', 'set_position', 'set_tensor_border', 'set_information_source', 'assign_region', 'fit_region', 'resize_region'].includes(op.op))
+      if (!layoutOnly && !['rename_node', 'layout', 'set_position', 'set_node_media', 'set_node_presentation', 'set_node_tensor_visual', 'set_node_submodule_visual', 'set_edge_presentation', 'set_tensor_border', 'set_information_source', 'assign_region', 'fit_region', 'resize_region'].includes(op.op))
         markAncestors(project.graph, path);
       if (countNodes(project.graph) > MAX_EXPANDED_NODES) fail('LIMIT_EXCEEDED', `展开后的节点数不能超过 ${MAX_EXPANDED_NODES}。`);
     }

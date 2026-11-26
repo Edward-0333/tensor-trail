@@ -1,3 +1,4 @@
+import { shortText } from './limits';
 import type { Graph, ModelNode } from './types';
 import { ifRegionMembers, isCodeRegion } from './ifRegions';
 import { isValueNode } from './valueLinks';
@@ -54,14 +55,14 @@ export function checkLayoutRegion(node: ModelNode): void {
       throw Error('分区宽度至少 360，高度至少 200，最大为 1000000。');
   }
   if (!/^#[0-9a-f]{6}$/i.test(String(node.params.color))) throw Error('分区颜色需要 #RRGGBB。');
-  if (node.params.note !== undefined && (typeof node.params.note !== 'string' || node.params.note.length > 240))
+  if (node.params.note !== undefined && !shortText(node.params.note, 240))
     throw Error('分区注释需要不超过 240 字符的文本。');
   if (node.params.outputs !== undefined && typeof node.params.outputs !== 'string')
     throw Error('分区输出需要以逗号分隔的节点 ID 文本。');
   if (node.params.importance !== undefined && (typeof node.params.importance !== 'number'
     || !Number.isInteger(node.params.importance) || node.params.importance < 0 || node.params.importance > 5))
     throw Error('分区重要性需要 1-5 的整数；0 表示未评级，仅在当前层级比较。');
-  if (node.params.importance_note !== undefined && (typeof node.params.importance_note !== 'string' || node.params.importance_note.length > 240))
+  if (node.params.importance_note !== undefined && !shortText(node.params.importance_note, 240))
     throw Error('评级依据需要不超过 240 字符的文本。');
   layoutRegionMembers(node);
   layoutRegionOutputs(node);
@@ -238,19 +239,23 @@ export function resizeLayoutRegion(graph: Graph, id: string, requested: RegionRe
   checkLayoutRegion(region);
 }
 
+/** Tight auto bounds for either the canonical members or a visible canvas projection. */
+export function fittedLayoutRegionRect(graph: Graph, region: ModelNode, sizes: NodeSizes = {}): RegionRect {
+  const ids = new Set(layoutRegionMembers(region));
+  const members = graph.nodes.filter(n => ids.has(n.id));
+  if (!members.length) return layoutRegionRect(graph, region, sizes);
+  const position = {
+    x: Math.min(...members.map(n => n.position.x)) - REGION_PADDING,
+    y: Math.min(...members.map(n => n.position.y)) - REGION_HEADER,
+  };
+  return layoutRegionRect(graph, { ...region, position,
+    params: { ...region.params, sizing: 'auto', width: 360, height: 200 } }, sizes);
+}
+
 export function fitLayoutRegion(graph: Graph, id: string, sizes: NodeSizes = {}): void {
   const region = graph.nodes.find(n => n.id === id && isLayoutRegion(n));
   if (!region) throw Error('布局分区不存在。');
-  const ids = new Set(layoutRegionMembers(region)), members = graph.nodes.filter(n => ids.has(n.id));
-  if (members.length) {
-    region.position = {
-      x: Math.min(...members.map(n => n.position.x)) - REGION_PADDING,
-      y: Math.min(...members.map(n => n.position.y)) - REGION_HEADER,
-    };
-    // Explicit fit tightens the frame; ordinary member drags only expand it.
-    region.params.width = 360; region.params.height = 200;
-  }
-  region.params.sizing = 'auto';
-  const rect = layoutRegionRect(graph, region, sizes);
-  region.params.width = rect.width; region.params.height = rect.height;
+  const { x, y, width, height } = fittedLayoutRegionRect(graph, region, sizes);
+  region.position = { x, y };
+  Object.assign(region.params, { sizing: 'auto', width, height });
 }

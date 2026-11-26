@@ -1,3 +1,4 @@
+import { shortText } from '../core/limits';
 import type {
   ModuleDefinition,
   ModelNode,
@@ -41,7 +42,7 @@ function codePorts(p: Params) {
   return { inputs, outputs: output };
 }
 function dictionaryKeys(p: Params): string[] {
-  requireThat(typeof p.keys === 'string' && p.keys.length <= 2000, '字段名需要短文本。');
+  requireThat(shortText(p.keys, 1999), '字段名需要短文本。');
   const keys = p.keys.split(',').map((k) => k.trim());
   requireThat(
     keys.length >= 1 && keys.length <= 32 && new Set(keys).size === keys.length,

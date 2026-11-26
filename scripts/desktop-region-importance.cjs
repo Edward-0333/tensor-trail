@@ -57,7 +57,7 @@ async function run(){
       await js(`document.querySelector('button[aria-label="${theme==='light'?'切换浅色主题':'切换深色主题'}"]').click()`);
     await wait(200);fs.writeFileSync(path.join(directory,`${theme}.png`),(await web.capturePage()).toPNG());
   }
-  await js(`Array.from(document.querySelectorAll('${node('block')} button')).find(b=>b.textContent.includes('进入')).click()`);
+  await js(`document.querySelector('${node('block')} button[aria-label="进入 forward()"]').click()`);
   await until(()=>badge('child-region',0),'child starts ungraded');await select('child-region');await rating(2);
   // A minimum-width region keeps its title, stars and count within its header.
   const bounds=await js(`(()=>{const h=document.querySelector('${node('child-region')} .layout-region-heading').getBoundingClientRect();

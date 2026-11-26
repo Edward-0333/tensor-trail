@@ -1,3 +1,4 @@
+import { shortText } from '../core/limits';
 import type { ModelNode, ModuleDefinition, ModuleSpec, TensorSpec } from '../core/types';
 import { clone, isModuleSpec, isTensorSpec, tensorValue } from '../core/types';
 import { checkDictionaryKey, parseDictionarySchema } from '../core/dictionary';
@@ -15,7 +16,7 @@ export function parameterName(value: unknown): string {
 
 export function moduleReferenceName(value: unknown): string {
   requireThat(
-    typeof value === 'string' && value.length <= 256,
+    shortText(value, 256),
     '模块引用需要不超过 256 字符的属性路径。',
   );
   value.split('.').forEach(parameterName);
@@ -63,13 +64,11 @@ export const moduleReferenceModules: ModuleDefinition[] = [
     inferValue: (_, p) => {
       const reference = moduleReferenceName(p.reference);
       requireThat(
-        typeof p.module_type === 'string' &&
-          p.module_type.trim().length > 0 &&
-          p.module_type.length <= 128,
+        shortText(p.module_type, 128) && p.module_type.trim().length > 0,
         '请填写模块类型。',
       );
       requireThat(
-        typeof p.parameters === 'string' && p.parameters.length <= 16000,
+        shortText(p.parameters, 16000),
         '参数表需要不超过 16000 字符的 JSON 文本。',
       );
       const schema = parseDictionarySchema(p.parameters);

@@ -1,3 +1,4 @@
+import { shortText } from '../core/limits';
 import type { ModuleDefinition, TensorSpec, Params, Hyperparameters } from '../core/types';
 import { resolveIntegerExpression } from '../core/hyperparameters';
 import { axisIndex, requireThat, tensor } from './math';
@@ -24,7 +25,7 @@ function bound(value: unknown): string {
   return value;
 }
 export function parseCalculations(value: unknown): Calculation[] {
-  requireThat(typeof value === 'string' && value.length < 2000, '计算步骤必须为短 JSON 文本。');
+  requireThat(shortText(value, 1999), '计算步骤必须为短 JSON 文本。');
   const ops: unknown = JSON.parse(value);
   requireThat(
     Array.isArray(ops) && ops.length > 0 && ops.length <= 16,

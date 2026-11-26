@@ -29,6 +29,18 @@ beforeEach(() => {
 });
 
 describe('编辑与文件序列化事务', () => {
+  it.each([
+    ['A' + '𠮷'.repeat(100), 'A' + '𠮷'.repeat(100)],
+    ['A' + '𠮷'.repeat(200), 'A' + '𠮷'.repeat(199)],
+  ])('项目名和节点名按完整码点保存并可重新加载 %#', (input, expected) => {
+    const { renameNode, renameProject } = useEditor.getState();
+    renameNode('input', input);
+    renameProject(input);
+    const restored = projectSnapshot();
+    expect(restored.name).toBe(expected);
+    expect(restored.graph.nodes.find(n => n.id === 'input')!.label).toBe(expected);
+  });
+
   it('容器输入支持文字、背景、端口布局及撤销重做，JSON 可恢复', () => {
     useEditor.getState().newProject();
     useEditor.getState().add('DictInput', undefined, { x: 80, y: 100 });

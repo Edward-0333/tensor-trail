@@ -116,6 +116,7 @@ describe('逐元素运算与掩码维度对齐', () => {
   ])('数值 Tensor 类型提升 %s 与 %s → %s', (a, b, expected) => {
     const inputs = { a: spec([2], a), b: spec([2], b) };
     expect(out('Subtract', inputs).dtype).toBe(expected);
+    expect(out('Maximum', inputs).dtype).toBe(expected);
     expect(out('Where', { condition: spec([2], 'bool'), x: inputs.a, y: inputs.b }).dtype).toBe(
       expected,
     );
@@ -132,6 +133,8 @@ describe('逐元素运算与掩码维度对齐', () => {
       b = spec([2], dimensioned);
     expect(out('Subtract', { a, b }).dtype).toBe(expected);
     expect(out('Subtract', { a: b, b: a }).dtype).toBe(expected);
+    expect(out('Maximum', { a, b }).dtype).toBe(expected);
+    expect(out('Maximum', { a: b, b: a }).dtype).toBe(expected);
     expect(out('Where', { condition: spec([2], 'bool'), x: a, y: b }).dtype).toBe(expected);
   });
 
@@ -169,15 +172,49 @@ describe('逐元素运算与掩码维度对齐', () => {
     'bfloat16',
     'float32',
     'float64',
-  ])('ZerosLike 保持 %s 的形状/类型并且不修改输入', (dtype) => {
-    for (const shape of [[], [2, 0, 4], ['B', 'T']] as Dim[][]) {
-      const source = spec(shape, dtype),
-        before = structuredClone(source);
-      const result = out('ZerosLike', { in: source });
-      expect(result).toEqual({ ...source, autograd: { requiresGrad: false, source: 'inferred' } });
-      expect(result.shape).not.toBe(source.shape);
-      expect(result.axes).not.toBe(source.axes);
-      expect(source).toEqual(before);
+  ])('同形工厂与 Maximum 支持 %s 的标量、向量和高维张量', (dtype) => {
+    for (const shape of [[], [4], [2, 0, 4], ['B', 6, 0, 4], ['B', 'T']] as Dim[][]) {
+      const source = spec(shape, dtype);
+      const registered = { ...source, bufferRef: { reference: 'self.coords', persistent: true },
+        autograd: { requiresGrad: false, source: 'manual' as const } };
+      const before = structuredClone(registered);
+      for (const type of ['ZerosLike', 'OnesLike']) {
+        const result = out(type, { in: registered });
+        expect(result).toEqual({ ...source, autograd: { requiresGrad: false, source: 'inferred' } });
+        expect(result.shape).not.toBe(source.shape);
+        expect(result.axes).not.toBe(source.axes);
+      }
+      const max = out('Maximum', { a: registered, b: spec([], dtype) });
+      expect(max).toEqual(source);
+      expect(max.shape).not.toBe(source.shape);
+      expect(registered).toEqual(before);
+    }
+  });
+
+  it('Maximum 从末轴广播，区分相同符号、待验证约束与已知不匹配', () => {
+    const a = spec(['B', 1, 12, 1], 'float16');
+    const b = spec(['B', 6, 1, 4], 'bfloat16');
+    expect(infer('Maximum', { a, b })).toMatchObject({
+      outputs: { out: { shape: ['B', 6, 12, 4], dtype: 'float32' } }, warnings: [],
+    });
+    expect(infer('Maximum', { a, b: spec(['N', 6, 1, 4]) }).warnings?.join(' ')).toContain('B = N');
+    expect(() => out('Maximum', { a, b: spec([7, 4]) })).toThrow('不匹配');
+    expect(out('Maximum', { a: spec([0], 'bool'), b: spec([1], 'int8') })).toMatchObject({ shape: [0], dtype: 'int8' });
+  });
+
+  it.each(['Maximum', 'Subtract'])('%s preserves the sole real leading singleton axis in either input order', type => {
+    const long = { ...spec([1, 4]), axes: ['batch', 'width'] };
+    const short = { ...spec([4]), axes: ['width'] };
+    for (const [a, b] of [[long, short], [short, long]])
+      expect(out(type, { a, b })).toMatchObject({ shape: [1, 4], axes: ['batch', 'width'] });
+  });
+
+  it.each([0, 1, 4])('broadcasts [D] and [%s] consistently in either order', size => {
+    const symbol = spec(['D']), known = spec([size]);
+    for (const [a, b] of [[symbol, known], [known, symbol]]) {
+      const result = infer('Maximum', { a, b });
+      expect(result.outputs.out.shape).toEqual([size === 1 ? 'D' : size]);
+      expect(result.warnings).toEqual(size === 1 ? [] : [expect.stringContaining(`D 为 1 或 ${size}`)]);
     }
   });
 
@@ -186,8 +223,24 @@ describe('逐元素运算与掩码维度对齐', () => {
     expect(result.warnings?.join(' ')).toContain('符号维度尚待验证');
   });
 
+  it.each(['Maximum', 'Subtract'])('%s gives distinct symbols the same broadcast result and constraint in either order', type => {
+    const depth = { ...spec(['D']), axes: ['depth'] };
+    const count = { ...spec(['N']), axes: ['count'] };
+    const result = infer(type, { a: depth, b: count });
+    expect(infer(type, { a: count, b: depth })).toEqual(result);
+    expect(result).toMatchObject({
+      outputs: { out: { shape: ['broadcast(D, N)'], axes: ['depth'] } },
+      warnings: [expect.stringContaining('D = N 或其中一维为 1')],
+    });
+    for (const [d, n, size] of [[1, 4, 4], [4, 1, 4], [0, 1, 0], [1, 0, 0], [4, 4, 4]])
+      expect(out(type, { a: spec([d]), b: spec([n]) }).shape).toEqual([size]);
+  });
+
   it.each(['complex64', 'qint8', 'float128'])('拒绝未支持的 dtype=%s', (dtype) => {
     expect(() => out('ZerosLike', { in: spec([2], dtype) })).toThrow('暂不支持 dtype');
+    expect(() => out('OnesLike', { in: spec([2], dtype) })).toThrow('暂不支持 dtype');
+    for (const port of ['a', 'b'])
+      expect(() => out('Maximum', { a: spec([2]), b: spec([2]), [port]: spec([2], dtype) })).toThrow('暂不支持 dtype');
     expect(() => out('Subtract', { a: spec([2], dtype), b: spec([2]) })).toThrow('暂不支持 dtype');
   });
 });

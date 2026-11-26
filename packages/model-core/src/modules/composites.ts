@@ -1,4 +1,4 @@
-import type { Graph, Params, TensorSpec } from '../core/types';
+import type { Dim, Graph, Params, TensorSpec } from '../core/types';
 import type { ModuleRegistry } from './registry';
 import { bool, input, num, output, select } from './primitives';
 import { floating, rank, requireThat, same } from './math';
@@ -151,23 +151,32 @@ export function installComposites(registry: ModuleRegistry) {
       }
       requireThat(q.dtype === k.dtype && q.dtype === v.dtype, 'Q/K/V 的 dtype 必须一致。');
       const warnings: string[] = [];
-      same(q.shape[0], k.shape[0], 'Q 与 K 的 batch 必须相同', warnings);
-      same(q.shape[0], v.shape[0], 'Q 与 V 的 batch 必须相同', warnings);
-      same(k.shape[1], v.shape[1], 'K 与 V 的序列长度必须相同', warnings);
-      same(q.shape[2], Number(p.d_model), 'Q 输入特征需要匹配 d_model', warnings);
-      same(
-        k.shape[2],
-        Number(p.kdim) || Number(p.d_model),
-        'K 输入特征需要匹配 kdim（0 表示 d_model）',
+      const bindings = new Map<string, Dim>();
+      const resolve = (dim: Dim): Dim => {
+        while (typeof dim === 'string' && bindings.has(dim)) dim = bindings.get(dim)!;
+        return dim;
+      };
+      const equate = (left: Dim, right: Dim, reason: string) => {
+        same(left, right, reason, warnings);
+        const a = resolve(left), b = resolve(right);
+        if (a === b) return;
+        if (typeof b === 'string') bindings.set(b, a);
+        else {
+          requireThat(typeof a === 'string', `${reason}（${left} = ${right} 要求 ${a} = ${b}，尺寸约束矛盾）。`);
+          bindings.set(a, b);
+        }
+      };
+      equate(q.shape[0], k.shape[0], 'Q 与 K 的 batch 必须相同');
+      equate(q.shape[0], v.shape[0], 'Q 与 V 的 batch 必须相同');
+      equate(k.shape[1], v.shape[1], 'K 与 V 的序列长度必须相同');
+      equate(q.shape[2], Number(p.d_model), 'Q 输入特征需要匹配 d_model');
+      equate(k.shape[2], Number(p.kdim) || Number(p.d_model), 'K 输入特征需要匹配 kdim（0 表示 d_model）');
+      equate(v.shape[2], Number(p.vdim) || Number(p.d_model), 'V 输入特征需要匹配 vdim（0 表示 d_model）');
+      return {
         warnings,
-      );
-      same(
-        v.shape[2],
-        Number(p.vdim) || Number(p.d_model),
-        'V 输入特征需要匹配 vdim（0 表示 d_model）',
-        warnings,
-      );
-      return warnings;
+        subgraphInputs: Object.fromEntries(Object.entries(inputs).map(([port, x]) =>
+          [port, { ...x, shape: x.shape.map(resolve) }])),
+      };
     },
     build: (p) => buildAttention(registry, p, true),
   });

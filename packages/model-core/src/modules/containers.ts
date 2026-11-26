@@ -1,3 +1,4 @@
+import { shortText } from '../core/limits';
 import type { ModuleDefinition } from '../core/types';
 import { requireThat } from './math';
 import { text } from './primitives';
@@ -46,7 +47,7 @@ export const containerInputs: ModuleDefinition[] = [
     ],
     inferValue: (_, params) => {
       const remark = params.text ?? '';
-      requireThat(typeof remark === 'string' && remark.length < 2000, '备注最多 1999 个字符。');
+      requireThat(shortText(remark, 1999), '备注最多 1999 个字符。');
       if (params.schema !== undefined && params.schema !== '')
         return {
           outputs: { out: parseDictionarySchema(params.schema) },

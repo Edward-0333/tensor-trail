@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
+import Ajv2020 from 'ajv/dist/2020';
 import { describe, expect, it } from 'vitest';
-import { buildModel, validateModel } from '../src/agent';
+import { buildModel, describeModules, validateModel } from '../src/agent';
+import type { Recipe } from '../src/agent/types';
 import { inferProject } from '../src/core/engine';
 import { ports } from '../src/core/graph';
 import { parseProject, serializeProject } from '../src/core/serialization';
@@ -18,6 +20,53 @@ function infer(params: Params = {}, values: Record<string, ValueSpec> = { x }) {
 }
 
 describe('SemanticOp', () => {
+  it.each(['summary', 'formula', 'output_specs'])('counts Unicode code points in %s across schema, draft, inference and reload', field => {
+    const schema = describeModules().modules.find(m => m.type === 'SemanticOp')!.paramsSchema;
+    const accepts = new Ajv2020().compile(schema);
+    const limit = field === 'output_specs' ? 4000 : 240;
+    const spec = (axis: string) => JSON.stringify({ out: { shape: '1', axes: axis } });
+    for (const count of [Math.floor(limit / 2) + 1, limit, limit + 1]) {
+      const text = field === 'output_specs'
+        ? spec('𠮷'.repeat(count - spec('').length))
+        : '𠮷'.repeat(count);
+      const params = { [field]: text };
+      const valid = count <= limit;
+      expect(accepts(params)).toBe(valid);
+      if (valid) expect(() => infer(params)).not.toThrow();
+      else expect(() => infer(params)).toThrow();
+      for (const mode of ['draft', 'strict'] as const) {
+        const recipe: Recipe = {
+          name: 'Unicode limits',
+          nodes: [{ id: 'x', type: 'Input' }, { id: 's', type: 'SemanticOp' }, { id: 'out', type: 'Output' }],
+          connections: mode === 'draft' ? [] : [['x.out', 's.x'], ['s.out', 'out.in']],
+        };
+        const project = buildModel(recipe, { mode }).project!;
+        project.graph.nodes.find(n => n.id === 's')!.params[field] = text;
+        if (mode === 'strict') {
+          const node = inferProject(project, registry).nodes.s;
+          if (valid) expect(node.outputs.out).toHaveProperty('shape');
+          else expect(node).toMatchObject({ status: 'error', invalidParameter: field });
+        }
+        recipe.nodes[1].params = params;
+        for (const result of [buildModel(recipe, { mode }), validateModel(project, { mode })]) {
+          expect(result.ok).toBe(valid);
+          if (valid) {
+            const node = result.nodes.find(n => n.path[0] === 's')!;
+            if (mode === 'draft') expect(node).toMatchObject({ status: 'incomplete', outputs: {} });
+            else expect(node.outputs.out).toHaveProperty('shape');
+          } else {
+            expect(result.diagnostics).toEqual([expect.objectContaining({
+              code: 'INVALID_PARAMETER', path: ['s'], parameter: field,
+            })]);
+          }
+        }
+        const reload = () => parseProject(serializeProject(project), registry);
+        if (valid) expect(reload()).toEqual(project);
+        else expect(reload).toThrow(field);
+      }
+    }
+  });
+
   it('inherits from the first declared Tensor after arbitrary Python values and retains only its tensor contract', () => {
     const result = infer(
       { inputs: 'meta, steps, x, later', summary: '读取特征', formula: 'features(x)' },

@@ -1,3 +1,4 @@
+import { shortText } from '../core/limits';
 import type { Dim, ModuleDefinition, Params, TensorSpec } from '../core/types';
 import { tensorValue } from '../core/types';
 import { resultDtype } from './elementwise';
@@ -133,7 +134,7 @@ export const joiningModules: ModuleDefinition[] = [
       const inputs = readInputs(values, params),
         dim = dimension(params);
       const axisName = params.axis_name ?? '';
-      requireThat(typeof axisName === 'string' && axisName.length <= 128, '拼接轴含义需要短文本。');
+      requireThat(shortText(axisName, 128), '拼接轴含义需要短文本。');
       requireThat(
         inputs.every((value) => value.shape.length > 0),
         'Cat 不能拼接零维 Tensor，请使用 Stack。',

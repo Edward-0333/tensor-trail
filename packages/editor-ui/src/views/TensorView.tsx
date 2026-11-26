@@ -1,5 +1,7 @@
 import { useState } from 'react';
-import type { NodeResult, TensorSpec, Port } from '@tensor-trail/model-core/core/types';
+import { buildTensorBlockDiagram, buildTensorGeometryDiagram, type GraphTensorTones } from '@tensor-trail/model-core/core/tensorGeometry';
+import { TensorGeometryView } from './TensorGeometryView';
+import type { ModelNode, NodeResult, TensorSpec, Port } from '@tensor-trail/model-core/core/types';
 import { isDictionarySpec, isTensorSpec, isIntegerSpec, isIntegerListSpec, isControlSpec, isSizeSpec, isTensorSequenceSpec, isModuleSpec, isDeviceSpec } from '@tensor-trail/model-core/core/types';
 import { literalDeviceName } from '@tensor-trail/model-core/modules/device';
 import { DictionaryTree } from './DictionaryTree';
@@ -28,13 +30,22 @@ export function TensorAxes({ spec }: { spec: TensorSpec }) {
   );
 }
 
-export function TensorView({ result, outputPorts, observeInput = false }: { result?: NodeResult; outputPorts?: Port[]; observeInput?: boolean }) {
+export function TensorView({ result, outputPorts, observeInput = false, node, graphTones, referenceMaxDim }: {
+  result?: NodeResult; outputPorts?: Port[]; observeInput?: boolean;
+  node?: ModelNode; graphTones?: GraphTensorTones; referenceMaxDim?: number;
+}) {
   const [chosen, setChosen] = useState('out');
   if (!result) return <p className="muted">连接输入后，在这里查看 Tensor。</p>;
   const values = observeInput ? result.inputs : result.outputs;
   const entries = Object.entries(values);
   const port = entries.some(([key]) => key === chosen) ? chosen : entries[0]?.[0];
   const spec = values[port];
+  const diagram = spec && isTensorSpec(spec) && (node && graphTones
+    ? buildTensorGeometryDiagram(node, result, graphTones, {
+        ...node.tensorVisual, mode: 'block',
+        outputPort: port, observeInput, referenceMaxDim,
+      })
+    : buildTensorBlockDiagram(spec, port, undefined, { observeInput, referenceMaxDim }));
   return (
     <section className="tensor-inspector">
       <div className="section-label">
@@ -57,6 +68,7 @@ export function TensorView({ result, outputPorts, observeInput = false }: { resu
           ))}
         </div>
       )}
+      {diagram && <TensorGeometryView key={JSON.stringify([node?.id, port])} diagram={diagram} variant="inspector" />}
       {spec && (isIntegerListSpec(spec) || isControlSpec(spec)) ? (
         <><code>{valueDisplayText(spec)}</code><p className="microcopy">{isControlSpec(spec)
           ? '条件控制依赖，不是 Tensor 或观测到的布尔值。两条分支仅静态检查，不表示已执行或同时执行。'

@@ -1,3 +1,4 @@
+import { shortText } from '../core/limits';
 import type { Dim, ModelNode, ModuleDefinition, Params, ValueSpec, Inference } from '../core/types';
 import { isIntegerSpec, tensorValue } from '../core/types';
 import { axisIndex, product, requireThat, tensor } from './math';
@@ -52,7 +53,7 @@ export const mapOps: ModuleDefinition[] = [
     getPorts: repeatsPorts,
     inferValue: (values, p) => {
       const x = tensorValue(values.in);
-      requireThat(typeof p.repeats === 'string' && p.repeats.length <= 256, '重复次数需要短文本。');
+      requireThat(shortText(p.repeats, 256), '重复次数需要短文本。');
       const tokens = p.repeats.split(',').map((s) => s.trim());
       requireThat(
         tokens.length >= x.shape.length && tokens.length >= 1 && tokens.length <= 8,

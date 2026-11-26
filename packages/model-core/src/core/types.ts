@@ -155,6 +155,7 @@ export interface Hyperparameter {
 export type Hyperparameters = Record<string, Hyperparameter>;
 export interface InferenceContext {
   hyperparameters: Hyperparameters;
+  runtimeGradMode?: 'grad' | 'no_grad' | 'inference_mode';
 }
 export type PortSide = 'left' | 'right' | 'top' | 'bottom';
 export interface PortLayout {
@@ -184,7 +185,57 @@ export interface Field {
   help?: string;
   maxLength?: number;
 }
+export const identifierPattern = '^(?!__proto__$|constructor$|prototype$)[A-Za-z0-9_-]{1,100}$';
+const identifier = new RegExp(identifierPattern);
+export const isIdentifier = (value: unknown): value is string => typeof value === 'string' && identifier.test(value);
+
+export interface NodeVisualImage {
+  id: string;
+  src: string;
+  caption?: string;
+  badge?: string;
+  emphasis?: 'normal' | 'highlight' | 'dim';
+}
+export interface NodeVisualMedia {
+  layout?: 'auto' | 'row' | 'grid' | 'column';
+  tileWidth?: number;
+  items: NodeVisualImage[];
+}
+export type TensorVisualMode = 'off' | 'block';
+export type TensorVisualTone = 'auto' | 'blue' | 'violet' | 'teal' | 'amber' | 'rose' | 'slate';
+export type TensorDepthStyle = 'auto' | 'solid' | 'slices';
+export type SubmoduleIcon = 'auto' | 'backbone' | 'attention' | 'cross_attention' | 'mlp' | 'projection' | 'encoder' | 'decoder' | 'head' | 'module';
+export interface NodeSubmoduleVisual {
+  icon?: SubmoduleIcon;
+  tone?: TensorVisualTone;
+  summary?: string;
+}
+export interface NodeTensorVisual {
+  mode: TensorVisualMode;
+  tone?: TensorVisualTone;
+  /** Custom #RRGGBB base for front, top, side and stroke colors. */
+  color?: string;
+  /** Rendering of dim -3. Auto uses slices for small depths and depth joins. */
+  depthStyle?: TensorDepthStyle;
+  /** Card width in pixels (140..420). */
+  width?: number;
+  /** Face width (16..160 px) and height (12..120 px) override the graph scale. */
+  boxWidth?: number;
+  boxHeight?: number;
+  /** Extrusion or total slice stack depth (6..72 px). */
+  boxDepth?: number;
+  /** Display names in shape order, independent of inferred axes. */
+  axisLabels?: string[];
+  caption?: string;
+}
+
+export type NodePresentation = 'default' | 'compact' | 'edge';
+
 export interface ModelNode {
+  presentation?: NodePresentation;
+  submoduleVisual?: NodeSubmoduleVisual;
+  tensorVisual?: NodeTensorVisual;
+  visualMedia?: NodeVisualMedia;
   id: string;
   type: string;
   definitionVersion: 1;
@@ -211,6 +262,8 @@ export interface ModelNode {
   customized?: boolean;
 }
 export interface ModelEdge {
+  annotation?: string;
+  presentation?: 'default' | 'slide' | 'anchor';
   id: string;
   source: string;
   sourcePort: string;
@@ -253,12 +306,22 @@ export interface ModuleDefinition {
     context?: InferenceContext,
   ) => Inference<ValueSpec>;
   build?: (params: Params) => Graph;
-  validate?: (inputs: Record<string, TensorSpec>, params: Params) => string[];
+  /** A composite may also pass its solved input dimensions to its child inlets. */
+  validate?: (inputs: Record<string, TensorSpec>, params: Params) =>
+    string[] | { warnings: string[]; subgraphInputs: Record<string, TensorSpec> };
 }
 export interface Registry {
   get(type: string): ModuleDefinition | undefined;
 }
+export class ParameterError extends Error {
+  readonly code = 'INVALID_PARAMETER';
+  constructor(readonly parameter: string, message: string, readonly path: string[] = []) {
+    super(message);
+  }
+}
+
 export interface NodeResult {
+  invalidParameter?: string;
   status: 'ok' | 'warning' | 'error' | 'blocked';
   inputs: Record<string, ValueSpec>;
   outputs: Record<string, ValueSpec>;

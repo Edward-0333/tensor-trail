@@ -1,7 +1,8 @@
-import { MAX_NODE_VISITS } from './limits';
+import { MAX_NODE_VISITS, shortText } from './limits';
 import type {
   Graph,
   GraphResult,
+  InferenceContext,
   NodeResult,
   Registry,
   TensorSpec,
@@ -10,10 +11,10 @@ import type {
   Project,
   RuntimeSnapshot,
 } from './types';
-import { clone, isTensorSpec, shapeText } from './types';
+import { clone, isTensorSpec, ParameterError, shapeText } from './types';
 import { graphIssues, orderGraph, ports } from './graph';
 import { normalizeTensorSelection } from './indexingTypes';
-import { annotateTensorOutputs } from './tensorAppearance';
+import { annotateTensorOutputs, effectiveGradMode } from './tensorAppearance';
 import { annotateInformationSources } from './informationSources';
 import { rootInputSources } from './rootInputs';
 import { activeRuntimeSnapshot, checkSnapshotBindings } from './runtimeSnapshot';
@@ -51,6 +52,11 @@ export function inferGraph(
   result.order = orderGraph(graph, implicit);
   const byId = new Map(graph.nodes.map((n) => [n.id, n]));
   const roots = new Map((lineageEnabled && depth === 0 && path.length === 0 ? rootInputSources(graph) : []).map(source => [source.id, source]));
+  const context: InferenceContext = { hyperparameters };
+  const snapshotMode = runtime?.context.gradMode;
+  if (snapshotMode === 'grad' || snapshotMode === 'no_grad' || snapshotMode === 'inference_mode')
+    context.runtimeGradMode = snapshotMode;
+  const gradMode = effectiveGradMode(context);
   for (const id of result.order) {
     const stored = byId.get(id)!;
     // Also accept legacy nodes passed directly to inference, without mutating the graph.
@@ -127,6 +133,8 @@ export function inferGraph(
         const objectSchema = f.key === 'schema' && ['ForwardInput','DictionaryInput'].includes(node.type) && value && typeof value === 'object';
         if (f.kind === 'text' && typeof value !== 'string' && !objectSchema)
           throw new Error(`${f.label} 必须为文本。`);
+        if (f.kind === 'text' && !objectSchema && !shortText(value, f.maxLength ?? 1999))
+          throw new ParameterError(f.key, `${def.type}.${f.key} 最多 ${f.maxLength ?? 1999} 个字符。`);
       }
       const passthrough = ['Output', 'Outlet', 'Identity'].includes(node.type);
       const acceptsContainers =
@@ -142,7 +150,8 @@ export function inferGraph(
             `输入 ${port} 是${shapeText(value)}，此模块需要 Tensor。${value.kind === 'dict' ? '字典需先取出 Tensor 字段，请使用“字典字段读取”。' : ''}`,
           );
       }
-      if (!node.customized) r.messages.push(...(def.validate?.(tensorInputs, node.params) ?? []));
+      const validation = node.customized ? undefined : def.validate?.(tensorInputs, node.params);
+      if (validation) r.messages.push(...(Array.isArray(validation) ? validation : validation.warnings));
       if (node.type === 'Inlet') {
         const value = external[String(node.params.port)];
         if (!value) throw new Error(`子图输入 ${node.params.port} 没有外部数据。`);
@@ -164,7 +173,8 @@ export function inferGraph(
         Object.assign(r, inferForEach(node.subgraph, r.inputs, external =>
           inferGraph(node.subgraph!, registry, external, depth + 1, hyperparameters, runtime, [...path, id], budget, attributes, lineageEnabled)));
       } else if (node.subgraph) {
-        r.child = inferGraph(node.subgraph, registry, r.inputs, depth + 1, hyperparameters, runtime, [...path,id], budget, attributes, lineageEnabled);
+        const childInputs = validation && !Array.isArray(validation) ? validation.subgraphInputs : r.inputs;
+        r.child = inferGraph(node.subgraph, registry, childInputs, depth + 1, hyperparameters, runtime, [...path,id], budget, attributes, lineageEnabled);
         const failures = Object.entries(r.child.nodes).filter(
           ([, v]) => v.status === 'error' || v.status === 'blocked',
         );
@@ -197,8 +207,8 @@ export function inferGraph(
         r.notes = ['保留输入的数据类型与内容。'];
       } else if (def.inferValue || def.infer) {
         const inference = def.inferValue
-          ? def.inferValue(r.inputs, node.params, { hyperparameters })
-          : def.infer!(tensorInputs, node.params, { hyperparameters });
+          ? def.inferValue(r.inputs, node.params, context)
+          : def.infer!(tensorInputs, node.params, context);
         r.outputs = inference.outputs;
         r.notes = inference.notes ?? [];
         r.messages.push(...(inference.warnings ?? []));
@@ -207,7 +217,7 @@ export function inferGraph(
       if (observed) {
         r.outputs = { out: clone(observed.value) };
         r.notes.push(`运行快照：${runtime!.name} · ${runtime!.capturedAt}；不修改静态图。`);
-      } else r.outputs = annotateTensorOutputs(node, r.inputs, r.outputs);
+      } else r.outputs = annotateTensorOutputs(node, r.inputs, r.outputs, gradMode);
       if (lineageEnabled) r.outputs = annotateInformationSources(node, r.inputs, r.outputs, roots.get(id));
       if (node.type === 'SetAttribute') {
         const binding = attributes.plan.bindings.get(attributePath)!;
@@ -220,6 +230,7 @@ export function inferGraph(
       r.status = 'error';
       r.outputs = {};
       r.messages = [(error as Error).message];
+      if (error instanceof ParameterError) r.invalidParameter = error.parameter;
     }
   }
   return result;

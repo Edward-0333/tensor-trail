@@ -42,7 +42,7 @@ async function run() {
     await wait(300);
   }
   async function enter(id, childId) {
-    await js(`Array.from(document.querySelectorAll('.react-flow__node[data-id="${id}"] button')).find(b=>b.textContent.includes('进入')).click()`);
+    await js(`document.querySelector('.react-flow__node[data-id="${id}"] button[aria-label="进入 forward()"]').click()`);
     await ready(childId);
   }
   async function up(id) { await click('button[aria-label="上一层级"]'); await ready(id); }

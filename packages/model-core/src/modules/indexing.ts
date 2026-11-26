@@ -1,3 +1,4 @@
+import { shortText } from '../core/limits';
 import type { Dim, Field, ModuleDefinition, Params, TensorSpec, ValueSpec } from '../core/types';
 import { isDictionarySpec, isIntegerSpec, tensorValue, clone, shapeText } from '../core/types';
 import { resolveIntegerExpression } from '../core/hyperparameters';
@@ -72,7 +73,7 @@ export function tensorIndexLabel(params: Params, inputRank?: number): string {
 }
 
 export function parseFieldPath(value: unknown): (string | number)[] {
-  requireThat(typeof value === 'string' && value.length <= 1999, '请填写字段路径。');
+  requireThat(shortText(value, 1999), '请填写字段路径。');
   const trimmed = value.trim();
   let path: unknown;
   if (trimmed.startsWith('[')) {

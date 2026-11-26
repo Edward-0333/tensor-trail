@@ -30,9 +30,9 @@ export const isCalculation = (definition?: ModuleDefinition) =>
 const glueTypes = new Set([
   'DictionaryGet', 'TensorSequenceGet', 'TensorIndex', 'Slice', 'Unsqueeze', 'Squeeze', 'Reshape',
   'ReshapeLike', 'View', 'Permute', 'Flatten', 'Unflatten', 'Contiguous', 'Repeat', 'RepeatBatch',
-  'AlignTrailingDims', 'ZerosLike', 'Zeros', 'NewZeros', 'NewOnes', 'OnesScaled', 'Cast',
+  'AlignTrailingDims', 'ZerosLike', 'OnesLike', 'Linspace', 'Zeros', 'NewZeros', 'NewOnes', 'OnesScaled', 'Cast',
   'TensorCompareScalar', 'LogicalAnd', 'BitwiseAnd', 'Any', 'BooleanNot', 'Where', 'Clamp',
-  'Add', 'Subtract', 'Mul', 'Divide', 'Function', 'Sin', 'Cos', 'Exp', 'Log', 'Sqrt',
+  'Add', 'Subtract', 'Mul', 'Divide', 'Maximum', 'Function', 'Sin', 'Cos', 'Exp', 'Log', 'Sqrt',
   'NanToNum', 'NoGradResult', 'Compute',
 ]);
 

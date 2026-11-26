@@ -1,3 +1,4 @@
+import { projectCanvasGraph } from '@tensor-trail/model-core/core/canvasProjection';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
   ArrowDownToLine,
@@ -8,6 +9,7 @@ import {
   Network,
   Moon,
   Sun,
+  Boxes,
   PanelLeft,
   PanelRight,
   Route,
@@ -24,6 +26,7 @@ import {
 } from 'lucide-react';
 import { ReactFlowProvider } from '@xyflow/react';
 import { resolveForwardView } from '@tensor-trail/model-core/core/hierarchy';
+import { resolveGraphReferenceMaxDim, resolveGraphTensorTones } from '@tensor-trail/model-core/core/tensorGeometry';
 import { inferProject, resultAt } from '@tensor-trail/model-core/core/engine';
 import { forLoopCount } from '@tensor-trail/model-core/core/forLoop';
 import { shapeText } from '@tensor-trail/model-core/core/types';
@@ -101,6 +104,9 @@ export default function App() {
     outputs: {},
     issues: loopResult?.iterations?.length === 0 ? [] : ['当前子图无法推导，请返回父层检查输入连接和模块参数。'],
   };
+  const graphReferenceMaxDim = useMemo(() => resolveGraphReferenceMaxDim(graph, result), [graph, result]);
+  const graphTones = useMemo(() => resolveGraphTensorTones(graph, result), [graph, result]);
+  const projection = useMemo(() => projectCanvasGraph(graph, result, graphTones), [graph, result, graphTones]);
   const order = result?.order ?? [];
   const failures =
     result?.issues.length ||
@@ -243,7 +249,9 @@ export default function App() {
             disabled={!state.hasProject}
             key={state.project.name}
             defaultValue={state.project.name}
-            onBlur={(e) => state.renameProject(e.target.value)}
+            onBlur={(e) => {
+              if (e.target.value !== state.project.name) state.renameProject(e.target.value);
+            }}
           />
           <span
             className="save-state"
@@ -426,6 +434,9 @@ export default function App() {
           <div className="canvas-toolbar">
             <HierarchyNavigation levels={forwardView.levels} onNavigate={state.navigate} />
             <ForwardHierarchyHelp />
+            <button className="icon-button tensor-preview-toggle" aria-pressed={state.globalTensorBlocks}
+              aria-label="全画布 3D 张量积木" title="预览张量和值节点的 3D 积木，保留算子布局、已有插图和节点设置"
+              onClick={state.toggleGlobalTensorBlocks}><Boxes size={17} /></button>
             <select
               aria-label="载入示例"
               value=""
@@ -466,7 +477,7 @@ export default function App() {
                   </small>
                 </div>
               )}
-              <Canvas graph={graph} result={result} step={step} theme={theme} owner={owner} clipboard={moduleClipboard} viewports={viewports} />
+              <Canvas projection={projection} referenceMaxDim={graphReferenceMaxDim} graphTones={graphTones} graph={graph} result={result} step={step} theme={theme} owner={owner} clipboard={moduleClipboard} viewports={viewports} />
               {!state.hasProject && (
                 <div className="canvas-empty-state">
                   <div>
@@ -595,7 +606,7 @@ export default function App() {
             </section>
           )}
         </section>
-        <Inspector graph={graph} result={result} />
+        <Inspector hiddenNodeIds={projection.hiddenNodeIds} referenceMaxDim={graphReferenceMaxDim} graphTones={graphTones} graph={graph} result={result} />
       </main>
       {agentOpen && <AgentPanel onClose={() => setAgentOpen(false)} />}
       <footer className="statusbar">

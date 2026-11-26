@@ -1,8 +1,15 @@
 import { MAX_EDGES_PER_GRAPH, MAX_EXPANDED_NODES, MAX_NODE_VISITS, MAX_PROJECT_BYTES } from '../core/limits';
 import { registry } from '../modules/index';
-import type { Field } from '../core/types';
-
-export const identifierPattern = '^(?!__proto__$|constructor$|prototype$)[A-Za-z0-9_-]{1,100}$';
+import { type Field, identifierPattern } from '../core/types';
+import { maxSubmoduleSummaryLength, submoduleIcons } from '../core/submoduleVisual';
+import { imageSourcePattern, maxImageSourceLength, maxMediaItems, mediaLayouts, imageEmphases, supportsVisualMedia } from '../core/visualMedia';
+import { edgeOperatorTypes, nodePresentations, supportsCompactPresentation } from '../core/nodePresentation';
+import {
+  supportsTensorVisual, tensorVisualModes, tensorVisualTones, tensorDepthStyles, hexColorPattern,
+  minTensorVisualWidth, maxTensorVisualWidth, minTensorBoxWidth, maxTensorBoxWidth,
+  minTensorBoxHeight, maxTensorBoxHeight, minTensorBoxDepth, maxTensorBoxDepth, maxAxisLabels, maxAxisLabelLength,
+} from '../core/tensorVisual';
+export { identifierPattern };
 const identifier = { type: 'string', pattern: identifierPattern };
 const name = { type: 'string', minLength: 1, maxLength: 200, pattern: '\\S' };
 const endpoint = { type: 'string', pattern: '^[A-Za-z0-9_-]{1,100}\\.[A-Za-z0-9_-]{1,100}$' };
@@ -15,8 +22,7 @@ const object = (properties: Record<string, unknown>, required: string[]) => ({
 function fieldSchema(f: Field) {
   if (f.key === 'schema')
     return {
-      type: ['string', 'object'],
-      maxLength: f.maxLength ?? 64000,
+      anyOf: [{ type: 'object' }, { type: 'string', maxLength: f.maxLength ?? 64000 }],
       description: 'DictionarySpec object (preferred); legacy JSON strings remain readable.',
       default: f.default,
     };
@@ -88,6 +94,39 @@ export function describeModules(includeInternal = false) {
 export function getSchemas() {
   const position = object({ x: { type: 'number' }, y: { type: 'number' } }, ['x', 'y']);
   const mode = { type: 'string', enum: ['strict', 'draft'], default: 'strict' };
+  const submoduleVisual = object({
+    icon: { enum: submoduleIcons },
+    tone: { enum: tensorVisualTones },
+    summary: { type: 'string', maxLength: maxSubmoduleSummaryLength },
+  }, []);
+  const tensorVisual = object({
+    mode: { enum: tensorVisualModes, description: 'Show a single inferred tensor block, or turn the preview off.' },
+    tone: { enum: tensorVisualTones },
+    color: { type: 'string', pattern: hexColorPattern },
+    depthStyle: { enum: tensorDepthStyles },
+    caption: { type: 'string', maxLength: 120 },
+    width: { type: 'number', minimum: minTensorVisualWidth, maximum: maxTensorVisualWidth },
+    boxWidth: { type: 'number', minimum: minTensorBoxWidth, maximum: maxTensorBoxWidth },
+    boxHeight: { type: 'number', minimum: minTensorBoxHeight, maximum: maxTensorBoxHeight },
+    boxDepth: { type: 'number', minimum: minTensorBoxDepth, maximum: maxTensorBoxDepth },
+    axisLabels: {
+      type: 'array', maxItems: maxAxisLabels,
+      items: { type: 'string', minLength: 1, maxLength: 64, pattern: `^(?=[\\s\\S]*\\S)[\\s\\S]{1,${maxAxisLabelLength}}$` },
+    },
+  }, ['mode']);
+  const visualMedia = object({
+    layout: { enum: mediaLayouts },
+    tileWidth: { type: 'number', minimum: 80, maximum: 280 },
+    items: {
+      type: 'array', minItems: 1, maxItems: maxMediaItems, uniqueItems: true,
+      description: 'Image IDs must be unique within this node.',
+      items: object({
+        id: identifier, src: { type: 'string', pattern: imageSourcePattern.source, maxLength: maxImageSourceLength },
+        caption: { type: 'string', maxLength: 120 }, badge: { type: 'string', maxLength: 32 },
+        emphasis: { enum: imageEmphases },
+      }, ['id', 'src']),
+    },
+  }, ['items']);
   const node = {
     oneOf: registry.list(true).map((d) =>
       object(
@@ -96,6 +135,12 @@ export function getSchemas() {
           type: { const: d.type },
           label: name,
           position,
+          ...(supportsVisualMedia(d) ? { presentation: { enum: ['default',
+            ...(supportsCompactPresentation(d) ? ['compact'] : []),
+            ...(edgeOperatorTypes.has(d.type) ? ['edge'] : [])] } } : {}),
+          ...(d.type === 'Submodule' ? { submoduleVisual: { $ref: '#/$defs/submoduleVisual' } } : {}),
+          ...(supportsTensorVisual(d) ? { tensorVisual: { $ref: '#/$defs/tensorVisual' } } : {}),
+          ...(supportsVisualMedia(d) ? { visualMedia: { $ref: '#/$defs/visualMedia' } } : {}),
           params: object(Object.fromEntries(d.fields.map((f) => [f.key, fieldSchema(f)])), []),
           ...(d.composite ? { subgraph: { $ref: '#/$defs/graph' } } : {}),
         },
@@ -138,7 +183,7 @@ export function getSchemas() {
         op: { const: 'set_params' },
         path,
         id: identifier,
-        params: { type: 'object', additionalProperties: { type: ['string', 'number', 'boolean'] } },
+        params: { type: 'object', additionalProperties: { anyOf: [{ type: 'string' }, { type: 'number' }, { type: 'boolean' }] } },
       },
       ['op', 'id', 'params'],
     ),
@@ -152,6 +197,17 @@ export function getSchemas() {
       'id',
       'position',
     ]),
+    object({ op: { const: 'set_node_presentation' }, path, id: identifier,
+      presentation: { enum: [...nodePresentations, null] } }, ['op', 'id', 'presentation']),
+    object({ op: { const: 'set_node_submodule_visual' }, path, id: identifier,
+      visual: { anyOf: [{ $ref: '#/$defs/submoduleVisual' }, { type: 'null' }] } }, ['op', 'id', 'visual']),
+    object({ op: { const: 'set_node_tensor_visual' }, path, id: identifier,
+      visual: { anyOf: [{ $ref: '#/$defs/tensorVisual' }, { type: 'null' }] } }, ['op', 'id', 'visual']),
+    object({ op: { const: 'set_node_media' }, path, id: identifier,
+      media: { anyOf: [{ $ref: '#/$defs/visualMedia' }, { type: 'null' }] } }, ['op', 'id', 'media']),
+    object({ op: { const: 'set_edge_presentation' }, path, from: endpoint, to: endpoint,
+      annotation: { type: ['string', 'null'], maxLength: 160 },
+      presentation: { enum: ['default', 'slide', 'anchor', null] } }, ['op', 'from', 'to']),
     object({ op: { const: 'set_tensor_border' }, path, id: identifier,
       color: { type: ['string', 'null'], pattern: '^#[0-9a-fA-F]{6}$' } }, ['op', 'id', 'color']),
     ...['connect', 'disconnect'].map((op) =>
@@ -160,7 +216,7 @@ export function getSchemas() {
     object({ op: { const: 'layout' }, path }, ['op']),
     object({ op: { const: 'rename_project' }, name }, ['op', 'name']),
   ];
-  const base = { $schema: 'https://json-schema.org/draft/2020-12/schema', $defs: { node, graph } };
+  const base = { $schema: 'https://json-schema.org/draft/2020-12/schema', $defs: { node, graph, visualMedia, tensorVisual, submoduleVisual } };
   return structuredClone({
     validationOptions: {
       $schema: base.$schema,
@@ -201,6 +257,7 @@ export function getSchemas() {
             type: 'object',
             maxProperties: 128,
             propertyNames: {
+              type: 'string',
               pattern: '^(?!__proto__$|prototype$|constructor$|self$)[A-Za-z_][A-Za-z0-9_]{0,63}$',
             },
             additionalProperties: {

@@ -272,3 +272,21 @@ describe('草稿例外保持严格范围', () => {
     expect(ports(instance, registry).outputs.map((p) => p.id)).toEqual(['out']);
   });
 });
+
+it('撤销和重做嵌套封装外观时保留手工子图与祖先状态', () => {
+  const p = project(), outer = p.graph.nodes[1];
+  const inner = registry.create('Submodule', {}, 'nested');
+  inner.customized = true;
+  outer.subgraph!.nodes.push(inner);
+  useEditor.getState().load(p);
+  useEditor.getState().navigate(['encoder']);
+  const before = structuredClone(useEditor.getState().project);
+  expect(useEditor.getState().setSubmoduleVisual('nested', { icon: 'mlp', summary: '  映射  ' })).toBe(true);
+  const expected = structuredClone(before);
+  expected.graph.nodes[1].subgraph!.nodes[1].submoduleVisual = { icon: 'mlp', summary: '映射' };
+  expect(useEditor.getState().project).toEqual(expected);
+  useEditor.getState().undo();
+  expect(useEditor.getState().project).toEqual(before);
+  useEditor.getState().redo();
+  expect(useEditor.getState().project).toEqual(expected);
+});

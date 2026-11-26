@@ -1,4 +1,25 @@
 import type { ReactNode } from 'react';
+import type { SubmoduleIcon } from '@tensor-trail/model-core/core/types';
+
+const submoduleGlyphs: Record<Exclude<SubmoduleIcon, 'auto'>, ReactNode> = {
+  backbone: <path d="m2 6 7-4 7 4-7 4z M2 9.5l7 4 7-4 M2 13l7 4 7-4" />,
+  attention: <><path d="M1 9s3-5 8-5 8 5 8 5-3 5-8 5-8-5-8-5Z" /><circle cx="9" cy="9" r="2.3" /></>,
+  cross_attention: <path d="M2 4h3c3.5 0 4.5 10 8 10h3m-3-3 3 3-3 3 M2 14h3c1 0 2-1 3-3m2-5c1-1 2-2 3-2h3m-3-3 3 3-3 3" />,
+  mlp: <><path d="m3 9 6-6 6 6-6 6z M3 9h12" />
+    {[ [3,9], [9,3], [9,9], [9,15], [15,9] ].map(([x,y]) => <circle key={x+'-'+y} cx={x} cy={y} r="1.6" fill="currentColor" />)}</>,
+  projection: <><path d="m2 6 6 3-6 3z M9 9h4m-2-2 2 2-2 2 M15 3v12" /></>,
+  encoder: <path d="M2 3h4l5 6-5 6H2 M7 3h3l5 6-5 6H7 M15 6h2v6h-2" />,
+  decoder: <path d="M2 6h3v6H2z M5 9h4m0 0 4-6h3m-7 6h7m-7 0 4 6h3" />,
+  head: <><circle cx="9" cy="9" r="6.8" /><circle cx="9" cy="9" r="3.4" />
+    <circle cx="9" cy="9" r="1" fill="currentColor" /></>,
+  module: <path d="m9 1.5 7 4v7l-7 4-7-4v-7z M2 5.5l7 4 7-4 M9 9.5v7" />,
+};
+
+export function SubmoduleGlyph({ icon }: { icon: Exclude<SubmoduleIcon, 'auto'> }) {
+  return <svg width="18" height="18" viewBox="0 0 18 18" data-submodule-icon={icon}
+    aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5"
+    strokeLinecap="round" strokeLinejoin="round">{submoduleGlyphs[icon]}</svg>;
+}
 
 function DenseLayers({ layers }: { layers: number[] }) {
   const columns = layers.map((count, i) =>
@@ -55,6 +76,74 @@ function diagram(type: string): { label: string; content: ReactNode } {
         <rect x="24" y="47" width="20" height="20" rx="3" /><rect x="56" y="47" width="20" height="20" rx="3" /></> };
     case 'Linear':
       return { label: '全连接映射', content: <DenseLayers layers={[3, 3]} /> };
+    case 'Linspace':
+      return {
+        label: '区间两端之间的等距采样刻度',
+        content: <g strokeWidth="3">
+          <path d="M12 24H84" />
+          {[12, 30, 48, 66, 84].map(x => <path key={x} d={`M${x} 14v20`} />)}
+        </g>,
+      };
+    case 'OnesLike':
+    case 'ZerosLike': {
+      const digit = type === 'OnesLike' ? '1' : '0';
+      return {
+        label: `同形张量网格填充 ${digit}`,
+        content: <>
+          <rect x="16" y="4" width="64" height="40" rx="3" />
+          <path d="M48 4V44M16 24H80" />
+          <g className="glyph-value-label" fill="currentColor" stroke="none" fontFamily="monospace" fontSize="17" fontWeight="bold" textAnchor="middle">
+            {[18, 39].map(y => [32, 64].map(x => <text key={`${x}-${y}`} x={x} y={y}>{digit}</text>))}
+          </g>
+        </>,
+      };
+    }
+    case 'Maximum':
+      return {
+        label: '两路逐元素取最大值',
+        content: <>
+          <path d="M9 9h9l14 15-14 15H9M66 24h21m-6-5 6 5-6 5" />
+          <circle cx="49" cy="24" r="17" />
+          <text className="glyph-value-label" x="49" y="29" fill="currentColor" stroke="none" textAnchor="middle" fontSize="14" fontWeight="bold">max</text>
+        </>,
+      };
+    case 'Normalize':
+      return {
+        label: '逐通道减去均值并按标准差缩放',
+        content: (
+          <g className="normalize-glyph">
+            <path d="M8 10H26M14 24H37M9 38H21M42 24H54M50 20L54 24L50 28" />
+            <path d="M74 4V44" strokeDasharray="2 3" opacity="0.5" />
+            <path d="M62 10H86M62 24H86M62 38H86" />
+            <g fill="currentColor">
+              <circle cx="17" cy="10" r="2.5" /><circle cx="25.5" cy="24" r="2.5" /><circle cx="15" cy="38" r="2.5" />
+              {[10, 24, 38].map(y => <circle key={y} cx="74" cy={y} r="2.5" />)}
+            </g>
+          </g>
+        ),
+      };
+    case 'GridSample': {
+      const corners = [[32, 11], [62, 11], [32, 35], [62, 35]];
+      return {
+        label: '网格采样：四个邻域角点与格内采样位置',
+        content: (
+          <g className="grid-sample-glyph">
+            <g opacity="0.45">
+              <rect x="9" y="3" width="78" height="42" rx="2" />
+              <path d="M32 3V45M62 3V45M9 11H87M9 35H87" />
+            </g>
+            <rect x="32" y="11" width="30" height="24" fill="currentColor" fillOpacity="0.13" />
+            {corners.map(([x, y]) => (
+              <line key={`line-${x}-${y}`} x1={x} y1={y} x2="52" y2="21" strokeWidth="1.25" />
+            ))}
+            {corners.map(([x, y]) => (
+              <circle key={`${x}-${y}`} cx={x} cy={y} r="2.4" fill="currentColor" />
+            ))}
+            <circle className="grid-sample-point" cx="52" cy="21" r="3.6" />
+          </g>
+        ),
+      };
+    }
     case 'FFN':
     case 'MMCVFFNContract':
       return { label: '升维与降维的前馈网络', content: <DenseLayers layers={[2, 4, 2]} /> };

@@ -29,6 +29,12 @@ function infer(params: Params = {}, values: Record<string, ValueSpec> = {}) {
 }
 
 describe('Tensor.new_zeros', () => {
+  it('accepts a full 256-code-point factory axis label', () => {
+    const axis = '𠮷'.repeat(256);
+    expect(infer({ shape: '2', axes: axis })).toMatchObject({ shape: [2], axes: [axis] });
+    expect(() => infer({ shape: '2', axes: axis + '𠮷' })).toThrow(/轴标签/);
+  });
+
   it('creates a new explicit shape, inheriting dtype but not values, axes, Parameter identity or requires_grad', () => {
     const before = structuredClone(reference);
     expect(infer({ axes: 'batch,query,embedding' })).toEqual({

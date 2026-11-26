@@ -159,6 +159,7 @@ const valueTransfers = new Set([
   'ModuleParameterState',
 ]);
 const unaryValues = new Set([
+  'Normalize',
   'Unflatten', 'TensorCompareScalar', 'MatrixInverse', 'TensorToDevice', 'DynamicSlice',
   'ReshapeLike', 'ArrayToTensorExplicit',
   'Exp', 'Softplus', 'L2Norm', 'NoGradResult',
@@ -213,6 +214,7 @@ const parameterized = new Set([
   'BatchNorm2d',
 ]);
 const mergedValues = new Set([
+  'GridSample',
   'SemanticOp',
   'LogicalAnd', 'BooleanAnd', 'BooleanNot', 'IntegerCompare',
   'IntegerSubtract', 'IntegerMinimum', 'IntegerMaximum', 'IntegerAddOne',
@@ -223,6 +225,7 @@ const mergedValues = new Set([
   'Mul',
   'Subtract',
   'Divide',
+  'Maximum',
   'MatMul',
   'Concat',
   'Stack',
@@ -236,6 +239,8 @@ const factories = new Set([
   'NewOnes',
   'Zeros',
   'ZerosLike',
+  'OnesLike',
+  'Linspace',
   'OnesScaled',
   'Arange',
   'IntegerParameter',
@@ -284,7 +289,7 @@ export function annotateInformationSources(
   if (factories.has(node.type)) {
     const initialization = ['NewZeros', 'Zeros', 'ZerosLike'].includes(node.type)
       ? 'zeros'
-      : ['OnesScaled', 'NewOnes'].includes(node.type)
+      : ['OnesScaled', 'NewOnes', 'OnesLike'].includes(node.type)
         ? 'ones'
         : undefined;
     return all(

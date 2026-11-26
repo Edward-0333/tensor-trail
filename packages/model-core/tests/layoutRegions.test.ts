@@ -30,6 +30,16 @@ function fixture() {
 }
 
 describe('Layout regions', () => {
+  it.each(['note', 'importance_note'])('uses the same code-point bound for %s in inference and saved regions', key => {
+    const { region, project } = fixture();
+    region.params[key] = '𠮷'.repeat(240);
+    expect(validateModel(project).ok).toBe(true);
+    expect(parseProject(serializeProject(project), registry)).toEqual(project);
+    region.params[key] += '𠮷';
+    expect(validateModel(project).ok).toBe(false);
+    expect(() => parseProject(serializeProject(project), registry)).toThrow(key);
+  });
+
   it('moves new members into a region without changing connections or inferred data', () => {
     const f = fixture(), before = inferProject(f.project, registry), edges = structuredClone(f.graph.edges);
     assignLayoutRegion(f.graph, ['a', 'b'], 'region', f.sizes);

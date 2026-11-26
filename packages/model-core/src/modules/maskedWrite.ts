@@ -1,3 +1,4 @@
+import { shortText } from '../core/limits';
 import type { Dim, ModelNode, ModuleDefinition, Params } from '../core/types';
 import { clone, isIntegerSpec, tensorValue } from '../core/types';
 import { requireThat, tensor } from './math';
@@ -52,7 +53,7 @@ export const maskedWriteModules: ModuleDefinition[] = [
     inferValue: (values, params) => {
       tensorValue(values.device_like);
       requireThat(
-        typeof params.shape === 'string' && params.shape.length <= 256,
+        shortText(params.shape, 256),
         '零张量需要有效的目标形状。',
       );
       const tokens = params.shape.split(',').map((s) => s.trim());

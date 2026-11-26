@@ -1,3 +1,4 @@
+import { shortText } from '../core/limits';
 import type { Graph, ModelNode, Params, Field } from '../core/types';
 import { clone } from '../core/types';
 import { ModuleRegistry } from './registry';
@@ -149,7 +150,7 @@ export function installAgentCompletion(registry: ModuleRegistry) {
       );
       requireThat(
         p.source_note === undefined ||
-          (typeof p.source_note === 'string' && p.source_note.length <= 1999),
+          shortText(p.source_note, 1999),
         '权重来源备注需要不超过 1999 字符的文本。',
       );
       return {

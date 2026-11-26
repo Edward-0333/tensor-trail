@@ -1,4 +1,4 @@
-import { MAX_EXPANDED_NODES } from './limits';
+import { MAX_EXPANDED_NODES, shortText } from './limits';
 import type { Graph, ModelNode, Params, TensorSpec } from './types';
 
 export interface AttributeBinding {
@@ -23,7 +23,7 @@ const forbidden = new Set(['__proto__', 'constructor', 'prototype']);
 export const attributeTypes = new Set(['SetAttribute', 'GetAttribute']);
 
 export function attributeBinding(params: Params): AttributeBinding {
-  if (typeof params.owner !== 'string' || params.owner.length > 1999)
+  if (!shortText(params.owner, 1999))
     throw new Error('所属模块路径需要 JSON 数组，例如 ["pts_bbox_head"]；[] 表示根模型。');
   let owner: unknown;
   try {
@@ -40,8 +40,7 @@ export function attributeBinding(params: Params): AttributeBinding {
   )
     throw new Error('所属模块路径需要至多 12 个有效节点 ID，不是 Python 表达式。');
   if (
-    typeof params.name !== 'string' ||
-    params.name.length > 128 ||
+    !shortText(params.name, 128) ||
     !/^[A-Za-z_][A-Za-z0-9_]*$/.test(params.name) ||
     forbidden.has(params.name)
   )

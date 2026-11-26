@@ -21,6 +21,13 @@ const infer = (type: string, values: TensorSpec[], params: Params = { dim: -1 })
   );
 
 describe('多路 Cat 与 Stack', () => {
+  it('allows 128 Unicode code points for the concatenation axis', () => {
+    const axis = '𠮷'.repeat(128);
+    const tensors = [spec([1]), spec([3])];
+    expect(infer('Concat', tensors, { dim: 0, axis_name: axis }).outputs.out.axes).toEqual([axis]);
+    expect(() => infer('Concat', tensors, { dim: 0, axis_name: axis + '𠮷' })).toThrow(/拼接轴/);
+  });
+
   it('保留 Concat 类型与 a/b 端口，新模块默认两路输入', () => {
     expect(primitives.some((module) => module.type === 'Concat')).toBe(false);
     for (const type of ['Concat', 'Stack']) {

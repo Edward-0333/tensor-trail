@@ -13,12 +13,17 @@ export function LayoutRegionPanel({ graph, node }: { graph: Graph; node: ModelNo
   const selected = new Set(layoutRegionMembers(node));
   const outputs = new Set(layoutRegionOutputs(node));
   const rect = layoutRegionRect(graph, node, state.nodeSizes);
+  const saveNote = (key: 'note' | 'importance_note', input: HTMLTextAreaElement) => {
+    const previous = String(node.params[key] ?? '');
+    const note = input.value.trim();
+    if (note !== previous && !state.setParam(node.id, key, note)) input.value = previous;
+  };
   return <section className="layout-region-panel">
     <div className="section-label">布局分区</div>
     <p className="microcopy">仅整理画布，不改变计算。加入时移入，拖动标题整体移动；解除所属分区后才能移出。删除分区保留所有模块。</p>
-    <label>分区注释<textarea key={`${node.id}-${node.params.note ?? ''}`} aria-label="分区注释" rows={2} maxLength={240}
+    <label>分区注释<textarea key={`${node.id}-${node.params.note ?? ''}`} aria-label="分区注释" rows={2}
       defaultValue={String(node.params.note ?? '')} placeholder="用一句话描述本分区的工作"
-      onBlur={e => { const note = e.target.value.trim(); if (note !== (node.params.note ?? '')) state.setParam(node.id, 'note', note); }} /></label>
+      onBlur={e => saveNote('note', e.currentTarget)} /></label>
     <fieldset className="region-importance-field" aria-describedby={`${ratingId}-scope`}>
       <legend>重要性 · 仅本层比较</legend>
       <div className="region-importance-editor">
@@ -38,9 +43,9 @@ export function LayoutRegionPanel({ graph, node }: { graph: Graph; node: ModelNo
         <p>结合代码职责人工判断，允许并列，不要求每层用满1-5星，也不按算子数量自动评分。</p>
       </details>
     </fieldset>
-    <label>评级依据（可选）<textarea key={`${node.id}-${node.params.importance_note ?? ''}`} aria-label="评级依据" rows={2} maxLength={240}
+    <label>评级依据（可选）<textarea key={`${node.id}-${node.params.importance_note ?? ''}`} aria-label="评级依据" rows={2}
       defaultValue={String(node.params.importance_note ?? '')} placeholder="为什么它在本层更重要或偏辅助？"
-      onBlur={e => { const note = e.target.value.trim(); if (note !== (node.params.importance_note ?? '')) state.setParam(node.id, 'importance_note', note); }} /></label>
+      onBlur={e => saveNote('importance_note', e.currentTarget)} /></label>
     <label>尺寸模式<select aria-label="分区尺寸模式" value={String(node.params.sizing)} onChange={e => {
       if (e.target.value === 'auto') state.fitLayoutRegion(node.id);
       else state.resizeLayoutRegion(node.id, rect);

@@ -1,3 +1,4 @@
+import { shortText } from './limits';
 import type { Hyperparameter, Hyperparameters } from './types';
 
 function check(condition: unknown, message: string): asserts condition {
@@ -30,13 +31,13 @@ export function validateHyperparameters(value: unknown): asserts value is Hyperp
           : parameter.type === 'bool'
             ? typeof v === 'boolean'
             : parameter.type === 'string'
-              ? typeof v === 'string' && v.length <= 1999
+              ? shortText(v, 1999)
               : false,
       `${name} 的值与类型不匹配，或超出范围。`,
     );
     check(
       parameter.source === undefined ||
-        (typeof parameter.source === 'string' && parameter.source.length <= 256),
+        shortText(parameter.source, 256),
       `${name} 的来源说明过长。`,
     );
   }
@@ -66,7 +67,7 @@ export function resolveIntegerExpression(
   hyperparameters: Hyperparameters = {},
 ): number {
   check(
-    typeof expression === 'string' && expression.length > 0 && expression.length <= 256,
+    shortText(expression, 256) && expression.length > 0,
     '索引表达式需要 1–256 个字符。',
   );
   const tokens: string[] = [];

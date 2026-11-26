@@ -74,26 +74,46 @@ async function capture({ project, out, levels, width, height, theme }, profile) 
     .canvas-region .canvas-caption, .canvas-region .canvas-instruction,
     .canvas-region .react-flow__panel, .status-message { visibility: hidden !important; }
   `);
-  const counts = await js(`(() => {
+  const levelSpecs = await js(`(() => {
+    const spec = (graph) => ({
+      ids: graph.nodes.map(node => node.id),
+      minCount: graph.nodes.filter(node => node.presentation !== 'edge').length,
+      maxCount: graph.nodes.length,
+    });
     let graph = window.tensorTrail.getModel().project.graph;
-    const counts = [graph.nodes.length];
+    const specs = [spec(graph)];
     for (const id of ${JSON.stringify(levels)}) {
       graph = graph.nodes.find(node => node.id === id)?.subgraph;
       if (!graph) throw Error('No subgraph at node ' + id);
-      counts.push(graph.nodes.length);
+      specs.push(spec(graph));
     }
-    return counts;
+    return specs;
   })()`);
-  for (const [depth, count] of counts.entries()) {
-    await until(() => js(`document.querySelectorAll('.breadcrumbs button').length === ${depth + 1}
-      && document.querySelectorAll('.react-flow__node').length === ${count}
-      && [...document.querySelectorAll('.react-flow__node')].every(n => getComputedStyle(n).visibility === 'visible')`), 'canvas layout');
+  for (const [depth, spec] of levelSpecs.entries()) {
+    await until(() => js(`(() => {
+      if (document.querySelectorAll('.breadcrumbs button').length !== ${depth + 1}) return false;
+      const nodes = [...document.querySelectorAll('.react-flow__node')];
+      const ids = new Set(${JSON.stringify(spec.ids)});
+      return nodes.length >= ${spec.minCount}
+        && nodes.length <= ${spec.maxCount}
+        && nodes.every(n => ids.has(n.dataset.id) && getComputedStyle(n).visibility === 'visible');
+    })()`), 'canvas layout');
     if (depth < levels.length) {
       const selector = `.react-flow__node[data-id="${levels[depth]}"]`;
       await js(`document.querySelector(${JSON.stringify(selector)}).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`);
     }
   }
-  await js('document.fonts.ready.then(() => true)');
+  await js(`Promise.all([document.fonts.ready, ...Array.from(document.images, img => img.decode())]).then(() => true)`);
+  let previousBounds;
+  await until(async () => {
+    const bounds = await js(`JSON.stringify([...document.querySelectorAll('.react-flow__node')].map(node => {
+      const { x, y, width, height } = node.getBoundingClientRect();
+      return [node.dataset.id, x, y, width, height];
+    }))`);
+    const stable = bounds === previousBounds;
+    previousBounds = bounds;
+    return stable;
+  }, 'decoded images and stable node bounds');
   await js(`document.querySelector('button[aria-label="适配全图"]').click()`);
   const painted = () => js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))');
   await painted();
@@ -102,8 +122,9 @@ async function capture({ project, out, levels, width, height, theme }, profile) 
     const canvas = document.querySelector('.react-flow').getBoundingClientRect();
     const viewport = document.querySelector('.react-flow__viewport');
     let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
-    for (const el of viewport.querySelectorAll('.react-flow__node, .react-flow__edge, .loop-feedback-route')) {
+    for (const el of viewport.querySelectorAll('.react-flow__node, .react-flow__edge path:not(.edge-anchor-hover-wire[data-revealed="false"]), .edge-slide-label, .edge-op-pipeline, .edge-anchor-chip, .loop-feedback-route')) {
       const r = el.getBoundingClientRect();
+      if (r.width === 0 && r.height === 0) continue;
       left = Math.min(left, r.left); right = Math.max(right, r.right);
       top = Math.min(top, r.top); bottom = Math.max(bottom, r.bottom);
     }

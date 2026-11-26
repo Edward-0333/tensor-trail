@@ -1,6 +1,10 @@
-import { fitsProjectFile, MAX_PROJECT_BYTES, MAX_EXPANDED_NODES, MAX_EDGES_PER_GRAPH, utf8Bytes } from './limits';
+import { validateNodePresentation } from './nodePresentation';
+import { readNodeSubmoduleVisual } from './submoduleVisual';
+import { maxTensorVisualWidth, validateTensorVisual } from './tensorVisual';
+import { validateVisualMedia, validateEdgePresentation } from './visualMedia';
+import { fitsProjectFile, shortText, MAX_PROJECT_BYTES, MAX_EXPANDED_NODES, MAX_EDGES_PER_GRAPH, utf8Bytes } from './limits';
 export { MAX_PROJECT_BYTES } from './limits';
-import type { Graph, ModelNode, Project, Registry } from './types';
+import { isIdentifier as identifier, ParameterError, type Graph, type ModelNode, type Project, type Registry } from './types';
 import { graphIssues, orderGraph } from './graph';
 import { planAttributes } from './attributes';
 import { canonicalModuleType } from './inputTypes';
@@ -20,12 +24,8 @@ function requireThat(condition: unknown, message: string): asserts condition {
 
 const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
-const identifier = (value: unknown): value is string =>
-  typeof value === 'string' &&
-  /^[A-Za-z0-9_-]{1,100}$/.test(value) &&
-  !['__proto__', 'constructor', 'prototype'].includes(value);
 const label = (value: unknown, maxLength = 200): value is string =>
-  typeof value === 'string' && value.length > 0 && value.length <= maxLength;
+  shortText(value, maxLength) && value.length > 0;
 
 export function checkProjectFileSize(text: string): void {
   requireThat(fitsProjectFile(text), '项目文件超过 10 MB。');
@@ -75,7 +75,8 @@ export function validateProjectObject(value: unknown, registry: Registry): Proje
       Object.keys(value.tensorPalette).length === 3 &&
       ['on', 'off', 'unknown'].every((key) => isHexColor((value.tensorPalette as Record<string, unknown>)[key])),
       'Tensor 统一背景色需要 on、off、unknown 三个六位十六进制颜色。');
-  const inspect = (candidate: unknown, depth = 0, ownerType?: string): void => {
+  const inspect = (candidate: unknown, path: string[] = [], ownerType?: string): void => {
+    const depth = path.length;
     requireThat(depth <= 12, '子图嵌套超过 12 层。');
     requireThat(
       record(candidate) && Array.isArray(candidate.nodes) && Array.isArray(candidate.edges),
@@ -102,6 +103,17 @@ export function validateProjectObject(value: unknown, registry: Registry): Proje
         node.type = type;
         if (['字典输入 Dict', '列表输入 List'].includes(node.label)) node.label = '网络输入';
       }
+      if (node.submoduleVisual !== undefined) readNodeSubmoduleVisual(node as unknown as ModelNode, node.submoduleVisual);
+      if (node.tensorVisual !== undefined) {
+        const visual = node.tensorVisual;
+        if (record(visual) && visual.mode === 'operation') {
+          visual.mode = 'block';
+          if (typeof visual.width === 'number' && Number.isFinite(visual.width) && visual.width > maxTensorVisualWidth)
+            visual.width = maxTensorVisualWidth;
+        }
+        validateTensorVisual({ type }, visual);
+      }
+      if (node.visualMedia !== undefined) validateVisualMedia({ type }, node.visualMedia);
       const def = registry.get(type);
       requireThat(def, `尚未注册模块 ${node.type}。`);
       if (record(node.params) && ['ForwardInput', 'DictionaryInput'].includes(type) &&
@@ -110,18 +122,22 @@ export function validateProjectObject(value: unknown, registry: Registry): Proje
         try { node.params.schema = parseDictionarySchema(node.params.schema); }
         catch (error) { if (typeof node.params.schema !== 'string') throw error; }
       }
-      requireThat(
-        record(node.params) &&
-          Object.entries(node.params).every(
-            ([key, p]) =>
-              (key === 'schema' && ['ForwardInput', 'DictionaryInput'].includes(type) && record(p)) ||
-              (typeof p === 'number' && Number.isFinite(p)) ||
-              typeof p === 'boolean' ||
-              (typeof p === 'string' &&
-                p.length <= (def.fields.find((f) => f.key === key)?.maxLength ?? 1999)),
-          ),
-        '节点参数必须是有限数值、开关或短文本。',
-      );
+      requireThat(record(node.params), '节点参数必须是对象。');
+      for (const [key, p] of Object.entries(node.params)) {
+        if (typeof p === 'string') {
+          const limit = def.fields.find(f => f.key === key)?.maxLength ?? 1999;
+          if (!shortText(p, limit))
+            throw new ParameterError(key, `${type}.${key} 最多 ${limit} 个字符。`, [...path, node.id]);
+        } else {
+          requireThat(
+            (key === 'schema' && ['ForwardInput', 'DictionaryInput'].includes(type) && record(p)) ||
+            (typeof p === 'number' && Number.isFinite(p)) || typeof p === 'boolean',
+            '节点参数必须是有限数值、开关或短文本。',
+          );
+        }
+      }
+      if (node.presentation !== undefined)
+        validateNodePresentation({ type, params: node.params as ModelNode['params'] }, node.presentation);
       migrateTensorSelection(node as unknown as ModelNode);
       requireThat(
         record(node.position) &&
@@ -182,7 +198,7 @@ export function validateProjectObject(value: unknown, registry: Registry): Proje
       );
       if (def.composite) {
         requireThat(node.subgraph, '组合模块缺少子图。');
-        inspect(node.subgraph, depth + 1, type);
+        inspect(node.subgraph, [...path, node.id], type);
         if (type === 'ForEachTensor') checkForEachBody(node.subgraph as Graph);
         if (type === 'WhileLoop') checkWhileBody(node as unknown as ModelNode);
         if (type === 'ForLoop') checkForLoopBody(node as unknown as ModelNode);
@@ -220,6 +236,7 @@ export function validateProjectObject(value: unknown, registry: Registry): Proje
           identifier(edge.targetPort),
         '连接数据无效。',
       );
+      validateEdgePresentation(edge.annotation, edge.presentation);
       requireThat(
         edge.waypoints === undefined ||
           (Array.isArray(edge.waypoints) &&
@@ -260,7 +277,7 @@ export function validateProjectObject(value: unknown, registry: Registry): Proje
       '变体名称或 ID 无效/重复。',
     );
     ids.add(variant.id);
-    inspect(variant.graph, 1);
+    inspect(variant.graph, [variant.id]);
     checkAttributeCycles(variant.graph as Graph);
   }
   return value as unknown as Project;

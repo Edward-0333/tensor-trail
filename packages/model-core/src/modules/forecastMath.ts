@@ -1,3 +1,4 @@
+import { shortText } from '../core/limits';
 import type { BooleanSpec, Dim, ModelNode, ModuleDefinition, Params, ValueSpec } from '../core/types';
 import {
   clone,
@@ -10,13 +11,18 @@ import {
 import { checkDictionaryKey } from '../core/dictionary';
 import { calculate } from './calculation';
 import { loopInteger } from './loopOps';
-import { axisIndex, broadcast, product, requireThat, same, tensor } from './math';
+import { axisIndex, broadcast, decimalLiteral, product, requireThat, same, tensor } from './math';
 import { bool, input, num, output, select, text } from './primitives';
 import { requireRealTensor } from './sorting';
 
 const named = (...names: string[]) => names.map((id) => ({ id, label: id }));
 const noGrad = () => ({ requiresGrad: false, source: 'inferred' as const });
 const comparisons = { lt: '<', le: '<=', eq: '==', ge: '>=', gt: '>' } as const;
+
+export function scalarComparisonSymbol(value: unknown): string {
+  return typeof value === 'string' && value !== 'eq' && Object.hasOwn(comparisons, value)
+    ? comparisons[value as keyof typeof comparisons] : '?';
+}
 
 function comparison(value: unknown, equality = false): keyof typeof comparisons {
   requireThat(
@@ -41,7 +47,7 @@ function validSize(value: Dim) {
 }
 
 function unflattenSizes(value: unknown): Dim[] {
-  requireThat(typeof value === 'string' && value.length <= 256, 'sizes must be short comma-separated text.');
+  requireThat(shortText(value, 256), 'sizes must be short comma-separated text.');
   const sizes = value.split(',').map((entry): Dim => {
     const token = entry.trim();
     if (/^(?:-1|\+?\d+)$/.test(token)) {
@@ -62,18 +68,6 @@ function sizeProduct(sizes: Dim[]): Dim {
   return factors.length === 1 ? factors[0] : product(factors);
 }
 
-function scalarNumber(value: unknown): string {
-  requireThat(typeof value === 'string', 'value must be numeric text.');
-  const literal = value.trim();
-  requireThat(
-    /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(literal) && Number.isFinite(Number(literal)),
-    'value must be a finite decimal number.',
-  );
-  // Normalize integer leading zeros for valid Python while retaining integer precision.
-  if (/^[+-]?\d+$/.test(literal)) return BigInt(literal).toString();
-  return literal;
-}
-
 function booleanValue(value: ValueSpec | undefined, port: string): boolean {
   requireThat(
     value && !isTensorSpec(value) && value.kind === 'bool' && typeof value.value === 'boolean',
@@ -90,7 +84,11 @@ export function forecastMathCode(node: ModelNode): string | undefined {
     case 'Unflatten':
       return `out = x.unflatten(${p.dim}, (${unflattenSizes(p.sizes).join(', ')},))\n# Split only dim; the product of sizes must equal x.shape[dim].`;
     case 'TensorCompareScalar':
-      return `out = x ${comparisons[comparison(p.operator)]} ${scalarNumber(p.value)}\n# Elementwise bool Tensor, requires_grad=False; values are not evaluated here.`;
+      try {
+        return `out = x ${comparisons[comparison(p.operator)]} ${decimalLiteral(p.value)}\n# Elementwise bool Tensor, requires_grad=False; values are not evaluated here.`;
+      } catch (error) {
+        return `# ${(error as Error).message}`;
+      }
     case 'LogicalAnd':
       return 'out = torch.logical_and(a, b)\n# Broadcast bool Tensors; not Python short-circuit control flow.';
     case 'MatrixInverse':
@@ -120,7 +118,7 @@ export const forecastMath: ModuleDefinition[] = [
   {
     type: 'Unflatten', label: 'Unflatten', category: '维度操作',
     description: 'Split one axis into sizes, preserving every other dimension and axis label.',
-    fields: [num('dim', 'dim', -1, -Number.MAX_SAFE_INTEGER), text('sizes', 'sizes', '-1,3')],
+    fields: [num('dim', 'dim', -1, -Number.MAX_SAFE_INTEGER), { ...text('sizes', 'sizes', '-1,3'), maxLength: 256 }],
     inputs: input, outputs: output,
     infer: ({ in: value }, p) => {
       const x = tensorValue(value), dim = dimension(p, x.shape.length);
@@ -157,7 +155,7 @@ export const forecastMath: ModuleDefinition[] = [
       const x = tensorValue(value);
       if (x.dtype !== 'bool') requireRealTensor(x);
       comparison(p.operator);
-      scalarNumber(p.value);
+      decimalLiteral(p.value);
       return { outputs: { out: { ...tensor([...x.shape], [...x.axes], 'bool'), autograd: noGrad() } },
         notes: ['Only shape and dtype are inferred; the comparison result is not a known Python bool.'] };
     },

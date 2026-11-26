@@ -1,3 +1,4 @@
+import { shortText } from './limits';
 import type { DictionarySpec, Dim } from './types';
 import { isTensorSpec } from './types';
 import { validateAutograd } from './tensorAppearance';
@@ -24,7 +25,7 @@ const record = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
 
 export function checkDictionaryKey(key: string, keyType: 'str' | 'int' = 'str') {
-  check(key.trim().length > 0 && key.length <= 128, '字段名需要 1–128 个字符。');
+  check(shortText(key, 128) && key.trim().length > 0, '字段名需要 1–128 个字符。');
   check(!['__proto__', 'constructor', 'prototype'].includes(key), '该字段名为保留名称。');
   if (keyType === 'int')
     check(
@@ -71,7 +72,7 @@ export function dictionaryShape(text: string): Dim[] {
 export function parseDictionarySchema(text: unknown): DictionarySpec {
   let source: unknown;
   if (typeof text === 'string') {
-    check(text.length <= DICTIONARY_SCHEMA_LIMIT, `字典结构描述最多 ${DICTIONARY_SCHEMA_LIMIT} 个字符。`);
+    check(shortText(text, DICTIONARY_SCHEMA_LIMIT), `字典结构描述最多 ${DICTIONARY_SCHEMA_LIMIT} 个字符。`);
     try { source = JSON.parse(text); }
     catch { throw new Error('字典结构描述格式无效。'); }
   } else source = text;
@@ -129,7 +130,7 @@ export function parseDictionarySchema(text: unknown): DictionarySpec {
       Array.isArray(axes) &&
         axes.length === value.shape.length &&
         axes.every(
-          (axis) => typeof axis === 'string' && axis.trim().length > 0 && axis.length <= 128,
+          (axis) => shortText(axis, 128) && axis.trim().length > 0,
         ),
       '轴名称数量需要与 Tensor 维度一致。',
     );
@@ -139,7 +140,7 @@ export function parseDictionarySchema(text: unknown): DictionarySpec {
   };
   const result = walk(source, 0);
   check('kind' in result && result.kind === 'dict', '输入的根类型需要是字典。');
-  check(JSON.stringify(result).length <= DICTIONARY_SCHEMA_LIMIT,
+  check(shortText(JSON.stringify(result), DICTIONARY_SCHEMA_LIMIT),
     `字典结构描述最多 ${DICTIONARY_SCHEMA_LIMIT} 个字符。`);
   return result;
 }

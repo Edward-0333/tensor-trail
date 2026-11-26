@@ -1,3 +1,4 @@
+import { shortText } from '../core/limits';
 import type { ModuleDefinition, Params } from '../core/types';
 import { resultDtype } from './elementwise';
 import { floating, rank, requireThat, same, tensor } from './math';
@@ -18,7 +19,7 @@ export const imageNormalizationFields = [
 ];
 
 function vector(value: unknown, name: string): number[] {
-  requireThat(typeof value === 'string' && value.length <= 256, `${name} 需要三个数的 JSON 数组。`);
+  requireThat(shortText(value, 256), `${name} 需要三个数的 JSON 数组。`);
   let parsed: unknown;
   try {
     parsed = JSON.parse(value);

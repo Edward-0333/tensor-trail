@@ -1,8 +1,16 @@
+import { setNodePresentation } from '@tensor-trail/model-core/core/nodePresentation';
+import { setNodeSubmoduleVisual } from '@tensor-trail/model-core/core/submoduleVisual';
+import { setNodeTensorVisual } from '@tensor-trail/model-core/core/tensorVisual';
+import { applyEdgePresentation, preserveGeneratedMedia, setNodeMedia, type EdgePresentationPatch } from '@tensor-trail/model-core/core/visualMedia';
 import { validChunkCount } from '@tensor-trail/model-core/modules/indexing';
 import { create } from 'zustand';
 import type {
   Graph,
   ModelEdge,
+  NodePresentation,
+  NodeSubmoduleVisual,
+  NodeTensorVisual,
+  NodeVisualMedia,
   LoopFeedbackLayout,
   Params,
   PortLayout,
@@ -28,6 +36,7 @@ import { registry } from '@tensor-trail/model-core/modules/index';
 import { dimensions } from '@tensor-trail/model-core/modules/math';
 import { DEFAULT_TENSOR_PALETTE, validateAutograd } from '@tensor-trail/model-core/core/tensorAppearance';
 import { copySelection } from '@tensor-trail/model-core/editing/clipboard';
+import { isForwardInput } from '@tensor-trail/model-core/core/inputTypes';
 import {
   isValueNode,
   linkedValueNodes,
@@ -65,6 +74,13 @@ function documentId(project: Project, id: string = uid()): string {
   documentIds.set(project, id);
   return id;
 }
+function editorName(name: string) {
+  return Array.from(name.trim()).slice(0, 200).join('');
+}
+function nodeSelection(ids: string[]) {
+  return { selected: ids[0] ?? null, selectedIds: ids, selectedEdgeId: null };
+}
+
 interface NodeFocusRequest {
   nodeId: string;
   path: string[];
@@ -84,6 +100,15 @@ interface EditorState {
   loopSelections: Record<string, number>;
   selectLoopIteration: (path: string[], index: number) => void;
   selected: string | null;
+  selectedEdgeId: string | null;
+  selectEdge: (id: string | null) => void;
+  globalTensorBlocks: boolean;
+  toggleGlobalTensorBlocks: () => void;
+  setNodePresentation: (id: string, presentation: NodePresentation | null) => boolean;
+  setSubmoduleVisual: (id: string, visual: NodeSubmoduleVisual | null) => boolean;
+  setNodeTensorVisual: (id: string, visual: NodeTensorVisual | null) => boolean;
+  setNodeVisualMedia: (id: string, media: NodeVisualMedia | null) => boolean;
+  setEdgePresentation: (id: string, patch: EdgePresentationPatch) => boolean;
   selectedIds: string[];
   nodeFocus?: NodeFocusRequest;
   focusNode: (id: string) => void;
@@ -102,6 +127,7 @@ interface EditorState {
   copy: () => void;
   paste: (mode?: 'local' | 'requested', position?: { x: number; y: number }) => void;
   duplicateLinked: (id: string) => boolean;
+  splitInputFanout: (id: string) => boolean;
   newProject: () => void;
   setAxis: (id: string, axis: number, name: string) => void;
   setTensorColor: (id: string, color?: string) => void;
@@ -173,7 +199,7 @@ export const useEditor = create<EditorState>((set, get) => ({
     const id = uid();
     documentIds.set(get().project, id);
     activeDocuments.add(get().project);
-    set({ documentId: id, hasProject: true, nodeFocus: undefined });
+    set({ documentId: id, selectedEdgeId: null, hasProject: true, nodeFocus: undefined });
   },
   canvasVersion: 0,
   path: [],
@@ -182,8 +208,7 @@ export const useEditor = create<EditorState>((set, get) => ({
     if (!Number.isSafeInteger(index) || index < 0) return;
     set(s => ({ loopSelections: { ...s.loopSelections, [JSON.stringify(path)]: index } }));
   },
-  selected: null,
-  selectedIds: [],
+  ...nodeSelection([]),
   nodeSizes: {},
   setNodeSizes: sizes => {
     if (JSON.stringify(sizes) !== JSON.stringify(get().nodeSizes)) set({ nodeSizes: sizes });
@@ -199,7 +224,7 @@ export const useEditor = create<EditorState>((set, get) => ({
       graph.nodes.push(region); id = region.id;
       assignLayoutRegion(graph, members.map(n => n.id), id, get().nodeSizes);
       fitLayoutRegion(graph, id, get().nodeSizes);
-    }, false)) set({ selected: id, selectedIds: [id], notice: '已创建布局分区；可在属性中添加成员，拖动标题整体移动。' });
+    }, false)) set({ ...nodeSelection([id]), notice: '已创建布局分区；可在属性中添加成员，拖动标题整体移动。' });
   },
   assignLayoutRegion: (ids, region) => get().edit(graph => assignLayoutRegion(graph, ids, region, get().nodeSizes), false),
   resizeLayoutRegion: (id, rect) => get().edit(graph => resizeLayoutRegion(graph, id, rect, get().nodeSizes), false),
@@ -209,26 +234,27 @@ export const useEditor = create<EditorState>((set, get) => ({
   pasteCount: 0,
   past: [],
   future: [],
-  select: (id) => set({ selected: id, selectedIds: id ? [id] : [], nodeFocus: undefined }),
+  selectEdge: (id) => set({ selectedEdgeId: id, selected: null, selectedIds: [], nodeFocus: undefined }),
+  select: (id) => set({ ...nodeSelection(id ? [id] : []), nodeFocus: undefined }),
   focusNode: (id) => {
     const state = get();
     const { graph } = resolveForwardView(state.project.graph, state.path);
     if (!graph.nodes.some(node => node.id === id)) return;
     // A fresh request also allows re-centering the already selected node.
-    set({ selected: id, selectedIds: [id],
+    set({ ...nodeSelection([id]),
       nodeFocus: { nodeId: id, path: [...state.path], documentId: state.documentId } });
   },
   finishNodeFocus: (request) => {
     if (get().nodeFocus === request) set({ nodeFocus: undefined });
   },
   selectMany: (ids) => {
-    if (JSON.stringify(ids) !== JSON.stringify(get().selectedIds))
-      set({ selected: ids[0] ?? null, selectedIds: ids, nodeFocus: undefined });
+    if (get().selectedEdgeId || JSON.stringify(ids) !== JSON.stringify(get().selectedIds))
+      set({ ...nodeSelection(ids), nodeFocus: undefined });
   },
   navigate: (path) => {
     try {
       resolveForwardView(get().project.graph, path);
-      set({ path: [...path], selected: null, selectedIds: [], nodeSizes: {}, nodeFocus: undefined });
+      set({ path: [...path], ...nodeSelection([]), nodeSizes: {}, nodeFocus: undefined });
     } catch (e) {
       set({ notice: (e as Error).message });
     }
@@ -290,8 +316,7 @@ export const useEditor = create<EditorState>((set, get) => ({
       })
     )
       set({
-        selected: fragment.nodes[0].id,
-        selectedIds: fragment.nodes.map((n) => n.id),
+        ...nodeSelection(fragment.nodes.map((n) => n.id)),
         pasteCount: pasteCount + 1,
         notice: fragment.nodes.some((node) => node.valueSource !== undefined)
           ? `已粘贴 ${fragment.nodes.length} 个模块；关联副本共享原值，可在右侧解除链接。`
@@ -315,9 +340,57 @@ export const useEditor = create<EditorState>((set, get) => ({
     )
       return false;
     set({
-      selected: fragment.nodes[0].id,
-      selectedIds: [fragment.nodes[0].id],
+      ...nodeSelection([fragment.nodes[0].id]),
       notice: '已按要求创建关联副本，共享原值；可在右侧解除链接。',
+    });
+    return true;
+  },
+  splitInputFanout: (id) => {
+    const state = get(),
+      graph = graphAt(state.project.graph, state.path);
+    const node = graph.nodes.find((candidate) => candidate.id === id);
+    const isInput =
+      !!node &&
+      (node.type === 'Inlet' ||
+        (!state.path.length && (node.type === 'Input' || isForwardInput(node.type))));
+    if (!isInput) {
+      set({ notice: '只有当前层的模块输入张量可以按 1 对 1 规则拆分。' });
+      return false;
+    }
+    const outgoing = graph.edges.filter((edge) => edge.source === id);
+    if (outgoing.length <= 1) {
+      set({ notice: '当前输入已是单路 1 对 1 连接。' });
+      return false;
+    }
+    const createdIds: string[] = [];
+    if (
+      !get().edit((g) => {
+        const current = g.nodes.find((candidate) => candidate.id === id);
+        if (!current) throw Error('节点已不存在。');
+        const owner = valueOwner(g, current);
+        const edges = g.edges.filter((edge) => edge.source === id);
+        edges.slice(1).forEach((edge, index) => {
+          const fragment = createLinkedPaste(g, copySelection(g, [id]), 0, true, 'requested');
+          const copy = fragment.nodes[0];
+          copy.valueSource = owner.id;
+          if (current.tensorVisual) copy.tensorVisual = clone(current.tensorVisual);
+          const target = g.nodes.find((candidate) => candidate.id === edge.target);
+          copy.position = target
+            ? { x: target.position.x - 280, y: target.position.y - 40 }
+            : { x: current.position.x, y: current.position.y + (index + 1) * 240 };
+          g.nodes.push(copy);
+          edge.source = copy.id;
+          delete edge.waypoints;
+          delete edge.labelPosition;
+          if (edge.presentation === 'anchor') edge.presentation = 'slide';
+          createdIds.push(copy.id);
+        });
+      })
+    )
+      return false;
+    set({
+      ...nodeSelection([id, ...createdIds]),
+      notice: `已拆分为 ${createdIds.length + 1} 份同源 IN 输入（每份仅 1 对 1 连接下游一个模块）。`,
     });
     return true;
   },
@@ -334,6 +407,33 @@ export const useEditor = create<EditorState>((set, get) => ({
       axes[axis] = name.trim().replaceAll(',', '，').slice(0, 120) || `axis${axis}`;
       node.params.axes = axes.join(', ');
     }),
+  globalTensorBlocks: false,
+  toggleGlobalTensorBlocks: () => set(s => ({ globalTensorBlocks: !s.globalTensorBlocks })),
+  setNodePresentation: (id, presentation) => get().edit(graph => {
+    const node = graph.nodes.find(n => n.id === id);
+    if (!node) throw Error('节点已不存在。');
+    setNodePresentation(node, presentation);
+  }, false),
+  setSubmoduleVisual: (id, visual) => get().edit(graph => {
+    const node = graph.nodes.find(n => n.id === id);
+    if (!node) throw Error('节点已不存在。');
+    setNodeSubmoduleVisual(node, visual);
+  }, false),
+  setNodeTensorVisual: (id, visual) => get().edit(graph => {
+    const node = graph.nodes.find(n => n.id === id);
+    if (!node) throw Error('节点已不存在。');
+    setNodeTensorVisual(node, visual);
+  }, false),
+  setNodeVisualMedia: (id, media) => get().edit(graph => {
+    const node = graph.nodes.find(n => n.id === id);
+    if (!node) throw Error('节点已不存在。');
+    setNodeMedia(node, media);
+  }, false),
+  setEdgePresentation: (id, patch) => get().edit(graph => {
+    const edge = graph.edges.find(e => e.id === id);
+    if (!edge) throw Error('连线已不存在。');
+    applyEdgePresentation(edge, patch.annotation, patch.presentation);
+  }, false),
   setTensorColor: (id, color) => get().setTensorBorderColor(id, color),
   setTensorBorderColor: (id, color) =>
     get().edit((g) => {
@@ -376,7 +476,10 @@ export const useEditor = create<EditorState>((set, get) => ({
       documentId(draft, get().documentId);
       activeDocuments.add(project);
       activeDocuments.add(draft);
-      set({ project: draft, past: [...past.slice(-39), project], future: [] });
+      const { selectedEdgeId } = get();
+      const selectionRemoved = selectedEdgeId && !graphAt(draft.graph, path).edges.some(e => e.id === selectedEdgeId);
+      set({ project: draft, past: [...past.slice(-39), project], future: [],
+        ...(selectionRemoved ? { selectedEdgeId: null } : {}) });
       return true;
     } catch (e) {
       set({ notice: (e as Error).message });
@@ -447,12 +550,16 @@ export const useEditor = create<EditorState>((set, get) => ({
           f.kind !== 'number' ||
           (Number.isSafeInteger(node.params[f.key]) && Number(node.params[f.key]) >= (f.min ?? 1)),
       );
-      if (def.build && valid) node.subgraph = def.build(node.params);
+      if (def.build && valid) {
+        const generated = def.build(node.params);
+        if (node.subgraph) preserveGeneratedMedia(node.subgraph, generated);
+        node.subgraph = generated;
+      }
     }, !graphAt(get().project.graph, get().path).nodes.some(n => n.id === id && isLayoutRegion(n))),
   renameNode: (id, name) => {
     if (name.trim())
       get().edit((g) => {
-        valueOwner(g, id).label = name.trim().slice(0, 200);
+        valueOwner(g, id).label = editorName(name);
       }, false);
   },
   setPortSide: (id, kind, side) =>
@@ -468,7 +575,7 @@ export const useEditor = create<EditorState>((set, get) => ({
   renameProject: (name) => {
     if (name.trim())
       get().edit((_, p) => {
-        p.name = name.trim().slice(0, 200);
+        p.name = editorName(name);
       }, false);
   },
   add: (type, variantId, position) => {
@@ -520,8 +627,7 @@ export const useEditor = create<EditorState>((set, get) => ({
     }, type !== 'LayoutRegion' || variantId !== undefined);
     if (committed && added)
       set({
-        selected: added,
-        selectedIds: [added],
+        ...nodeSelection([added]),
         notice: position
           ? '已在落点添加模块，拖动端口即可连线。'
           : '已添加模块；可拖动端口调整连接。',
@@ -541,7 +647,7 @@ export const useEditor = create<EditorState>((set, get) => ({
   removeNodes: (ids) => {
     const semantic = graphAt(get().project.graph, get().path).nodes.some(n => ids.includes(n.id) && !isLayoutRegion(n));
     const committed = get().edit((_, project) => removeValueNodes(project.graph, get().path, ids), semantic);
-    if (committed) set({ selected: null, selectedIds: [] });
+    if (committed) set(nodeSelection([]));
   },
   removeEdges: (ids) =>
     get().edit((graph) => {
@@ -609,8 +715,7 @@ export const useEditor = create<EditorState>((set, get) => ({
     }, !!merge);
     if (committed && merged)
       set({
-        selected: merged,
-        selectedIds: [merged],
+        ...nodeSelection([merged]),
         notice: '已合并计算节点；双击编辑内部操作，Ctrl+Z 撤销，属性面板可拆开组合。',
       });
   },
@@ -619,7 +724,7 @@ export const useEditor = create<EditorState>((set, get) => ({
     if (get().edit(graph => {
       const members = new Set(ids);
       const labels = graph.nodes.filter(n => members.has(n.id)).map(n => n.label);
-      group = mergeCalculationSet(graph, ids, registry, { summary: summary ?? labels.join(' · ').slice(0, 240), formula });
+      group = mergeCalculationSet(graph, ids, registry, { summary: summary ?? Array.from(labels.join(' · ')).slice(0, 240).join(''), formula });
     })) get().select(group!);
   },
   autoSimplifyCurrentGraph: () => {
@@ -648,8 +753,7 @@ export const useEditor = create<EditorState>((set, get) => ({
       })
     )
       set({
-        selected: ids[0] ?? null,
-        selectedIds: ids,
+        ...nodeSelection(ids),
         pasteCount: get().pasteCount + 1,
         notice: '已拆开计算组合，恢复各操作与连接。',
       });
@@ -726,8 +830,7 @@ export const useEditor = create<EditorState>((set, get) => ({
         past: past.slice(0, -1),
         future: [project, ...future],
         path: [],
-        selected: null,
-        selectedIds: [],
+        ...nodeSelection([]),
         notice: '已撤销。',
         nodeFocus: undefined,
         nodeSizes: {},
@@ -746,8 +849,7 @@ export const useEditor = create<EditorState>((set, get) => ({
         past: [...past, project],
         future: future.slice(1),
         path: [],
-        selected: null,
-        selectedIds: [],
+        ...nodeSelection([]),
         notice: '已重做。',
         nodeFocus: undefined,
         nodeSizes: {},
@@ -769,8 +871,7 @@ export const useEditor = create<EditorState>((set, get) => ({
       documentId: documentId(loaded, preserveDocument ? previousId : uid()),
       canvasVersion: get().canvasVersion + 1,
       path: [],
-      selected: null,
-      selectedIds: [],
+      ...nodeSelection([]),
       past: [...past.slice(-39), previous],
       future: [],
       notice: '项目已载入；可撤销返回上一项目。',

@@ -12,3 +12,10 @@ export function fitsProjectFile(text: string): boolean {
   return text.length <= MAX_PROJECT_BYTES / 3 ||
     (text.length <= MAX_PROJECT_BYTES && utf8Bytes(text) <= MAX_PROJECT_BYTES);
 }
+
+export function shortText(value: unknown, limit: number): value is string {
+  return (
+    typeof value === 'string' &&
+    (value.length <= limit || (value.length <= limit * 2 && Array.from(value).length <= limit))
+  );
+}

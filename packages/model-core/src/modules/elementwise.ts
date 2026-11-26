@@ -51,6 +51,15 @@ export function divideCode(node: ModelNode): string | undefined {
   return 'out = a / b\n# 逐元素广播真除法，不是整除或 Softmax。\n# 不原地修改输入，不自动添加 epsilon/clamp；分母为零时保留 PyTorch 的 inf/nan 语义。\n# 这里只推导形状与 dtype，不声称已执行数值运算或验证分母非零。';
 }
 
+export function elementwiseCode(node: ModelNode): string | undefined {
+  switch (node.type) {
+    case 'OnesLike': return 'out = torch.ones_like(x)';
+    case 'ZerosLike': return 'out = torch.zeros_like(x)';
+    case 'Maximum': return 'out = torch.maximum(a, b)\n# 静态推导广播形状和提升后的 dtype。';
+    default: return divideCode(node);
+  }
+}
+
 export const elementwiseModules: ModuleDefinition[] = [
   ...(['Sigmoid', 'Log', 'Sqrt'] as const).map((type): ModuleDefinition => ({
     type, label: type, category: type === 'Sigmoid' ? '激活函数' : '数学运算',
@@ -89,6 +98,15 @@ export const elementwiseModules: ModuleDefinition[] = [
         notes: ['逐元素真除法，从最后一维对齐并广播；不修改输入或注册 buffer。',
           '画布不执行数值计算，不能证明分母非零；不添加源码没有的 epsilon/clamp。',
           '整数/bool 真除法使用本节点记录的 torch 默认浮点类型；浮点输入按类型提升规则输出。'] };
+    },
+  },
+  {
+    type: 'Maximum', label: '逐元素最大值', category: '数学运算',
+    description: 'torch.maximum(a, b) 从两路广播后的 Tensor 中逐元素取较大值。',
+    fields: [], inputs: binaryInputs, outputs: output,
+    infer: ({ a, b }) => {
+      const warnings: string[] = [];
+      return { outputs: { out: binaryShape(checked(a), checked(b), warnings) }, warnings };
     },
   },
   {
@@ -159,21 +177,21 @@ export const elementwiseModules: ModuleDefinition[] = [
       return { outputs: { out: result }, warnings };
     },
   },
-  {
-    type: 'ZerosLike',
-    label: '同形零张量',
+  ...(['ZerosLike', 'OnesLike'] as const).map((type): ModuleDefinition => ({
+    type,
+    label: type === 'ZerosLike' ? '同形零张量' : '同形全一张量',
     category: '数学运算',
-    description:
-      '对应 torch.zeros_like(in)，生成同形状、同数据类型的零张量；当前画布推导形状和类型。',
-    fields: [],
-    inputs: input,
-    outputs: output,
+    description: type === 'ZerosLike'
+      ? 'torch.zeros_like(x) 创建同形状、同类型的全零 Tensor。'
+      : 'torch.ones_like(x) 创建同形状、同类型的全一 Tensor。',
+    fields: [], inputs: input, outputs: output,
     infer: ({ in: value }) => {
       const source = checked(value);
-      return { outputs: { out: { ...tensor([...source.shape], [...source.axes], source.dtype),
-        autograd: { requiresGrad: false, source: 'inferred' } } } };
+      const out = tensor([...source.shape], [...source.axes], source.dtype);
+      out.autograd = { requiresGrad: false, source: 'inferred' };
+      return { outputs: { out } };
     },
-  },
+  })),
   {
     type: 'AlignTrailingDims',
     label: '补齐末尾维度',

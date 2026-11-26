@@ -135,10 +135,63 @@ describe('Current-level input identity', () => {
   });
 
   it('shows a neutral zero count for a layer with no drawn inputs', () => {
+    const graph = graphOf();
     const html = renderToStaticMarkup(createElement(ReactFlowProvider, null,
-      createElement(LevelInputsBar, { graph: graphOf(), root: false })));
+      createElement(LevelInputsBar, { graph, root: false })));
     expect(html).toContain('class="level-inputs-count">0</span>');
     expect(html).toContain('尚未绘制输入');
     expect(html).not.toContain('<button');
+  });
+
+  it('badges split input aliases with IN without double-counting and splits fan-out 1-to-1 with undo/redo', () => {
+    const source = inlet('query');
+    source.tensorVisual = { mode: 'block', tone: 'blue', width: 200 };
+    const copy = alias(source);
+    const graph = graphOf(source, copy);
+    const boundary = levelInputs(graph, false)[0];
+    const props: NodeProps<TrailNode> = {
+      id: copy.id, type: 'module', selected: false, dragging: false, zIndex: 0,
+      selectable: true, deletable: true, draggable: true, isConnectable: true,
+      positionAbsoluteX: 0, positionAbsoluteY: 0,
+      data: {
+        model: copy, ...ports(copy, registry),
+        inputAlias: boundary,
+        category: '输入输出', reverse: false, active: false, dimmed: false, open: () => {},
+      },
+    };
+    const aliasHtml = renderToStaticMarkup(createElement(ReactFlowProvider, null, createElement(ModuleNode, props)));
+    expect(aliasHtml).toContain('level-input-alias-badge');
+    expect(aliasHtml).toContain('IN · 1/1');
+
+    const add1 = registry.create('Add', {}, 'add1');
+    const add2 = registry.create('Add', {}, 'add2');
+    const add3 = registry.create('Add', {}, 'add3');
+    const sub = registry.create('Submodule', {}, 'sub');
+    sub.subgraph = {
+      nodes: [source, add1, add2, add3, registry.create('Outlet', { port: 'out' }, 'out')],
+      edges: [
+        { id: 'e1', source: 'query', sourcePort: 'out', target: 'add1', targetPort: 'a' },
+        { id: 'e2', source: 'query', sourcePort: 'out', target: 'add2', targetPort: 'a', presentation: 'anchor' },
+        { id: 'e3', source: 'query', sourcePort: 'out', target: 'add3', targetPort: 'a' },
+      ],
+    };
+    useEditor.getState().load({ schemaVersion: 1, name: 'Split', variants: [], graph: { nodes: [sub], edges: [] } });
+    useEditor.getState().navigate(['sub']);
+    expect(useEditor.getState().splitInputFanout('query')).toBe(true);
+    const splitGraph = useEditor.getState().project.graph.nodes[0].subgraph!;
+    const inlets = splitGraph.nodes.filter(n => n.type === 'Inlet');
+    expect(inlets).toHaveLength(3);
+    expect(levelInputs(splitGraph, false)).toHaveLength(1);
+    for (const node of inlets) {
+      expect(splitGraph.edges.filter(e => e.source === node.id)).toHaveLength(1);
+      expect(node.tensorVisual).toEqual(source.tensorVisual);
+    }
+    expect(splitGraph.edges.some(e => e.presentation === 'anchor')).toBe(false);
+    useEditor.getState().undo();
+    const undone = useEditor.getState().project.graph.nodes[0].subgraph!;
+    expect(undone.nodes.filter(n => n.type === 'Inlet')).toHaveLength(1);
+    expect(undone.edges.filter(e => e.source === 'query')).toHaveLength(3);
+    useEditor.getState().redo();
+    expect(useEditor.getState().project.graph.nodes[0].subgraph!.nodes.filter(n => n.type === 'Inlet')).toHaveLength(3);
   });
 });

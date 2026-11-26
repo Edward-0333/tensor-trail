@@ -1,3 +1,4 @@
+import { shortText } from '../core/limits';
 import type { DeviceSpec, ModelNode, ModuleDefinition, ValueSpec } from '../core/types';
 import { clone, isDeviceSpec, tensorValue } from '../core/types';
 import { requireThat } from './math';
@@ -59,7 +60,7 @@ export const deviceModules: ModuleDefinition[] = [
     inferValue: ({ in: value }, params) => {
       tensorValue(value);
       const name = moduleReferenceName(params.tensor_name);
-      requireThat(name.length <= 249, '来源张量名称最多 249 字符。');
+      requireThat(shortText(name, 249), '来源张量名称最多 249 字符。');
       return {
         outputs: { out: { kind: 'device', reference: `${name}.device` } },
         notes: [

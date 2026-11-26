@@ -1,3 +1,4 @@
+import { shortText } from '../core/limits';
 import { resolveIntegerExpression } from '../core/hyperparameters';
 import { tensorGradState } from '../core/tensorAppearance';
 import type { Hyperparameters, ModuleDefinition, TensorSpec } from '../core/types';
@@ -31,7 +32,7 @@ function outputSpecs(
   outputs: string[],
 ): Map<string, Record<string, unknown>> | undefined {
   requireThat(
-    typeof raw === 'string' && raw.length <= 4000,
+    shortText(raw, 4000),
     '多输出规格需要 4000 字以内的 JSON 文本。',
   );
   if (!raw.trim()) return;
@@ -133,11 +134,11 @@ export const semanticOp: ModuleDefinition = {
   inferValue: (values, p, context) => {
     const { summary, formula } = p;
     requireThat(
-      typeof summary === 'string' && summary.trim() && summary.length <= 240,
+      shortText(summary, 240) && summary.trim(),
       '语义说明需填写 1–240 个字符。',
     );
     requireThat(
-      typeof formula === 'string' && formula.length <= 240,
+      shortText(formula, 240),
       '精简表达式最多 240 个字符。',
     );
     const inputs = portNames(p.inputs, 12),

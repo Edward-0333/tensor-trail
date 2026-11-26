@@ -1,10 +1,11 @@
+import { shortText } from '../core/limits';
 import type { Dim, Params, ValueSpec } from '../core/types';
 import { isIntegerSpec } from '../core/types';
 import { requireThat } from './math';
 
 export function factoryShape(values: Record<string, ValueSpec>, params: Params, name: string) {
   requireThat(
-    typeof params.shape === 'string' && params.shape.length <= 256,
+    shortText(params.shape, 256),
     `${name} 需要有效的目标形状。`,
   );
   const tokens = params.shape.split(',').map((token) => token.trim());
@@ -30,7 +31,7 @@ export function factoryShape(values: Record<string, ValueSpec>, params: Params, 
     );
     return Number(token);
   });
-  requireThat(typeof params.axes === 'string' && params.axes.length <= 256, '轴标签需要短文本。');
+  requireThat(shortText(params.axes, 256), '轴标签需要短文本。');
   const axes = params.axes.trim()
     ? params.axes.split(',').map((axis) => axis.trim())
     : shape.map((_, i) => `axis${i}`);

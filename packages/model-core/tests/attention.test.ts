@@ -64,6 +64,7 @@ describe('Q/K/V multi-head attention', () => {
   it.each([
     ['Q/K batch', ['2, 3, 64', '1, 5, 32', '2, 5, 48'], {}, 'batch'],
     ['Q/V batch', ['2, 3, 64', '2, 5, 32', '1, 5, 48'], {}, 'batch'],
+    ['K/V batch with symbolic Q', ['B, 3, 64', '2, 5, 32', '1, 5, 48'], {}, 'batch'],
     ['K/V length', ['2, 3, 64', '2, 5, 32', '2, 6, 48'], {}, '序列长度'],
     ['Q features', ['2, 3, 63', '2, 5, 32', '2, 5, 48'], {}, 'Q 输入特征'],
     ['K features', ['2, 3, 64', '2, 5, 31', '2, 5, 48'], {}, 'K 输入特征'],
@@ -105,6 +106,52 @@ describe('Q/K/V multi-head attention', () => {
     expect(tensorValue(result.outputs.out).shape).toEqual(['B', 'Tq', 64]);
     expect(result.messages.join()).toContain('batch');
     expect(result.messages.join()).toContain('序列长度');
+  });
+
+  it('passes the validated batch and length into internal MatMuls while retaining the external input specs', () => {
+    const g = graph(['B, Tq, 64', 'C, S, 32', '4, 5, 48']);
+    const result = inferGraph(g, registry).nodes.attention;
+    expect(result.status).toBe('warning');
+    expect(tensorValue(result.inputs.k).shape).toEqual(['C', 'S', 32]);
+    expect(tensorValue(result.child!.nodes.scores.outputs.out).shape).toEqual([4, 8, 'Tq', 5]);
+    expect(tensorValue(result.outputs.out).shape).toEqual([4, 'Tq', 64]);
+    expect(result.messages.join()).not.toContain('逐元素广播');
+    g.nodes.find(n => n.id === 'attention')!.customized = true;
+    const custom = inferGraph(g, registry).nodes.attention;
+    expect(tensorValue(custom.child!.nodes.scores.outputs.out).shape).toEqual(['broadcast(B, C)', 8, 'Tq', 'S']);
+  });
+
+  it.each([
+    ['batch and K/V length', '2,5,64', 'D,D,64', '2,3,64', '2 = 3'],
+    ['transitive batch, K/V length and feature width', 'D,5,64', 'N,N,64', '2,S,S', '2 = 64'],
+  ])('rejects conflicting symbol assignments across %s before expanding the attention graph', (_, q, k, v, conflict) => {
+    const result = buildModel({
+      name: 'Attention constraints',
+      nodes: [
+        { id: 'q', type: 'Input', params: { shape: q } },
+        { id: 'k', type: 'Input', params: { shape: k } },
+        { id: 'v', type: 'Input', params: { shape: v } },
+        { id: 'attention', type: 'MultiheadAttention' },
+        { id: 'output', type: 'Output' },
+      ],
+      connections: [['q.out', 'attention.q'], ['k.out', 'attention.k'], ['v.out', 'attention.v'], ['attention.out', 'output.in']],
+    }, { mode: 'strict' });
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({
+      path: ['attention'], code: 'SHAPE_ERROR', message: expect.stringContaining(conflict),
+    }));
+    expect(result.nodes.find(n => n.path[0] === 'attention')).toMatchObject({ status: 'error', outputs: {} });
+    expect(result.nodes.some(n => n.path.length > 1)).toBe(false);
+    expect(result.nodes.find(n => n.path[0] === 'output')).toMatchObject({ status: 'blocked', outputs: {} });
+  });
+
+  it('resolves every occurrence of a symbol after all equality constraints have been collected', () => {
+    const g = graph(['D,S,64', 'N,N,64', '2,S,48'], { kdim: 64 });
+    const r = inferGraph(g, registry).nodes.attention;
+    expect(r.status).toBe('warning');
+    expect(tensorValue(r.inputs.q).shape).toEqual(['D', 'S', 64]);
+    expect(tensorValue(r.child!.nodes.k_input.outputs.out).shape).toEqual([2, 2, 64]);
+    expect(tensorValue(r.outputs.out).shape).toEqual([2, 2, 64]);
   });
 });
 
